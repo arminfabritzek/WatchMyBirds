@@ -13,7 +13,6 @@
 {% endblock %}
 
 {% block content %}
-{% from 'partials/tile_toolbox.html' import tile_toolbox %}
 {% set can_moderate = session.get('authenticated') %}
 {# Live Stream #}
 <div class="stream-wrapper">
@@ -1558,100 +1557,7 @@
     <section class="section section--stream-width" id="last24hSummarySection">
 
         {# ── Shared species board macro ──────── #}
-        {% macro render_species_board(board, modal_group, title, title_href=none, all_href=none, all_label=none, extra_style='') %}
-        <div class="quiet-preview best-species-board"{% if extra_style %} style="{{ extra_style }}"{% endif %}>
-            <div class="quiet-preview__head">
-                <h3 class="quiet-preview__title">
-                    {% if title == "Today's Visitors" and today_iso is defined %}
-                    <a class="quiet-preview__title-link" href="{{ url_for('gallery.subgallery', date=today_iso) }}">{{ title }}</a>
-                    {% elif title_href %}
-                    <a class="quiet-preview__title-link" href="{{ title_href }}">{{ title }}</a>
-                    {% else %}
-                    {{ title }}
-                    {% endif %}
-                </h3>
-                {% if all_href %}
-                {% if title == "Today's Visitors" %}
-                <a class="quiet-preview__all" href="/gallery">Gallery</a>
-                {% else %}
-                <a class="quiet-preview__all" href="{{ all_href }}">{{ all_label or 'View All' }}</a>
-                {% endif %}
-                {% endif %}
-            </div>
-
-            {% if board.featured %}
-            <div class="best-species-board__featured">
-                {% for det in board.featured %}
-                {{ _render_species_card(det, modal_group, 'featured') }}
-                {% endfor %}
-            </div>
-            {% endif %}
-
-            {% if board.grid %}
-            {% if modal_group == 'stream-best' %}
-            <details class="best-species-board__more">
-                <summary>Show more</summary>
-            {% endif %}
-            <div class="best-species-board__grid">
-                {% for det in board.grid %}
-                {{ _render_species_card(det, modal_group, 'grid') }}
-                {% endfor %}
-            </div>
-            {% if modal_group == 'stream-best' %}
-            </details>
-            {% endif %}
-            {% endif %}
-        </div>
-        {% endmacro %}
-
-        {% macro _render_species_card(det, modal_group, variant) %}
-        <article class="best-species-card best-species-card--{{ variant }} fade-in-item"
-            {% if det.species_colour is not none %}data-species-colour="{{ det.species_colour }}"
-            style="--cell-species-colour: var(--species-colour-{{ det.species_colour }})"{% endif %}>
-            <span class="quiet-preview__item fade-in-item wm-toolbox-host" hidden aria-hidden="true"></span>
-            {% set frames = det.story_frames or [det] %}
-            <div class="best-species-card__photos{% if frames|length == 1 %} best-species-card__photos--single{% endif %}">
-                {% for frame in frames %}
-                <div class="best-species-card__media wm-toolbox-host">
-                    {% if modal_group == 'stream-summary' and frame.gallery_date %}
-                    <a hidden aria-hidden="true" href="{{ url_for('gallery.subgallery', date=today_iso, focus=frame.detection_id) }}"></a>
-                    {% endif %}
-                    <button type="button" class="best-species-card__media-link"
-                        data-bs-toggle="modal" data-bs-target="#modal-{{ modal_group }}-{{ frame.detection_id }}"
-                        aria-label="Open image: {{ det.common_name }}">
-                        {% if frame.display_path %}
-                        <img class="best-species-card__image" loading="lazy"
-                            src="{{ frame.display_path }}" alt="{{ det.common_name }}">
-                        {% else %}
-                        <div class="best-species-card__placeholder">🐦</div>
-                        {% endif %}
-                    </button>
-                    {{ tile_toolbox(
-                        detection_id=frame.detection_id,
-                        surface='gallery',
-                        is_favorite=frame.is_favorite|default(false),
-                        can_moderate=can_moderate,
-                        current_species=det.species_key or det.latin_name,
-                        details_href='/gallery/' ~ frame.gallery_date ~ '?focus=' ~ frame.detection_id ~ '#detection-' ~ frame.detection_id if frame.gallery_date else none
-                    ) }}
-                </div>
-                {% endfor %}
-            </div>
-
-            <a class="best-species-card__link"
-                href="/species/overview?species_key={{ (det.species_key or det.latin_name or 'Unknown_species') | urlencode }}"
-                aria-label="Open species overview: {{ det.common_name }}">
-                <div class="best-species-card__body{% if variant == 'grid' %} best-species-card__body--compact{% endif %}">
-                    <span class="best-species-card__name">{{ det.common_name }}</span>
-                    <span class="best-species-card__latin">{{ det.latin_name | replace('_', ' ') }}</span>
-                    <div class="best-species-card__facts">
-                        <span class="best-species-card__fact">Nearby {{ det.last_seen_display }}</span>
-                        <span class="best-species-card__fact">{{ det.visit_count }} visit{{ 's' if det.visit_count != 1 }} here</span>
-                    </div>
-                </div>
-            </a>
-        </article>
-        {% endmacro %}
+        {% from 'components/homepage_species_board.html' import render_species_board with context %}
 
         {# ── Today's Visitors ──────── #}
         {% if today_visitors_board.featured or today_visitors_board.grid %}
@@ -1672,17 +1578,15 @@
         </div>
         {% endif %}
 
-        {# ── Best of Species ──────── #}
-        {% if best_species_board.featured or best_species_board.grid %}
-        {{ render_species_board(
-            best_species_board, 'stream-best',
-            title='Best of Species',
-            all_href='/species',
-            all_label='All Species',
-            extra_style='margin-top: 6px;'
-        ) }}
-        {% endif %}
-
+    </section>
+    <section class="section section--stream-width" id="homepageArchive"
+             data-archive-url="{{ url_for('index.homepage_archive_route') }}" aria-busy="true">
+        <div class="quiet-preview best-species-board">
+            <div class="quiet-preview__head"><h3 class="quiet-preview__title">Best of Species</h3></div>
+            <p role="status" data-archive-status>Loading your archive…</p>
+            <button type="button" class="btn btn-secondary" data-archive-retry hidden>Retry</button>
+            <noscript><a href="/species">Browse all species</a></noscript>
+        </div>
     </section>
 
     {% endblock %}
@@ -1699,12 +1603,6 @@
     {{ render_modal(det, 'stream-summary', show_nav=false) }}
     {% endfor %}
     {% endif %}
-    {# Modals for Best of Species detections (covers + story frames) #}
-    {% if best_species_modal_dets %}
-    {% for det in best_species_modal_dets %}
-    {{ render_modal(det, 'stream-best', show_nav=false) }}
-    {% endfor %}
-    {% endif %}
     {# PTZ empirical probe wizard — activated by ?ptz_probe=<camId> URL param.
        Modal lives in stream.html so the operator can keep the live preview
        visible alongside the wizard cards. #}
@@ -1712,6 +1610,7 @@
     {% endblock %}
 
     {% block scripts %}
+    <script src="/assets/js/homepage_archive.js?v={{ asset_version }}" defer></script>
     <script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
     <script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
     <script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>

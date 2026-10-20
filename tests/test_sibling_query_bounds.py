@@ -127,9 +127,8 @@ def test_companion_query_does_not_correlate_observation_materialization(
         )
         plan = conn.execute("EXPLAIN QUERY PLAN " + query).fetchall()
         nodes = {row[0]: (row[1], row[3]) for row in plan}
-        facts = [row[0] for row in plan if row[3] == "MATERIALIZE facts"]
-        assert facts
-        for node in facts:
+        materializations = [row[0] for row in plan if row[3].startswith("MATERIALIZE ")]
+        for node in materializations:
             while node in nodes:
                 parent, detail = nodes[node]
                 assert "CORRELATED" not in detail

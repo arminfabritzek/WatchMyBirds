@@ -8,7 +8,6 @@ from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
-from glob import escape
 from pathlib import Path
 from typing import Any, Literal
 
@@ -265,6 +264,38 @@ def _dependent_rows(conn: sqlite3.Connection, rows: list[RowPlan]) -> list[RowPl
     return list(children.values())
 
 
+def _batch_crop_names(paths: PathManager, names: list[str]) -> dict[str, set[str]]:
+    """Discover unreferenced crops once per directory for this bounded batch.
+
+    Keep the inventory local to a planner batch: executor rechecks still discover
+    files anew under each photo's write lock. Only selected stems are retained.
+    Individual paths are checked again by _file before entering a deletion plan.
+    """
+    directories: dict[Path, dict[str, list[str]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    found: dict[str, set[str]] = defaultdict(set)
+    for name in names:
+        if Path(name).name != name:
+            continue
+        directory = paths.get_derivative_path(name).parent
+        if paths.contained_path(directory, paths.base_dir) != (
+            paths.base_dir.resolve() / directory.relative_to(paths.base_dir)
+        ):
+            continue
+        directories[directory][Path(name).stem].append(name)
+    for directory, stems in directories.items():
+        for path in directory.glob("*_crop_*.webp"):
+            # Check each separator, preserving stems that themselves contain
+            # '_crop_' and glob metacharacters without interpreting them.
+            marker = path.name.find("_crop_")
+            while marker >= 0:
+                for name in stems.get(path.name[:marker], ()):
+                    found[name].add(path.name)
+                marker = path.name.find("_crop_", marker + 1)
+    return found
+
+
 def plan_deletions(
     conn: sqlite3.Connection,
     settings: DeletionSettings,
@@ -346,6 +377,7 @@ def plan_deletions(
                 names,
             )
         }
+        crop_names = _batch_crop_names(paths, names)
         for image in batch:
             name = image["filename"]
             captured = _time(image["timestamp"])
@@ -491,15 +523,7 @@ def plan_deletions(
                 for obj in objects[name]
                 if obj["detection_id"] is not None
             }
-            directory = paths.get_derivative_path(name).parent
-            checked_directory = paths.contained_path(directory, paths.base_dir)
-            if checked_directory == paths.base_dir.resolve() / directory.relative_to(
-                paths.base_dir
-            ):
-                thumb_names.update(
-                    path.name
-                    for path in directory.glob(escape(Path(name).stem) + "_crop_*.webp")
-                )
+            thumb_names.update(crop_names.get(name, ()))
             for thumb in sorted(thumb_names):
                 action = derivative
                 if Path(thumb).name != thumb:

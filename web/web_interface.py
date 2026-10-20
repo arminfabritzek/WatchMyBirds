@@ -4,9 +4,11 @@ import secrets
 import time
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 
 from flask import (
     Flask,
+    g,
     request,
     session,
 )
@@ -34,6 +36,7 @@ def invalidate_best_species_cache() -> None:
 
     _best_species_cache["timestamp"] = 0.0
     _best_species_cache["payload"] = None
+    _best_species_cache["generation"] = object()
 
 
 _TICKER_STATS_CACHE_TTL_SECONDS = 60
@@ -43,14 +46,18 @@ _ticker_stats_cache: dict = {"key": None, "timestamp": 0.0, "payload": None}
 _module_logger = logging.getLogger(__name__)
 
 
-def _compute_ticker_dashboard_stats() -> dict:
-
+def _ticker_cache_key() -> tuple[str, float]:
     today_iso = datetime.now().strftime("%Y-%m-%d")
     try:
         threshold = float(get_config()["GALLERY_DISPLAY_THRESHOLD"])
     except Exception:
         threshold = 0.0
-    cache_key = (today_iso, threshold)
+    return today_iso, threshold
+
+
+def _compute_ticker_dashboard_stats() -> dict:
+    cache_key = _ticker_cache_key()
+    today_iso = cache_key[0]
 
     now_ts = time.time()
     if (
@@ -151,6 +158,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     project_root = os.path.dirname(os.path.dirname(__file__))
     template_folder = os.path.join(project_root, "templates")
     server = Flask(__name__, template_folder=template_folder)
+    server.extensions["homepage_archive_lock"] = Lock()
 
     Compress(server)
     server.config["COMPRESS_MIMETYPES"] = ["text/html", "application/json"]
@@ -212,6 +220,16 @@ def create_web_interface(detection_manager, system_monitor=None):
         if "_csrf_token" not in session:
             session["_csrf_token"] = secrets.token_hex(32)
 
+        if (
+            hasattr(g, "ticker_dashboard_stats")
+            and g.ticker_dashboard_stats.get("total_species") is not None
+        ):
+            _ticker_stats_cache.update(
+                key=_ticker_cache_key(),
+                timestamp=time.time(),
+                payload=g.ticker_dashboard_stats,
+            )
+
         is_authenticated = bool(session.get("authenticated"))
         warn = is_authenticated and _auth.is_default_password()
         return {
@@ -231,7 +249,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                 and settings_service.take_retention_update_notice()
             ),
             "station_name": str(config.get("STATION_NAME", "")),
-            "ticker_dashboard_stats": _compute_ticker_dashboard_stats(),
+            "ticker_dashboard_stats": (
+                g.ticker_dashboard_stats
+                if hasattr(g, "ticker_dashboard_stats")
+                else _compute_ticker_dashboard_stats()
+            ),
             "footer_commit": _footer_commit,
             "footer_build_date": _footer_build_date,
         }

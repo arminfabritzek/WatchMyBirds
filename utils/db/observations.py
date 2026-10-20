@@ -47,21 +47,20 @@ def identity_sql(
 
 
 def recreate_observations_view(conn: sqlite3.Connection) -> None:
-    """Rebuild the current object projection at application startup."""
+    """Rebuild the current object projection at application startup.
+
+    Join current answer axes by indexed subject IDs so an outer image/date filter
+    does not rebuild the entire answer history. The unique subject and successor
+    indexes guarantee one current fact per axis, including retracted chains.
+    """
     conn.execute("DROP VIEW IF EXISTS current_observations")
     conn.execute("""
     CREATE VIEW current_observations AS
-    WITH facts AS MATERIALIZED (
-        SELECT detection_id, image_filename, scope,
-            MAX(CASE WHEN fact_type = 'species_identity' THEN answer_value END) AS answer,
-            MAX(CASE WHEN fact_type = 'species_identity' THEN species_key END) AS human_species,
-            MAX(CASE WHEN fact_type = 'species_identity' THEN proposal_species_key END) AS proposal_species,
-            MAX(CASE WHEN fact_type = 'species_identity' THEN created_at END) AS answered_at,
-            MAX(CASE WHEN fact_type = 'bird_presence' THEN answer_value END) AS presence
-        FROM current_human_label_facts GROUP BY scope, detection_id, image_filename
-    ), refuted_species AS MATERIALIZED (
-        SELECT DISTINCT REPLACE(proposal_species, ' ', '_') AS species
-        FROM facts WHERE answer = 'wrong' AND proposal_species IS NOT NULL
+    WITH refuted_species AS MATERIALIZED (
+        SELECT DISTINCT REPLACE(proposal_species_key, ' ', '_') AS species
+        FROM current_human_label_facts
+        WHERE fact_type = 'species_identity' AND answer_value = 'wrong'
+            AND proposal_species_key IS NOT NULL
     ), proposals AS (
         SELECT 'detection:' || d.detection_id AS object_key, d.detection_id,
             NULL AS manual_object_id, d.image_filename, i.timestamp,
@@ -70,17 +69,27 @@ def recreate_observations_view(conn: sqlite3.Connection) -> None:
             d.status, d.score, d.od_confidence, d.bbox_quality,
             d.unknown_score, c.cls_confidence, d.is_favorite, d.quality_gallery_ok,
             d.thumbnail_path, d.is_gallery_eligible, d.aesthetic_score, d.decision_state, d.decision_level, d.decision_reasons,
-            f.answer,
-            f.answered_at, f.presence, (f.scope IS NOT NULL) AS has_current_answer,
-            REPLACE(CASE WHEN f.answer IN ('confirmed', 'corrected') THEN f.human_species
+            sf.answer_value AS answer,
+            sf.created_at AS answered_at, pf.answer_value AS presence,
+            EXISTS(SELECT 1 FROM current_human_label_facts cf
+                WHERE cf.subject_id = ls.subject_id) AS has_current_answer,
+            REPLACE(CASE WHEN sf.answer_value IN ('confirmed', 'corrected') THEN sf.species_key
                 ELSE COALESCE(c.cls_class_name, d.od_class_name) END, ' ', '_') AS proposed_species,
-            CASE WHEN f.answer IN ('confirmed', 'corrected') THEN 'human'
+            CASE WHEN sf.answer_value IN ('confirmed', 'corrected') THEN 'human'
                  ELSE 'automatic' END AS origin
         FROM detections d JOIN images i ON i.filename = d.image_filename
         LEFT JOIN sources s ON s.source_id = i.source_id
         LEFT JOIN classifications c ON c.detection_id = d.detection_id
             AND c.rank = 1 AND COALESCE(c.status, 'active') = 'active'
-        LEFT JOIN facts f ON f.detection_id = d.detection_id AND f.scope = 'object'
+        LEFT JOIN label_subjects ls ON ls.detection_id = d.detection_id AND ls.scope = 'object'
+        LEFT JOIN human_label_facts sf ON sf.subject_id = ls.subject_id
+            AND sf.fact_type = 'species_identity' AND sf.assertion_state = 'asserted'
+            AND NOT EXISTS (SELECT 1 FROM human_label_facts successor
+                WHERE successor.supersedes_fact_id = sf.fact_id)
+        LEFT JOIN human_label_facts pf ON pf.subject_id = ls.subject_id
+            AND pf.fact_type = 'bird_presence' AND pf.assertion_state = 'asserted'
+            AND NOT EXISTS (SELECT 1 FROM human_label_facts successor
+                WHERE successor.supersedes_fact_id = pf.fact_id)
         UNION ALL
         SELECT 'manual:' || m.manual_object_id, NULL, m.manual_object_id, m.image_filename,
             i.timestamp, i.source_id, COALESCE(s.type, 'unknown'),

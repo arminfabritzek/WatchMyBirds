@@ -21,6 +21,8 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask import Flask
+from flask.testing import FlaskClient
 
 import config
 from utils import path_manager
@@ -160,27 +162,19 @@ def seeded_client(local_db_app):
 _EXPECTED_CONTEXT_KEYS = {
     "title",
     "current_path",
-    "latest_detections",
     "visual_summary",
     "today_visitors_board",
     "today_visitors_modal_dets",
-    "species_summary",
     "dashboard_stats",
-    "empty_latest_message",
     "image_width",
     "today_iso",
-    "today_detection_count",
-    "is_quiet_today",
-    "recent_archive_preview",
     "best_species_board",
     "best_species_preview",
     "best_species_modal_dets",
-    "landing_status",
-    "noise_hourly",
 }
 
 
-def _capture_index_context(client):
+def _capture_index_context(client, path="/"):
     """Hit ``/`` while capturing the kwargs passed to ``render_template``.
 
     Patches the ``render_template`` symbol on whichever module currently owns
@@ -218,7 +212,7 @@ def _capture_index_context(client):
                 continue
         if not patched_any:
             stack.enter_context(patch.object(flask, "render_template", _fake_render))
-        resp = client.get("/")
+        resp = client.get(path)
     return resp, captured
 
 
@@ -241,7 +235,6 @@ def test_index_renders_stream_template_with_expected_context_keys(seeded_client)
 
     assert context["current_path"] == "/"
     assert context["today_iso"] == today_iso
-    assert context["empty_latest_message"] == "No detections in the last 24 hours."
     assert context["image_width"] == 150
 
 
@@ -252,9 +245,7 @@ def test_index_context_collection_shapes(seeded_client):
 
     # The four board/list payloads are always lists.
     for key in (
-        "latest_detections",
         "visual_summary",
-        "recent_archive_preview",
         "best_species_preview",
         "best_species_modal_dets",
         "today_visitors_modal_dets",
@@ -270,19 +261,24 @@ def test_index_context_collection_shapes(seeded_client):
     # dashboard_stats carries the live counters the header ticker reads.
     stats = context["dashboard_stats"]
     assert isinstance(stats, dict)
-    for stat_key in ("total_species", "last_24h_count", "today_count"):
+    for stat_key in ("total_species", "today_visits"):
         assert stat_key in stats
 
 
-def test_index_landing_status_reports_stream_offline_without_frames(seeded_client):
-    client, _ = seeded_client
-    _, captured = _capture_index_context(client)
-    landing = captured["context"]["landing_status"]
+def test_homepage_does_not_fetch_retired_widget_history(
+    seeded_client: tuple[FlaskClient, str],
+) -> None:
+    from web.services import db_service
 
-    # detection_manager fixture has no frames -> Offline/bad with a last-detection line.
-    assert landing["stream_state"] == "Offline"
-    assert landing["stream_tone"] == "bad"
-    assert "last_detection" in landing
+    client, _ = seeded_client
+    with patch.object(
+        db_service,
+        "fetch_detections_last_24h",
+        side_effect=AssertionError("retired widget"),
+    ) as retired:
+        response = client.get("/")
+    assert response.status_code == 200
+    assert retired.call_count == 0
 
 
 def test_index_title_reflects_today_observation_count(seeded_client):
@@ -342,6 +338,7 @@ def test_homepage_refreshes_canonical_answers_for_cached_modals_and_siblings(
         "test-station", "test", "normal_correction", "watchmybirds_ui"
     )
 
+    _capture_index_context(client, "/homepage/archive")
     for species in (row["species_key"], "Cyanistes_caeruleus"):
         with db_connection.closing_connection() as conn:
             record_human_answer(
@@ -357,43 +354,42 @@ def test_homepage_refreshes_canonical_answers_for_cached_modals_and_siblings(
                 provenance,
             )
             conn.commit()
-        response, captured = _capture_index_context(client)
-        assert response.status_code == 200
         checked = []
-        for key in (
-            "visual_summary",
-            "today_visitors_modal_dets",
-            "best_species_modal_dets",
-        ):
-            for item in captured["context"][key]:
-                for candidate in (item, *item.get("siblings", [])):
-                    if candidate.get("detection_id") == detection_id:
-                        checked.append(candidate)
-                        assert candidate["human_review_state"] in {
-                            "confirmed",
-                            "corrected",
-                        }
-                        assert candidate["human_species_key"] == species
-                        assert candidate["human_bbox_verdict"] == "suitable"
-                        assert candidate["needs_review"] is False
-        assert len(checked) >= 3
+        for path in ("/", "/homepage/archive"):
+            response, captured = _capture_index_context(client, path)
+            assert response.status_code == 200
+            for key in (
+                "visual_summary",
+                "today_visitors_modal_dets",
+                "best_species_modal_dets",
+            ):
+                for item in captured["context"][key]:
+                    for candidate in (item, *item.get("siblings", [])):
+                        if candidate.get("detection_id") == detection_id:
+                            checked.append(candidate)
+                            assert candidate["human_review_state"] in {
+                                "confirmed",
+                                "corrected",
+                            }
+                            assert candidate["human_species_key"] == species
+                            assert candidate["human_bbox_verdict"] == "suitable"
+                            assert candidate["needs_review"] is False
+        assert len(checked) >= 4
         from web import web_interface
 
-        cached_modals = web_interface._best_species_cache["payload"]["modal_dets"]
+        cached_modals = web_interface._best_species_cache["payload"]["modal_rows"]
         assert all("human_review_state" not in item for item in cached_modals)
 
 
-@pytest.mark.parametrize("card_count", [1, 25, 200])
 @pytest.mark.parametrize("empty_batch", [False, True])
-def test_species_board_batches_companions_independently_of_card_count(
-    local_db_app, card_count: int, empty_batch: bool
+def test_archive_only_hydrates_visible_frame_companions(
+    local_db_app: Flask, empty_batch: bool
 ) -> None:
-    from utils.db.detections import fetch_detections_for_gallery
-    from web import web_interface
+    from web import view_helpers, web_interface
     from web.services import gallery_service
 
     with db_connection.closing_connection() as conn:
-        for index in range(card_count):
+        for index in range(25):
             _seed_detection(
                 conn,
                 filename=f"20200101_120000_{index}.jpg",
@@ -401,11 +397,9 @@ def test_species_board_batches_companions_independently_of_card_count(
                 species="Parus_major",
                 decision_state="confirmed",
             )
-        rows = [dict(row) for row in fetch_detections_for_gallery(conn)]
     web_interface.invalidate_best_species_cache()
     with (
         local_db_app.test_client() as client,
-        patch("web.view_helpers.fetch_best_species_pools", return_value=([], rows)),
         patch.object(
             gallery_service,
             "get_sibling_detections_batch",
@@ -420,21 +414,162 @@ def test_species_board_batches_companions_independently_of_card_count(
             "get_sibling_detections",
             wraps=gallery_service.get_sibling_detections,
         ) as single,
+        patch(
+            "web.view_helpers.fetch_best_species_pools",
+            wraps=view_helpers.fetch_best_species_pools,
+        ) as pools,
     ):
         with client.session_transaction() as session:
             session["authenticated"] = True
-        response, captured = _capture_index_context(client)
-        assert response.status_code == 200
-        modals = captured["context"]["best_species_modal_dets"]
-        assert len(modals) == card_count
-        assert all(len(row["siblings"]) == (0 if empty_batch else 1) for row in modals)
-        assert batch.call_count == 1
-        assert len(batch.call_args.args[0]) == card_count
-        _capture_index_context(client)
-        assert batch.call_count == 1
-        web_interface._best_species_cache["timestamp"] = 0
-        response, captured = _capture_index_context(client)
-        assert response.status_code == 200
-        assert captured["context"]["best_species_modal_dets"] == modals
-        assert batch.call_count == 2
+        for _ in range(2):
+            response, captured = _capture_index_context(client, "/homepage/archive")
+            assert response.status_code == 200
+            context = captured["context"]
+            modals = context["best_species_modal_dets"]
+            frames = context["best_species_board"]["featured"][0]["story_frames"]
+            assert {row["detection_id"] for row in modals} == {
+                row["detection_id"] for row in frames
+            }
+            assert len(modals) == 4
+            assert all(
+                len(row["siblings"]) == (0 if empty_batch else 1) for row in modals
+            )
+            assert len(batch.call_args.args[0]) == 4
+        assert batch.call_count == 2  # Current companions on each response.
+        assert pools.call_count == 1  # Archive ranking shared by both requests.
         assert single.call_count == 0
+
+
+def test_homepage_does_not_wait_for_archive_counts_or_pools(
+    seeded_client: tuple[FlaskClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from web import web_interface
+    from web.services import db_service
+
+    web_interface.invalidate_best_species_cache()
+    monkeypatch.setattr(
+        web_interface,
+        "_ticker_stats_cache",
+        {"key": None, "timestamp": 0.0, "payload": None},
+    )
+    client, _ = seeded_client
+    with (
+        patch.object(
+            db_service,
+            "fetch_gallery_total_species_count",
+            side_effect=AssertionError("full scan"),
+        ) as count,
+        patch(
+            "web.view_helpers.fetch_best_species_pools",
+            side_effect=AssertionError("ranking"),
+        ) as pools,
+    ):
+        response = client.get("/")
+    assert response.status_code == 200
+    assert b"Loading your archive" in response.data
+    assert b"total: null" in response.data
+    assert count.call_count == pools.call_count == 0
+    assert web_interface._ticker_stats_cache["payload"] is None
+
+
+def test_archive_total_comes_from_the_same_ranking(
+    seeded_client: tuple[FlaskClient, str],
+) -> None:
+    from web import web_interface
+    from web.services import db_service
+
+    web_interface.invalidate_best_species_cache()
+    client, _ = seeded_client
+    with patch.object(
+        db_service,
+        "fetch_gallery_total_species_count",
+        side_effect=AssertionError("duplicate scan"),
+    ) as count:
+        response = client.get("/homepage/archive")
+    assert response.status_code == 200
+    assert b'data-total-species="2"' in response.data
+    assert count.call_count == 0
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_archive_failure_is_retryable_without_breaking_homepage(
+    seeded_client: tuple[FlaskClient, str],
+) -> None:
+    from web import web_interface
+
+    web_interface.invalidate_best_species_cache()
+    client, _ = seeded_client
+    with patch(
+        "web.view_helpers.fetch_best_species_pools",
+        side_effect=RuntimeError("temporary DB error"),
+    ):
+        assert client.get("/").status_code == 200
+        assert client.get("/homepage/archive").status_code == 503
+    assert client.get("/homepage/archive").status_code == 200
+
+
+def test_concurrent_archive_requests_share_one_rebuild(local_db_app: Flask) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from web import view_helpers, web_interface
+
+    web_interface.invalidate_best_species_cache()
+    entered, release = Event(), Event()
+    fetch = view_helpers.fetch_best_species_pools
+
+    def slow_fetch(**kwargs: object) -> tuple[list[dict], list[dict]]:
+        entered.set()
+        assert release.wait(5)
+        return fetch(**kwargs)
+
+    def request_archive() -> int:
+        with local_db_app.test_client() as client:
+            return client.get("/homepage/archive").status_code
+
+    with patch.object(
+        view_helpers, "fetch_best_species_pools", side_effect=slow_fetch
+    ) as build:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(request_archive)
+            try:
+                assert entered.wait(5)
+                second = workers.submit(request_archive)
+                with local_db_app.test_client() as client:
+                    assert client.get("/").status_code == 200
+                assert not first.done()
+            finally:
+                release.set()
+            assert first.result(timeout=5) == second.result(timeout=5) == 200
+        assert build.call_count == 1
+
+
+def test_manual_archive_photo_has_a_shared_editable_dialog(local_db_app: Flask) -> None:
+    from web import web_interface
+
+    with db_connection.closing_connection() as conn:
+        filename = "20200101_120000_manual.jpg"
+        conn.execute(
+            "INSERT INTO images(filename,timestamp) VALUES (?, '20200101_120000')",
+            (filename,),
+        )
+        conn.execute(
+            """INSERT INTO manual_objects(image_filename,bbox_x,bbox_y,bbox_w,bbox_h,
+            species_key,species_state,created_at,updated_at)
+            VALUES (?,.1,.1,.3,.3,'Picus_viridis','identified','now','now')""",
+            (filename,),
+        )
+        conn.commit()
+    web_interface.invalidate_best_species_cache()
+    with local_db_app.test_client() as client:
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+        response, captured = _capture_index_context(client, "/homepage/archive")
+        assert response.status_code == 200
+        row = captured["context"]["best_species_modal_dets"][0]
+        assert row["manual_object_id"] == 1
+        assert row["object_kind"] == "manual"
+        assert row["detection_id"] == -1
+        html = client.get("/homepage/archive").get_data(as_text=True)
+        assert 'id="modal-stream-best--1"' in html
+        assert 'data-bs-target="#modal-stream-best--1"' in html

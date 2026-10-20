@@ -652,6 +652,7 @@ def fetch_best_species_pools(
         if species_key not in pools_by_species:
             pools_by_species[species_key] = {
                 "species_key": species_key,
+                "total_species_count": int(det.get("total_species_count") or 0),
                 "visit_count": int(det.get("visit_count") or 0),
                 "last_seen_timestamp": det.get("last_seen_timestamp") or "",
                 "best_cover_score": float(det.get("best_cover_score") or 0.0),
@@ -665,7 +666,7 @@ def fetch_best_species_pools(
         pools_by_species[species_key]["candidates"].append(det)
 
         det_id = int(det.get("detection_id") or 0)
-        if det_id > 0:
+        if det_id != 0:
             modal_rows_by_id.setdefault(det_id, det)
 
     species_pools = [pools_by_species[species] for species in ordered_species]

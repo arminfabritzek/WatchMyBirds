@@ -477,6 +477,10 @@ def _init_schema(
     conn.execute(
         "CREATE TABLE IF NOT EXISTS _migration_state (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_detections_thumbnail_filename "
+        "ON detections(thumbnail_path, image_filename)"
+    )
     _init_human_label_schema(conn)
     _init_training_export_schema(conn)
     _init_station_event_review_schema(conn)
@@ -713,6 +717,11 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
                 ON DELETE CASCADE
         );
         """
+    )
+    # Object-scope subjects also need image lookup for bounded storage batches.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_label_subjects_filename "
+        "ON label_subjects(image_filename)"
     )
     conn.execute(
         """

@@ -255,9 +255,18 @@ def test_species_templates_use_toolbox_without_legacy_badge():
 
 
 def test_stream_detection_previews_use_toolbox():
-    content = _read("templates/stream.html")
+    shared_import = (
+        "{% from 'components/homepage_species_board.html' "
+        "import render_species_board with context %}"
+    )
+    assert shared_import in _read("templates/stream.html")
+    assert shared_import in _read("templates/partials/homepage_archive.html")
+    content = _read("templates/components/homepage_species_board.html")
 
-    assert "{% from 'partials/tile_toolbox.html' import tile_toolbox %}" in content
+    assert (
+        "{% from 'partials/tile_toolbox.html' import tile_toolbox with context %}"
+        in content
+    )
     assert content.count("{{ tile_toolbox(") >= 1
     assert "quiet-preview__item fade-in-item wm-toolbox-host" in content
     assert "best-species-board__featured" in content
@@ -545,7 +554,7 @@ def test_bird_editor_keeps_selection_confirmation_and_picker_separate():
 
 
 def test_homepage_species_cards_share_the_fixed_photo_grid():
-    content = _read("templates/stream.html")
+    content = _read("templates/components/homepage_species_board.html")
     assert "{% set frames = det.story_frames or [det] %}" in content
     assert "{% for frame in frames %}" in content
     assert "best-species-card__photos--single" in content

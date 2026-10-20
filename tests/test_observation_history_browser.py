@@ -66,6 +66,8 @@ def test_blurry_admitted_bird_in_history_surfaces(
             ):
                 response = page.goto(base + route)
                 assert response.status == 200
+                if name == "home":
+                    page.locator("[data-homepage-archive-result]").wait_for()
                 if name == "report":
                     page.locator("[data-current-report]").wait_for()
                 assert page.get_by_text("Pica pica", exact=False).count() > 0

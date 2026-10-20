@@ -80,9 +80,15 @@ def effective_bbox_projection_sql(
         for axis in ("x", "y", "w", "h")
     )
     join_sql = f"""
-        LEFT JOIN current_human_label_facts {fact_alias}
-          ON {fact_alias}.detection_id = {det_alias}.detection_id
+        LEFT JOIN label_subjects {fact_alias}_subject
+          ON {fact_alias}_subject.detection_id = {det_alias}.detection_id
+         AND {fact_alias}_subject.scope = 'object'
+        LEFT JOIN human_label_facts {fact_alias}
+          ON {fact_alias}.subject_id = {fact_alias}_subject.subject_id
          AND {fact_alias}.fact_type = 'bbox_correction'
+         AND {fact_alias}.assertion_state = 'asserted'
+         AND NOT EXISTS (SELECT 1 FROM human_label_facts successor
+             WHERE successor.supersedes_fact_id = {fact_alias}.fact_id)
     """
     return projected, join_sql
 
@@ -622,64 +628,49 @@ def fetch_species_story_board_candidates(
     params: list[Any] = []
     if excluded:
         placeholders = ",".join("?" for _ in excluded)
-        species_filter_sql = f"WHERE species_key NOT IN ({placeholders})"
+        species_filter_sql = f"AND species_key NOT IN ({placeholders})"
         params.extend(excluded)
 
     params.extend([total_limit, frames_per_species])
 
     query = f"""
-    WITH visible AS (
-        SELECT o.*, o.timestamp AS image_timestamp,
+    WITH eligible AS MATERIALIZED (
+        SELECT o.object_key, o.detection_id, o.image_filename, o.species_key,
+            o.timestamp, o.timestamp AS image_timestamp, o.score, o.is_favorite,
+            o.quality_gallery_ok, o.ptz_origin, o.is_gallery_eligible,
+            o.aesthetic_score, o.bbox_quality,
             CAST(strftime('%s', substr(o.timestamp, 1, 4) || '-' ||
                 substr(o.timestamp, 5, 2) || '-' || substr(o.timestamp, 7, 2) || ' ' ||
                 substr(o.timestamp, 10, 2) || ':' || substr(o.timestamp, 12, 2) || ':' ||
                 substr(o.timestamp, 14, 2)) AS INTEGER) AS image_epoch
         FROM current_observations o
-        WHERE o.admitted
-    ),
-    eligible AS (
-        SELECT *
-        FROM visible
-        {species_filter_sql}
+        WHERE o.admitted {species_filter_sql}
     ),
     ordered_events AS (
-        SELECT
-            species_key,
-            image_epoch,
+        SELECT species_key, image_timestamp, image_epoch, score, is_favorite,
             LAG(image_epoch) OVER (
                 PARTITION BY species_key
                 ORDER BY image_epoch ASC, detection_id ASC
             ) AS prev_epoch
         FROM eligible
-        WHERE image_epoch IS NOT NULL
-    ),
-    species_visits AS (
-        SELECT
-            species_key,
-            SUM(
-                CASE
-                    WHEN prev_epoch IS NULL THEN 1
-                    WHEN image_epoch - prev_epoch > 1800 THEN 1
-                    ELSE 0
-                END
-            ) AS visit_count
-        FROM ordered_events
-        GROUP BY species_key
     ),
     species_stats AS (
-        SELECT
-            e.species_key,
-            COALESCE(MAX(sv.visit_count), COUNT(*)) AS visit_count,
-            MAX(e.image_timestamp) AS last_seen_timestamp,
-            MAX(COALESCE(e.score, 0)) AS best_cover_score,
-            MAX(COALESCE(e.is_favorite, 0)) AS is_favorite_available
-        FROM eligible e
-        LEFT JOIN species_visits sv ON sv.species_key = e.species_key
-        GROUP BY e.species_key
+        SELECT species_key,
+            CASE WHEN MAX(image_epoch) IS NULL THEN COUNT(*)
+                ELSE SUM(CASE WHEN image_epoch IS NOT NULL AND (
+                    prev_epoch IS NULL OR image_epoch - prev_epoch > 1800
+                ) THEN 1 ELSE 0 END)
+            END AS visit_count,
+            MAX(image_timestamp) AS last_seen_timestamp,
+            MAX(COALESCE(score, 0)) AS best_cover_score,
+            MAX(COALESCE(is_favorite, 0)) AS is_favorite_available
+        FROM ordered_events
+        GROUP BY species_key
     ),
     ranked_species AS (
         SELECT
             species_stats.*,
+            COUNT(*) OVER () AS total_species_count,
             ROW_NUMBER() OVER (
                 ORDER BY
                     visit_count DESC,
@@ -703,6 +694,7 @@ def fetch_species_story_board_candidates(
     )
     SELECT rf.*,
         rs.species_rank,
+        rs.total_species_count,
         rf.frame_rank,
         rs.visit_count,
         rs.last_seen_timestamp,
@@ -714,8 +706,29 @@ def fetch_species_story_board_candidates(
     ORDER BY rs.species_rank ASC, rf.frame_rank ASC
     """
 
-    cur = conn.execute(query, params)
-    return hydrate_observations(conn, [dict(row) for row in cur.fetchall()])
+    ranked = [dict(row) for row in conn.execute(query, params)]
+    # Rank a narrow projection once, then hydrate only the winning photos. Wide
+    # observation rows include history warnings and JSON that ranking never uses.
+    names = sorted({row["image_filename"] for row in ranked})
+    observations = {}
+    for start in range(0, len(names), 400):
+        batch = names[start : start + 400]
+        marks = ",".join("?" for _ in batch)
+        observations.update(
+            (row["object_key"], dict(row))
+            for row in conn.execute(
+                f"SELECT * FROM current_observations WHERE image_filename IN ({marks})",
+                batch,
+            )
+        )
+    selected = []
+    for row in ranked:
+        observation = observations.get(row["object_key"])
+        if observation is None:  # A concurrent cleanup may have removed it.
+            continue
+        observation.update(row)
+        selected.append(observation)
+    return hydrate_observations(conn, selected)
 
 
 def fetch_sibling_detections(

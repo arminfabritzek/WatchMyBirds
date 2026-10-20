@@ -192,6 +192,16 @@ POSTs; downloads never acknowledge receipt.
 
 ## Homepage species cards
 
+The Live page renders its camera shell and today's observations without waiting
+for archive-wide statistics. Best of Species loads once in a separate request,
+with a visible loading status, an empty state and an explicit Retry on failure.
+Its species total updates the shared ticker when ready; an unknown total is
+omitted rather than displayed as zero. The existing 30-second photo-pool cache
+is shared by concurrent requests; current human answers are refreshed for every
+response. Only dialogs for displayed covers/frames are sent. Archive content
+sits outside the periodically refreshed today's-visitors section so that refresh
+does not remove it or close an open archive viewer.
+
 Today's Visitors and Best of Species use the same fixed four-image budget,
 rendered as two equal columns and two rows without an image-count control.
 Choose distinct source images using the existing favorite and quality priorities;
