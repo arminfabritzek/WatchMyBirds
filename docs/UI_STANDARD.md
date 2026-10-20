@@ -1089,6 +1089,17 @@ controls use compact spacing; narrow or touch layouts keep controls at least
 44px high. Shared image viewers, toolbox actions and image aspect ratios
 remain unchanged.
 
+Open and Done share numbered pagination. Lists of up to 20 pages show every
+number; longer lists show the first and last pages, the current page and up to
+two neighbours on each side, with ellipses for omitted ranges. The current page
+is highlighted and marked with `aria-current="page"`. Previous/Next appear when
+available. Longer lists also offer a labelled Go to page number field and Go
+button; Enter submits the field. Native input validation accepts whole page
+numbers from 1 to the last page. Links and the jump form preserve the tab,
+selected day and date filters. Controls wrap on narrow screens, retain visible
+keyboard focus, and use at least 44px targets
+on narrow or touch layouts.
+
 ### Keyboard navigation (review_grid_keyboard.js)
 
 The Review Grid supports hands-on-keyboard triage. The binding is
@@ -1099,13 +1110,14 @@ Smart-Mode scope, confirm dialogs and toasts are all inherited.
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move the event cursor to the previous / next card. The active card shows `.review-grid__card--kbd-active` (a blue focus ring inside the hard-black event outline) and scrolls to centre. |
-| `←` / `→` | Cycle the *armed* action within the active card: **Invert → Confirm species → Change species → No bird**. The armed button shows `.review-grid__card-action--armed`. Disabled verbs (e.g. Approve before a species is picked) are skipped. |
+| `←` / `→` | Cycle the *armed* action within the active card: **Invert → Confirm species → Change species → Bird · species unknown → No bird(s) in crop(s) → Move to Trash**. The armed button shows `.review-grid__card-action--armed`. Disabled verbs (e.g. Approve before a species is picked) are skipped. |
 | `Space` | Fire the armed action (clicks the armed button). |
 | `Enter` | Open the active event's detail modal (first actionable tile). |
 
-The handler stays inert while a text field is focused or any modal is
-open, so it never competes with form input or the in-modal viewer
-controls. New per-card action verbs added to `review_grid_card.html`
+The handler stays inert while a text field, day navigation or pagination
+control is focused, or any modal is open. Pagination links retain Enter
+activation, and Go retains Enter/Space activation without firing a card action.
+New per-card action verbs added to `review_grid_card.html`
 must also be added to `ACTION_ORDER` in `review_grid_keyboard.js` if
 they should be reachable from the `←/→` cursor.
 
@@ -1127,12 +1139,19 @@ e.g. after Relabel):
 
 `templates/components/review_grid_card.html` renders one event card. The header
 shows the species proposal, date, time window and frame count. Controls are
-Invert, Confirm species, Change species, Bird · species unknown and No bird.
+Invert, Confirm species, Change species, Bird · species unknown,
+No bird(s) in crop(s) and Move to Trash.
 Selecting objects scopes an answer to that selection; without a selection it
-answers every open object in the card. No bird here is an object answer.
+answers every open object in the card. No bird(s) in crop(s) is an object answer,
+including when tiles are displayed in Full mode; it never asserts image-wide absence.
 The full-image no-bird action remains in the shared viewer with its safety gate.
+Move to Trash confirms the selected objects, or all open objects in that event,
+then uses `/api/trash/move`; it creates no bird-presence or species answer.
 
-Cards keep the shared viewer, toolbox, species colour and selection state.
+Cards keep the shared viewer, toolbox and species colour. Selection clears after
+a successful answer or trash action and when leaving or restoring the page.
+Cancelled or failed actions keep the current selection. Shift-click anchors
+belong to their own event card.
 `assets/js/review_grid.js` owns selection and per-mode tile sizing; the page emits
 one shared detection modal per object. There are no evidence controls, continuity
 batch actions or panel layouts.

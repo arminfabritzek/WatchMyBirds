@@ -70,12 +70,12 @@
         </div>
 
         <div class="review-grid__card-actions">
-            {% for verb, label in [('invert_selection', 'Invert'), ('approve_event', 'Confirm species'), ('relabel_event', 'Change species'), ('unresolved_event', 'Bird · species unknown'), ('no_bird_event', 'No bird')] %}
-            <button type="button" class="btn btn--secondary btn--sm"
+            {% for verb, label in [('invert_selection', 'Invert'), ('approve_event', 'Confirm species'), ('relabel_event', 'Change species'), ('unresolved_event', 'Bird · species unknown'), ('no_bird_event', 'No bird(s) in crop(s)'), ('trash_event', 'Move to Trash')] %}
+            <button type="button" class="btn {{ 'btn--danger' if verb == 'trash_event' else 'btn--secondary' }} btn--sm"
                     data-review-grid-action="{{ verb }}"
                     data-scope-label-event="{{ label }}" data-scope-label-selection="{{ label }} ({N})"
-                    data-scope-tip-event="Apply to all open objects in this event"
-                    data-scope-tip-selection="Apply to the {N} selected objects">{{ label }}</button>
+                    data-scope-tip-event="{{ 'Move all open objects in this event to Trash' if verb == 'trash_event' else 'Answer all open objects as not birds; the full image is not assessed' if verb == 'no_bird_event' else 'Apply to all open objects in this event' }}"
+                    data-scope-tip-selection="{{ 'Move the {N} selected objects to Trash' if verb == 'trash_event' else 'Answer the {N} selected objects as not birds; the full image is not assessed' if verb == 'no_bird_event' else 'Apply to the {N} selected objects' }}">{{ label }}</button>
             {% endfor %}
         </div>
 
@@ -95,6 +95,7 @@
             {% if not member.context_only and member.best_detection_id %}
             <div class="wm-tile__select review-grid__tile-select">
                 <input type="checkbox"
+                       autocomplete="off"
                        class="form-check-input wm-tile__checkbox review-grid__tile-checkbox"
                        value="{{ member.best_detection_id }}"
                        data-detection-id="{{ member.best_detection_id }}"

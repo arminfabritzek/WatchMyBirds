@@ -141,7 +141,7 @@
 
     /* Smart-Mode for card-header buttons.
      *
-     * Card-header Approve / Relabel / Trash / No birds in full image now respect
+     * Card-header Approve / Relabel / Trash / No bird(s) in crop(s) respect
      * the operator's selection: if any tile checkbox in the card is
      * checked, the action targets only those frames. If nothing is
      * checked, it falls back to every actionable frame in the event
@@ -203,10 +203,6 @@
         updateCardApproveState(card, scope);
     }
 
-    function refreshAllCardActionLabels() {
-        document.querySelectorAll('[data-review-grid-card]').forEach(refreshCardActionLabels);
-    }
-
     function updateCardApproveState(card, scope) {
         const approveBtn = card.querySelector('[data-review-grid-action="approve_event"]');
         const unresolvedBtn = card.querySelector('[data-review-grid-action="unresolved_event"]');
@@ -235,9 +231,31 @@
                 ...(action === 'no_bird' ? { object_bird_presence: 'absent' }
                     : { species_identity: action === 'unknown' ? 'unknown' : 'corrected',
                         species_key: action === 'species' ? species : null }) });
+            resetReviewSelection();
             window.location.reload();
         } catch (error) {
             if (window.wmToast) window.wmToast(error.message || 'Unable to save answers', 'error', 5000);
+            delete card.dataset.saving;
+            button.disabled = false;
+        }
+    }
+
+    async function moveCardToTrash(card, button) {
+        if (card.dataset.saving) return;
+        const scope = getCardScopeIds(card);
+        if (!scope.count) return;
+        const prompt = scope.isSelectionScoped
+            ? 'Move ' + scope.count + ' selected object(s) to Trash?'
+            : 'Move all ' + scope.count + ' open object(s) in this event to Trash?';
+        if (!window.confirm(prompt)) return;
+        card.dataset.saving = '1';
+        button.disabled = true;
+        try {
+            await postJson('/api/trash/move', { detection_ids: scope.ids });
+            resetReviewSelection();
+            window.location.reload();
+        } catch (error) {
+            if (window.wmToast) window.wmToast(error.message || 'Unable to move objects to Trash', 'error', 5000);
             delete card.dataset.saving;
             button.disabled = false;
         }
@@ -253,7 +271,7 @@
      * open. We schedule the toggle on a 220 ms timer that gets
      * cancelled by the dblclick handler.
      */
-    let lastClickedTileIndex = null;
+    const lastClickedTiles = new WeakMap();
     const SINGLE_CLICK_DELAY = 220;
     const pendingSingleClick = new WeakMap();
 
@@ -272,6 +290,21 @@
         refreshCardActionLabels(card);
     }
 
+    function resetReviewSelection() {
+        document.querySelectorAll('[data-review-grid-card]').forEach(function (card) {
+            tileCheckboxes(card).forEach(function (checkbox) {
+                setTileSelectionState(checkbox, false);
+            });
+            card.querySelectorAll('[data-tile-image]').forEach(function (tileImage) {
+                const pending = pendingSingleClick.get(tileImage);
+                if (pending) clearTimeout(pending);
+                pendingSingleClick.delete(tileImage);
+            });
+            lastClickedTiles.delete(card);
+            syncCardSelectionUi(card);
+        });
+    }
+
     function toggleTileSelection(tileImage, shiftKey) {
         const card = tileImage.closest('[data-review-grid-card]');
         const tile = tileImage.closest('.review-grid__tile');
@@ -280,9 +313,10 @@
         if (!cb) return;
         const all = tileCheckboxes(card);
         const idx = all.indexOf(cb);
-        if (shiftKey && lastClickedTileIndex !== null && idx !== -1) {
-            const lo = Math.min(lastClickedTileIndex, idx);
-            const hi = Math.max(lastClickedTileIndex, idx);
+        const anchorIndex = all.indexOf(lastClickedTiles.get(card));
+        if (shiftKey && anchorIndex !== -1 && idx !== -1) {
+            const lo = Math.min(anchorIndex, idx);
+            const hi = Math.max(anchorIndex, idx);
             const targetState = !cb.checked;
             for (let i = lo; i <= hi; i++) {
                 setTileSelectionState(all[i], targetState);
@@ -290,7 +324,7 @@
         } else {
             setTileSelectionState(cb, !cb.checked);
         }
-        if (idx !== -1) lastClickedTileIndex = idx;
+        if (idx !== -1) lastClickedTiles.set(card, cb);
         syncCardSelectionUi(card);
     }
 
@@ -303,7 +337,7 @@
         checkboxes.forEach(function (cb) {
             setTileSelectionState(cb, !cb.checked);
         });
-        lastClickedTileIndex = null;
+        lastClickedTiles.delete(card);
         syncCardSelectionUi(card);
     }
 
@@ -365,7 +399,9 @@
             if (!card) return;
             if (verb === 'invert_selection') {
                 invertCardSelection(card);
-            } else {
+            } else if (verb === 'trash_event') {
+                moveCardToTrash(card, actionBtn);
+            } else if (['approve_event', 'relabel_event', 'unresolved_event', 'no_bird_event'].includes(verb)) {
                 answerOrdinaryEvent(card, actionBtn, verb);
             }
         }
@@ -382,9 +418,10 @@
         if (card) refreshCardActionLabels(card);
     });
 
-    // Initial pass on page load (selection might be empty, but this
-    // also ensures the data-scope-label-event default labels stick).
-    document.addEventListener('DOMContentLoaded', refreshAllCardActionLabels);
+    // Firefox restores checkbox state by position even when the objects changed.
+    document.addEventListener('DOMContentLoaded', resetReviewSelection);
+    window.addEventListener('pagehide', resetReviewSelection);
+    window.addEventListener('pageshow', resetReviewSelection);
 
     /* Relabel Event from the card header.
      * Opens WmSpeciesPicker for the event's cover detection, then

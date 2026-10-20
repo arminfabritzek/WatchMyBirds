@@ -9,7 +9,7 @@
  *
  *   ArrowUp / ArrowDown  → move the event cursor (prev / next card)
  *   ArrowLeft / ArrowRight → cycle the armed action within the active
- *                            card: Invert → Approve → Relabel → No Bird
+ *                            card: Invert → Approve → Relabel → Unknown → No bird(s) in crop(s)
  *                            → Trash
  *   Space                → fire the armed action
  *   Enter                → open the active event's detail modal
@@ -30,6 +30,7 @@
         'invert_selection',
         'approve_event',
         'relabel_event',
+        'unresolved_event',
         'no_bird_event',
         'trash_event'
     ];
@@ -174,7 +175,7 @@
         if (event.defaultPrevented) return;
         if (event.metaKey || event.ctrlKey || event.altKey) return;
         if (isTypingTarget(event.target)) return;
-        if (event.target.closest('.review-day-nav')) return;
+        if (event.target.closest('.review-day-nav, .review-pagination')) return;
         if (aModalIsOpen()) return;
 
         switch (event.key) {

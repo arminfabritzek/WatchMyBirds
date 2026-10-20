@@ -77,11 +77,7 @@
 
 </section>
 
-<nav class="station-filters" aria-label="Review pages">
-{% if review.page > 1 %}<a href="?day={{ review.selected_day }}&page={{ review.page-1 }}&{{ selection | urlencode }}">Previous</a>{% endif %}
-<span>Page {{ review.page }} of {{ review.page_count }}</span>
-{% if review.page < review.page_count %}<a href="?day={{ review.selected_day }}&page={{ review.page+1 }}&{{ selection | urlencode }}">Next</a>{% endif %}
-</nav>
+{% include 'partials/review_pagination.html' %}
 
 {% endblock %}
 

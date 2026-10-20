@@ -22,11 +22,7 @@
 </section>
 {% else %}<p class="empty-state">No {{ 'answered' if answered else 'open' }} objects in this selection.</p>{% endfor %}
 </div>
-<nav class="station-filters" aria-label="Review pages">
-{% if page > 1 %}<a href="?answered={{ 1 if answered else 0 }}&day={{ review.selected_day }}&page={{ page-1 }}&{{ selection | urlencode }}">Previous</a>{% endif %}
-<span>Page {{ page }} of {{ review.page_count }}</span>
-{% if page < review.page_count %}<a href="?answered={{ 1 if answered else 0 }}&day={{ review.selected_day }}&page={{ page+1 }}&{{ selection | urlencode }}">Next</a>{% endif %}
-</nav>
+{% include 'partials/review_pagination.html' %}
 {% endblock %}
 {% block modals %}
 {% from 'components/detection_modal.html' import render_modal %}

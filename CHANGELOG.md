@@ -6,6 +6,11 @@
   reading, and show when corrected answers require a refresh of report totals.
 - Optional Review separates Open and Done answers by day, including answered
   objects whose original photos are no longer available.
+- Review offers numbered pages and direct page jumps, preserves date filters,
+  and keeps pagination keys separate from bird-answer shortcuts.
+- Review adds object-scoped Trash and explicit crop-only no-bird labels.
+  Completed actions and navigation clear selections; Shift-click ranges stay
+  within their event.
 - Human answers use one API and one fact history. Withdrawing an answer removes
   everything written by that action; stored automatic decisions stay separate.
 - Updates preserve older answers, keep withdrawn answers withdrawn, and return

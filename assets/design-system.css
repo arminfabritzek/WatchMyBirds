@@ -2004,6 +2004,68 @@ code {
     cursor: not-allowed;
 }
 
+.review-pagination {
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    padding-inline: var(--space-md);
+}
+
+.review-pagination .pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.review-pagination .pagination li a,
+.review-pagination .pagination li span {
+    font-variant-numeric: tabular-nums;
+    transition-property: background-color, border-color, color;
+}
+
+.review-pagination a:focus-visible,
+.review-pagination input:focus-visible,
+.review-pagination button:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+.review-pagination .review-pagination__ellipsis span {
+    background: transparent;
+    border-color: transparent;
+    min-width: 0;
+}
+
+.review-pagination__jump {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    max-width: 100%;
+}
+
+.review-pagination__jump .form-control {
+    width: 6rem;
+}
+
+.review-pagination__jump .form-control,
+.review-pagination__jump .btn {
+    min-height: 36px;
+}
+
+@media (max-width: 760px), (hover: none), (pointer: coarse) {
+    .review-pagination .pagination li a,
+    .review-pagination .pagination li span {
+        min-width: 44px;
+        height: 44px;
+    }
+
+    .review-pagination__jump .form-control,
+    .review-pagination__jump .btn {
+        min-height: 44px;
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    EMPTY STATE - Shared Style
    ═══════════════════════════════════════════════════════════════════════════ */
