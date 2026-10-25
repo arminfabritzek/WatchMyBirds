@@ -16,7 +16,7 @@
     "test": "node --test ../../tests/telemetry_worker.test.cjs"
   },
   "devDependencies": {
-    "wrangler": "^4.149.0"
+    "wrangler": "^4.151.3"
   },
   "overrides": {
     "esbuild": "^0.28.1",
