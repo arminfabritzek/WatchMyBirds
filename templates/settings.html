@@ -1991,14 +1991,14 @@
     <div class="settings-panel" id="panelPrivacy">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelPrivacy')">
             Data Sharing
-            <span class="settings-panel__trigger-info">Local-only by default — optional anonymous heartbeat</span>
+            <span class="settings-panel__trigger-info">Optional installation reports and diagnostics</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
             <div class="settings-field mb-3">
                 <p class="mb-2">
-                    WatchMyBirds runs entirely on your Pi. Nothing about your bird
-                    activity, images, or detections ever leaves the device.
+                    WatchMyBirds processes bird images locally. Outbound integrations
+                    such as Telegram and MQTT run only when you enable them.
                 </p>
                 <p class="mb-2">
                     Optionally, you can let this installation send <strong>one
@@ -2009,8 +2009,8 @@
                     no location, no email in the heartbeat.</strong>
                 </p>
                 <p class="mb-3">
-                    The maintainer keeps a local history of these reports without
-                    automatic expiry. See the <a href="/privacy" target="_blank"
+                    Installation reports are kept for 90 days in Cloudflare and the
+                    reporting cache. Counts without installation IDs are retained for trends. See the <a href="/privacy" target="_blank"
                     rel="noopener">Privacy page</a> for the data collected,
                     its purpose, and storage details.
                 </p>
@@ -2036,8 +2036,20 @@
             </div>
 
             <div class="settings-field mb-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="telemetry_diagnostics">
+                    <label class="form-check-label" for="telemetry_diagnostics"><strong>Also share usage and diagnostic summaries</strong></label>
+                </div>
+                <p class="form-text">Enable installation reports above to share diagnostics. Daily flags cover setup, camera and model outcomes,
+                    Review, corrections and export use, web errors, plus uptime and slowest inference-time ranges.
+                    Includes deployment type. No images, species, camera URLs, raw logs, names or location.
+                    Daily summaries refresh at most hourly; failed deliveries retry. Older consent does not enable this.</p>
+                <button type="button" class="btn btn--secondary btn--sm" id="telemetry_save_consent">Save sharing choice</button>
+                <p id="telemetry_delivery" class="form-text" role="status"></p>
+            </div>
+            <div class="settings-field mb-3">
                 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <button type="button" class="btn btn-outline-primary btn-sm" id="telemetry_preview_btn">
+                    <button type="button" class="btn btn--secondary btn--sm" id="telemetry_preview_btn">
                         Show what would be sent
                     </button>
                     <small class="text-muted">
@@ -2052,9 +2064,9 @@
                     <div class="settings-field__label">Payload (POST body, JSON)</div>
                     <pre class="p-2 bg-body-secondary rounded" style="font-size: 0.85em; margin-bottom: .5rem;"><code id="telemetry_preview_payload"></code></pre>
                     <small class="text-muted d-block">
-                        These eight fields are <strong>everything</strong> we send. The
-                        Worker rejects any extra field with HTTP 400 — verifiable in
-                        <code>infra/telemetry-worker/src/worker.js</code>.
+                        Basic reports contain eight fields. The diagnostics preview shows the
+                        additional allowed fields with example values; actual flags reflect observed activity.
+                        No free-text logs or content are sent.
                     </small>
                 </div>
             </div>
@@ -2077,8 +2089,7 @@
                 </div>
                 <div class="settings-field__help mt-2">
                     Rotating wipes your current ID and generates a new one. The next
-                    heartbeat (if telemetry is on) will use the new ID. Rotation does not delete previously received reports or the
-                    maintainer’s local history.
+                    heartbeat (if telemetry is on) will use the new ID. Rotation does not delete previously received reports; they expire within the 90-day retention window.
                 </div>
             </div>
 
@@ -2094,6 +2105,9 @@
         const PREVIEW_URL = "/api/v1/settings/telemetry/preview";
 
         const toggle = document.getElementById("telemetry_enabled_toggle");
+        const diagnostics = document.getElementById("telemetry_diagnostics");
+        const consentButton = document.getElementById("telemetry_save_consent");
+        const delivery = document.getElementById("telemetry_delivery");
         const badge = document.getElementById("telemetry_status_badge");
         const idDisplay = document.getElementById("telemetry_installation_id_display");
         const lastSentDisplay = document.getElementById("telemetry_last_sent_display");
@@ -2115,6 +2129,12 @@
 
         function renderStatus(s) {
             toggle.checked = !!s.enabled;
+            diagnostics.checked = s.consent_version === 2;
+            const state = s.delivery || {};
+            delivery.textContent = "Collection: " + (s.enabled ? (s.consent_version === 2 ? "usage and diagnostics" : "basic installation report") : "off")
+                + ". Delivery: " + (state.status || "not attempted").replaceAll("_", " ")
+                + (state.last_success ? ". Last acknowledged: " + state.last_success : "")
+                + (state.retry_at > Date.now() / 1000 ? ". Retry after " + new Date(state.retry_at * 1000).toLocaleString() : "");
             if (s.enabled) {
                 badge.textContent = "on";
                 badge.classList.remove("bg-secondary");
@@ -2167,22 +2187,22 @@
             const data = await r.json();
             previewEndpoint.textContent = data.method + " " + data.endpoint;
             previewUa.textContent = "User-Agent: " + data.user_agent;
-            previewPayload.textContent = JSON.stringify(data.payload, null, 2);
+            previewPayload.textContent = JSON.stringify(diagnostics.checked ? data.diagnostics_example : data.payload, null, 2);
         }
 
-        toggle.addEventListener("change", async () => {
+        async function saveConsent() {
             const enabled = toggle.checked;
             try {
                 const r = await fetch(TOGGLE_URL, {
                     method: "POST",
                     credentials: "same-origin",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ enabled: enabled })
+                    body: JSON.stringify({ enabled: enabled, consent_version: diagnostics.checked ? 2 : 1 })
                 });
                 if (!r.ok) throw new Error("HTTP " + r.status);
                 showMessage(
                     enabled
-                        ? "Telemetry on. First heartbeat will send within ~5 minutes."
+                        ? "Sharing choice saved. A report will be attempted shortly."
                         : "Telemetry off. No further heartbeats will be sent.",
                     "success"
                 );
@@ -2192,6 +2212,11 @@
                 toggle.checked = !enabled;
                 showMessage("Could not change telemetry: " + e.message, "danger");
             }
+        }
+        toggle.addEventListener("change", saveConsent);
+        consentButton.addEventListener("click", saveConsent);
+        diagnostics.addEventListener("change", () => {
+            if (!previewBox.classList.contains("d-none")) loadPreview().catch(() => {});
         });
 
         rotateBtn.addEventListener("click", async () => {

@@ -40,3 +40,22 @@ jobs:
       # and on the appliance, but a hosted runner has neither.
       - name: Run test suite
         run: pytest -q -m "not host_env"
+
+  telemetry-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/telemetry-worker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install pinned npm
+        run: npm install --global --ignore-scripts "$(node -p "require('./package.json').packageManager")"
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --include=dev --no-audit --no-fund
+      - name: Test Worker with local D1 databases
+        run: npm test

@@ -3,16 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "npm@11.8.0",
-  "description": "Cloudflare Worker that receives anonymous opt-in usage heartbeats from WatchMyBirds installations.",
+  "description": "Cloudflare Worker that receives pseudonymous opt-in usage heartbeats from WatchMyBirds installations.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "db:create": "wrangler d1 create watchmybirds-heartbeats --jurisdiction=eu",
     "db:apply": "wrangler d1 execute watchmybirds-heartbeats --remote --file=schema.sql",
-    "db:dau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS dau FROM heartbeats WHERE date >= date('now', '-1 day')\"",
-    "db:wau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS wau FROM heartbeats WHERE date >= date('now', '-7 days')\"",
-    "db:mau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS mau FROM heartbeats WHERE date >= date('now', '-30 days')\""
+    "db:dau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS dau FROM heartbeats WHERE date >= date('now')\"",
+    "db:wau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS wau FROM heartbeats WHERE date >= date('now', '-6 days')\"",
+    "db:mau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS mau FROM heartbeats WHERE date >= date('now', '-29 days')\"",
+    "test": "node --test ../../tests/telemetry_worker.test.cjs"
   },
   "devDependencies": {
     "wrangler": "^4.149.0"

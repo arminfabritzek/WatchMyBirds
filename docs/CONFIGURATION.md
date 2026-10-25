@@ -457,3 +457,15 @@ are likewise preserved from the destination or left unset on a fresh device.
 - [Architecture](ARCHITECTURE.md) — System design overview
 - [Invariants](INVARIANTS.md) — Core rules
 - [Security Policy](../SECURITY.md) — Hardening measures
+
+## Telemetry consent
+
+`telemetry_enabled` remains false by default. `telemetry_consent_version` is 0
+(no recorded choice), 1 (basic reports), or 2 (usage/diagnostics explicitly accepted).
+Only literal true plus integer version 2 enables diagnostic instrumentation.
+`telemetry_consent_at` records the latest choice locally. Old enabled settings without
+a consent version continue basic reports only. Settings and initial password setup
+explain both choices; declining never restricts functionality.
+`telemetry_endpoint` accepts HTTPS or HTTP loopback for local testing; redirects are
+refused. `telemetry_metrics.json` holds a bounded retry queue beside settings.yaml.
+See [Privacy](PRIVACY.md) for fields, cadence, expiry and backup considerations.

@@ -155,31 +155,12 @@ def setup_password():
                 if request.form.get("telemetry_optin") == "1":
                     try:
                         from config import get_config
-                        from utils.settings import (
-                            load_settings_yaml,
-                            save_settings_yaml,
-                        )
-                        from web.services.telemetry_service import (
-                            _ensure_installation_id,
-                            wake_now,
-                        )
+                        from core.telemetry_metrics import metrics
+                        from web.services.telemetry_service import set_consent
 
-                        cfg = get_config()
-                        output_dir = str(
-                            cfg.get("OUTPUT_DIR", "./data/output")
-                        )
-                        yaml_settings = load_settings_yaml(output_dir)
-                        yaml_settings["telemetry_enabled"] = True
-                        save_settings_yaml(yaml_settings, output_dir)
-                        cfg["telemetry_enabled"] = True
-                        cfg["telemetry_installation_id"] = (
-                            _ensure_installation_id(cfg)
-                        )
-                        wake_now()
-                        logger.info(
-                            "Telemetry enabled at first-run setup ip=%s",
-                            _safe_log_value(request.remote_addr),
-                        )
+                        version = 2 if request.form.get("telemetry_diagnostics") == "2" else 1
+                        set_consent(get_config(), True, version)
+                        metrics.record("setup_completed")
                     except Exception as exc:
                         # Never let a telemetry hiccup block password
                         # setup — the password is the user's actual goal.

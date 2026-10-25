@@ -9,7 +9,7 @@ WatchMyBirds disables ONNX Runtime's upstream telemetry before loading the
 inference library. This is independent of the optional installation reports below.
 
 The separate optional traffic to the WatchMyBirds operator is a voluntary
-daily heartbeat that helps us understand installation activity and software adoption. **It is off by
+installation report that helps us understand adoption, with a separate choice for usage and diagnostic summaries. **It is off by
 default**, and you can enable it during initial password setup or in
 **Settings → Privacy** in your running install.
 
@@ -19,7 +19,7 @@ disagree, please report the discrepancy. The collection code is in `web/services
 
 ---
 
-## What we send (only when you opt in)
+## Basic reports (only when you opt in)
 
 One small JSON payload, once per UTC day, to
 `https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat`:
@@ -74,6 +74,40 @@ number we generate on your device — it is **not** derived from your
 hardware, MAC, or hostname. The stable ID lets us recognize repeat
 reports from the same installation; the data is pseudonymous, not fully anonymous.
 
+## Optional usage and diagnostics (consent version 2)
+
+The second, initially unchecked choice enables additional daily summaries. Existing
+consent never enables these fields automatically. Declining does not restrict features.
+The client stores the consent version and decision time locally in settings.yaml.
+
+In addition to the eight basic fields, these reports contain `schema_version: 2`,
+`consent_version: 2`, the UTC `report_date`, `deployment` (`container`,
+`raspberry_pi`, or `source`), and a bounded `metrics` object:
+
+| Metric | Meaning |
+|---|---|
+| `setup_completed` | Initial password setup completed after choosing diagnostics |
+| `camera_frame`, `camera_error` | A decoded frame arrived / camera recovery was requested |
+| `model_ready`, `model_error` | Detector initialization succeeded / failed when inference was requested |
+| `inference_ok`, `inference_error` | An inference call succeeded / raised an error |
+| `review_used`, `correction_used`, `export_used` | An authenticated operator successfully used the corresponding page/action |
+| `web_error` | An authenticated request returned a server error |
+| `uptime_bucket` | Longest observed process uptime that day: <1h, 1–6h, 6–24h, 1–7d, 7–30d, or ≥30d (codes 0–5) |
+| `inference_latency_bucket` | Slowest observed successful inference: <50, 50–100, 100–250, 250–1000, 1000–5000, or ≥5000 ms (codes 0–5) |
+
+Flags are 0/1, not event counts. Missing fields mean unobserved, not failure or
+non-use. Setup completion does not prove camera setup succeeded. Export use does
+not prove an archive was received or shared. Version and deployment describe the
+runtime when the report is sent; they may have changed since a queued report day.
+Source checkouts fall back to Git's version/tag/commit description, with a dirty
+marker for local changes, when no packaged version is available.
+
+Daily summaries are refreshed at most hourly and deduplicated by installation/date.
+A local queue retains today and up to seven prior UTC dates for retries after network
+outages or restarts. Retries use backoff; failed writes are never marked delivered.
+Turning sharing off or reverting to basic reports clears queued diagnostics.
+Previously delivered reports remain until expiry or a deletion request.
+
 ## What the heartbeat does not include
 
 - Your IP address, country, region, or any geo-location
@@ -83,7 +117,7 @@ reports from the same installation; the data is pseudonymous, not fully anonymou
 - Exact RAM in bytes (we round to whole GB on purpose)
 - Any image, video, or audio data
 - Any species names, observation counts, or detection events
-- Error messages, stack traces, or debug logs
+- Raw error messages, stack traces, or debug logs (diagnostics sends only the fixed flags above)
 - Camera URLs, settings, passwords, or anything from your config
 - Your email or any identifier from your operating system
 
@@ -127,15 +161,23 @@ we do not include it in the heartbeat payload or store it in our telemetry datab
 
 ## Storage and retention
 
-Cloudflare's scheduled daily job at 04:30 UTC aggregates the previous day's
-heartbeats and removes raw rows from earlier dates. This is a daily cleanup,
-not a guaranteed 24-hour deletion deadline.
+Cloudflare D1 is the reporting authority. Individual installation reports and
+consented diagnostics cover today and the preceding 89 UTC dates. The scheduled
+04:30 UTC job updates daily installation/cohort counts and removes expired reports
+in one transaction. The maintainer's local reporting cache follows the same window;
+it is not needed to preserve cloud history. Cached rows expire when the cache runs.
+If a scheduled job fails, physical cloud deletion waits for the next successful
+run; reporting queries exclude expired dates. Cleanup success is recorded for monitoring.
 
-The maintainer also keeps a local history of installation IDs, report dates,
-versions, and the technical fields listed above. This history is used to
-count returning installations, follow version adoption, and prioritize
-compatibility work. It currently has no automatic expiry. Aggregated counts
-contain no installation IDs and are also retained for trend analysis.
+Daily aggregate installation/cohort counts contain no installation IDs and remain
+for trend analysis. They cannot reconstruct unique returning installations across
+days. Diagnostic details are not retained in these long-term aggregates. Small
+cohorts can still be distinctive; we do not describe the whole dataset as anonymous.
+
+Cloudflare's database recovery backups have a separate provider-controlled retention
+window. Restored databases must run the retention job before reporting access resumes.
+Local diagnostic queues are included if an operator backs up the entire data directory;
+such operator-managed copies must be covered by that operator's backup policy.
 
 ## Your controls
 
@@ -149,15 +191,14 @@ contain no installation IDs and are also retained for trend analysis.
 
 - **Rotate ID** — if you want the next opt-in to be counted as a fresh
   install, click the **Rotate ID** button in Settings → Privacy. This wipes
-  your current ID and generates a new one. Future reports use the new ID. Rotation does not delete
-  previously received reports or the local history.
+  your current ID and generates a new one. Future reports use the new ID. Rotation clears pending local diagnostics, but does not delete previously received reports; those expire under the 90-day policy.
 
 - **Block at the firewall** — the heartbeat hostname is deliberately
   separate from any other WatchMyBirds endpoint, so you can firewall-block
   `watchmybirds-telemetry.wmb-infra.workers.dev` without breaking anything else in the app.
 
 - **Override the endpoint** — set `telemetry_endpoint` in `settings.yaml` to
-  point at any URL you control (or `http://localhost/discard`). The
+  point at an HTTPS URL you control (or an HTTP loopback URL such as `http://localhost/discard`). Redirects are refused. The
   toggle's "on" state then sends to wherever you said.
 
 ## Why we ask at all
@@ -166,8 +207,7 @@ WatchMyBirds is a small open-source project maintained by one person.
 GitHub stars and clones don't tell us if anyone actually runs the app —
 only if they bookmarked it. A daily heartbeat lets us see whether the
 project is being used, which informs decisions about what to fix, what to
-build next, and whether continuing is worth the time. That's the entire
-purpose of this feature.
+build next, and whether continuing is worth the time. Optional diagnostics additionally helps identify setup problems, release regressions, performance issues and feature use.
 
 ## Questions or concerns
 

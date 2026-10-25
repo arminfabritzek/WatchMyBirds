@@ -27,6 +27,9 @@ class PathManager:
         # Backup directory
         self.backup_dir = self.base_dir / "backup"
 
+    def get_telemetry_metrics_path(self) -> Path:
+        return self.base_dir / "telemetry_metrics.json"
+
     def get_ptz_snapshot_path(self, camera_id: int, kind: str = "overview") -> Path:
         """Absolute path for a PTZ overview snapshot used by the Mini-Map UI."""
         self.ptz_snapshots_dir.mkdir(parents=True, exist_ok=True)

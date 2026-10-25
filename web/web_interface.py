@@ -8,6 +8,7 @@ from threading import Lock
 
 from flask import (
     Flask,
+    Response,
     g,
     request,
     session,
@@ -412,6 +413,16 @@ def create_web_interface(detection_manager, system_monitor=None):
         "/api/v1/models/detector",
         "/api/v1/models/classifier",
     )
+
+    @server.after_request
+    def record_usage(response: "Response") -> "Response":
+        from web.services.telemetry_service import record_web_response
+
+        record_web_response(
+            request.endpoint, request.method, response.status_code,
+            bool(session.get("authenticated")),
+        )
+        return response
 
     @server.after_request
     def log_request(response):

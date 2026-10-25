@@ -247,6 +247,8 @@ DEFAULTS = {
     # popup. Endpoint is overridable for self-hosters / privacy-paranoid
     # operators (point it at /dev/null or a self-hosted Worker).
     "telemetry_enabled": False,
+    "telemetry_consent_version": 0,
+    "telemetry_consent_at": "",
     # Canonical default lives in web/services/telemetry_service.DEFAULT_TELEMETRY_ENDPOINT;
     # kept as a literal here to avoid a config -> web.services import cycle. Keep in sync.
     "telemetry_endpoint": (
@@ -466,7 +468,10 @@ def _load_config() -> dict[str, Any]:
     # toggle "on" state is forgotten on every service restart (the loader
     # would silently drop telemetry_enabled=true from YAML, so the scheduler
     # logged "started" but never actually sent).
-    for key in ("telemetry_enabled", "telemetry_endpoint", "telemetry_installation_id"):
+    for key in (
+        "telemetry_enabled", "telemetry_endpoint", "telemetry_installation_id",
+        "telemetry_consent_version", "telemetry_consent_at",
+    ):
         if key in yaml_settings:
             config[key] = yaml_settings[key]
 

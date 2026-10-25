@@ -11,6 +11,7 @@ import time
 import numpy as np
 
 from config import get_config
+from core.telemetry_metrics import metrics
 from detectors.detector import Detector
 from detectors.interfaces.detection import DetectionInterface, DetectionResult
 from logging_config import get_logger
@@ -102,6 +103,7 @@ class DetectionService(DetectionInterface):
             DetectionResult with detected objects.
         """
         if not self._ensure_initialized():
+            metrics.record("model_error")
             return DetectionResult(
                 detected=False,
                 original_frame=None,
@@ -110,6 +112,7 @@ class DetectionService(DetectionInterface):
                 inference_time_ms=0,
             )
 
+        metrics.record("model_ready")
         start_time = time.time()
 
         try:
@@ -122,6 +125,11 @@ class DetectionService(DetectionInterface):
             )
 
             inference_time_ms = int((time.time() - start_time) * 1000)
+            metrics.record("inference_ok")
+            metrics.record(
+                "inference_latency_bucket",
+                sum(inference_time_ms >= n for n in (50, 100, 250, 1000, 5000)),
+            )
 
             return DetectionResult(
                 detected=object_detected,
@@ -133,6 +141,7 @@ class DetectionService(DetectionInterface):
 
         except Exception as e:
             inference_time_ms = int((time.time() - start_time) * 1000)
+            metrics.record("inference_error")
             logger.error(f"Detection error: {e}")
 
             return DetectionResult(

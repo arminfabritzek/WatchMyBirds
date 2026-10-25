@@ -4,6 +4,7 @@
 # ------------------------------------------------------------------------------
 # video_capture.py
 from config import get_config
+from core.telemetry_metrics import metrics
 
 config = get_config()
 
@@ -938,6 +939,8 @@ class VideoCapture:
 
                         self.consecutive_none_frames = 0
 
+                        metrics.record("camera_frame")
+
                         # We have a real decoded frame, enqueue it
                         self.last_enqueued_time = time.time()
 
@@ -1261,6 +1264,7 @@ class VideoCapture:
         MUST route through here instead of calling recovery actions directly.
         Enforces: single-flight, cooldown, circuit breaker, timer coalescing.
         """
+        metrics.record("camera_error")
         attempt_id = next(self._recovery_gen)
         now = time.time()
 

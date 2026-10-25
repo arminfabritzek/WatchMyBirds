@@ -1317,6 +1317,7 @@ def telemetry_status():
     from web.services.telemetry_service import (
         _get_last_sent_path,
         _read_last_sent_date,
+        delivery_status,
         is_enabled,
     )
 
@@ -1328,6 +1329,8 @@ def telemetry_status():
     return jsonify(
         {
             "enabled": is_enabled(cfg),
+            "consent_version": cfg.get("telemetry_consent_version", 0),
+            "delivery": delivery_status(),
             "installation_id_short": short_id,
             "installation_id_set": bool(short_id),
             "last_sent_at": _read_last_sent_date(output_dir),
@@ -1353,7 +1356,14 @@ def telemetry_preview():
     returned, so the operator can verify the destination matches what
     the Privacy page describes.
     """
-    from web.services.telemetry_service import USER_AGENT, build_payload_preview
+    from datetime import UTC, datetime
+
+    from core.telemetry_metrics import FLAGS, RANGES
+    from web.services.telemetry_service import (
+        USER_AGENT,
+        build_diagnostic_payload,
+        build_payload_preview,
+    )
 
     cfg = get_config()
     return jsonify(
@@ -1362,6 +1372,10 @@ def telemetry_preview():
             "method": "POST",
             "user_agent": USER_AGENT,
             "payload": build_payload_preview(cfg),
+            "diagnostics_example": build_diagnostic_payload(
+                cfg, datetime.now(UTC).date().isoformat(),
+                dict.fromkeys(sorted(FLAGS | RANGES.keys()), 0), preview=True,
+            ),
         }
     )
 
@@ -1371,54 +1385,26 @@ def telemetry_preview():
 def telemetry_toggle():
     """Toggle telemetry on or off.
 
-    Body: {"enabled": true | false}
+    Body: {"enabled": true | false, "consent_version": 1 | 2}
 
     Persists to settings.yaml. On enable, also lazily generates the
     `installation_id` (if not already present) so the Settings UI
     immediately shows a real UUID instead of the placeholder — and
     so the scheduler's next tick can find a UUID ready to send.
 
-    Toggling off does NOT wipe the installation_id (per locked
-    decision D5); use /rotate for that.
+    Turning sharing off preserves the installation ID; /rotate replaces it.
     """
-    from utils.settings import load_settings_yaml, save_settings_yaml
-    from web.services.telemetry_service import _ensure_installation_id, wake_now
+    from web.services.telemetry_service import set_consent
 
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or type(data.get("enabled")) is not bool:
+        return jsonify(status="error", message="enabled must be a boolean"), 400
+    version = data.get("consent_version", 1)
+    if type(version) is not int or version not in (1, 2):
+        return jsonify(status="error", message="Unsupported consent version"), 400
     try:
-        data = request.get_json(silent=True) or {}
-        enabled = data.get("enabled")
-        if not isinstance(enabled, bool):
-            return jsonify(
-                {"status": "error", "message": "'enabled' must be a boolean"}
-            ), 400
-
-        cfg = get_config()
-        output_dir = str(cfg.get("OUTPUT_DIR", "./data/output"))
-
-        yaml_settings = load_settings_yaml(output_dir)
-        yaml_settings["telemetry_enabled"] = enabled
-        save_settings_yaml(yaml_settings, output_dir)
-
-        # Mirror into in-memory config so other workers see it without
-        # needing to reload settings.yaml from disk.
-        cfg["telemetry_enabled"] = enabled
-
-        # On enable: generate a real installation_id NOW (idempotent —
-        # existing IDs are preserved, only missing/malformed trigger
-        # generation). This way the UI shows a real ID immediately
-        # after the toggle flips, instead of the preview placeholder
-        # that confused operators expecting "toggle on = ID exists".
-        if enabled:
-            new_id = _ensure_installation_id(cfg)
-            cfg["telemetry_installation_id"] = new_id
-
-            # Poke the scheduler thread out of its current sleep so
-            # the first heartbeat goes within ~10ms instead of waiting
-            # up to one full check_interval (300s default).
-            wake_now()
-
-        logger.info("Telemetry toggle changed to %s by user.", _safe_log_value(enabled))
-        return jsonify({"status": "success", "enabled": enabled})
+        set_consent(get_config(), data["enabled"], version)
+        return jsonify(status="success", enabled=data["enabled"])
     except Exception as exc:
         return _error_response("Telemetry toggle error", exc)
 
@@ -1435,14 +1421,9 @@ def telemetry_rotate():
     Body: {} — no parameters; this is a destructive intent button.
     """
     try:
-        from web.services.telemetry_service import rotate_installation_id
+        from web.services.telemetry_service import rotate_consent_identity
 
-        cfg = get_config()
-        output_dir = str(cfg.get("OUTPUT_DIR", "./data/output"))
-        new_id = rotate_installation_id(output_dir)
-
-        # Mirror into in-memory config.
-        cfg["telemetry_installation_id"] = new_id
+        new_id = rotate_consent_identity(get_config())
 
         return jsonify(
             {

@@ -23,10 +23,16 @@ binding = "DB"
 database_name = "watchmybirds-heartbeats"
 database_id = "27c5a175-0eab-42da-b214-8e75a59dbae9"
 
-# Daily cron schedules:
-#   04:00 UTC — 90-day retention sweep (safety net)
-#   04:30 UTC — yesterday's heartbeats aggregated + pruned
-# The order matters: aggregation runs after the retention sweep so
-# that any rows the sweep would have deleted aren't doubly handled.
+# Retain today and the preceding 89 UTC dates; aggregate before expiry.
 [triggers]
-crons = ["0 4 * * *", "30 4 * * *"]
+crons = ["30 4 * * *"]
+
+[[ratelimits]]
+name = "INGRESS_LIMITER"
+namespace_id = "10421"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "INSTALLATION_LIMITER"
+namespace_id = "10422"
+simple = { limit = 12, period = 60 }
