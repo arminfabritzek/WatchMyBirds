@@ -38,6 +38,26 @@
 - Homepage photo selection avoids repeated database queries for sibling birds.
 - Archive queries limit loaded photo records; homepage archive highlights load
   separately from live content and offer Retry if loading fails.
+- Optional telemetry retains 90 days of installation reports in the cloud,
+  independently of the maintainer's computer. Additional usage and diagnostic
+  summaries require separate consent, retry failed deliveries, and show delivery
+  status in Settings. Source installations report Git version information.
+- The interface loads its scripts and styles locally and uses system fonts,
+  so local pages and controls work without internet access or cached CDN files.
+- Image processing and telemetry development tools use patched dependencies;
+  security checks include the npm development dependency tree. Telemetry ingestion
+  enforces payload limits, validation and rate limits.
+- Security guidance clarifies initial password requirements and persistent
+  session-key storage.
+- Runtime and inference dependencies are updated, including HTTP, certificate
+  and compression security fixes. Aesthetic tagging uses pinned CPU builds and
+  blocking dependency audits; ONNX Runtime's upstream telemetry is disabled
+  before initialization.
+
+### Fixed
+
+- Live view preserves fullscreen during visibility changes. PTZ status polling
+  pauses in hidden tabs and limits fast updates to active Auto Cam overlays.
 
 
 ## 0.5.9 - 2026-10-13
