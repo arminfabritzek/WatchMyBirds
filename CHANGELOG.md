@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.10 - 2026-10-25
+
 - Station reports summarize observations and species, keep results stable while
   reading, and show when corrected answers require a refresh of report totals.
 - Optional Review separates Open and Done answers by day, including answered
