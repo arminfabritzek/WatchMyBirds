@@ -197,6 +197,9 @@ for path in ['/', '/gallery', '/gallery/2026-10-03', '/species', '/admin/review'
         assert b'id="video-feed-fallback"' not in response.data
     assert "connect-src 'self';" in response.headers['Content-Security-Policy']
     assert "frame-src 'none';" in response.headers['Content-Security-Policy']
+    assert "script-src 'self' 'unsafe-inline';" in response.headers['Content-Security-Policy']
+    assert "style-src 'self' 'unsafe-inline';" in response.headers['Content-Security-Policy']
+    assert "font-src 'self';" in response.headers['Content-Security-Policy']
 for path, method in [('/api/review/analyze/test.jpg', 'POST'), ('/api/moderation/bulk/rescan', 'POST'), ('/api/moderation/rescan-jobs/test/status', 'GET'), ('/api/moderation/rescan-proposals/1/apply', 'POST')]:
     assert client.open(path, method=method).status_code == 404
 assert client.get('/unknown-route').status_code == 404

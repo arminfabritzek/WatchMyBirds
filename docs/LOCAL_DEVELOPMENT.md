@@ -107,7 +107,9 @@ This is a development guard, not an operating-system sandbox for arbitrary code.
 
 The Live page can show real saved visits but **does not play the live camera**.
 Models, detection performance, camera reconnection and appliance behavior still
-need separate hardware tests. Browser fonts/styles keep the existing CDN usage.
+need separate hardware tests. Browser scripts and styles are served locally;
+fonts use the device's system-font stack. No CDN connection is needed to load
+the interface.
 
 ## What this profile can test
 

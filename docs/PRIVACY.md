@@ -8,6 +8,10 @@ you configure; a consumer that can reach WatchMyBirds can fetch that image.
 WatchMyBirds disables ONNX Runtime's upstream telemetry before loading the
 inference library. This is independent of the optional installation reports below.
 
+The web interface serves its scripts and styles from your installation and uses
+system fonts. Opening a page does not request assets from Google Fonts or a CDN.
+External links, such as Wikipedia and GitHub, connect to those sites when opened.
+
 The separate optional traffic to the WatchMyBirds operator is a voluntary
 installation report that helps us understand adoption, with a separate choice for usage and diagnostic summaries. **It is off by
 default**, and you can enable it during initial password setup or in

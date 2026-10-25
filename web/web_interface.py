@@ -455,9 +455,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         go2rtc_origin = f"http://{host}:1984"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self'; "
             "img-src 'self' data: blob:; "
             f"connect-src 'self' {go2rtc_origin}; "
             f"frame-src 'self' {go2rtc_origin}; "

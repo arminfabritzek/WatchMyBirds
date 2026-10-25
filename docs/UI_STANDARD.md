@@ -347,7 +347,12 @@ Every packaged JS/CSS include uses the shared `asset_version` template value,
 read once from `utils.deploy_info.read_build_metadata()["git_commit"]` when the
 pages blueprint is registered. A new build commit changes all asset URLs after
 one page reload. Restart the application after installing a new build; tabs
-already open need a reload. CDN assets keep their upstream versioning.
+already open need a reload. Required scripts and styles are served by the
+appliance, including the pinned Bootstrap files in `assets/vendor/`. Typography
+uses the existing system-font stacks; do not add remote font requests. The UI
+must load and its local controls must work without internet access or a warm
+browser cache. External links and explicitly enabled integrations may still
+require internet access.
 
 Pending boxes on an image already admitted to the gallery are visible companions:
 a dashed outline, `Review` in the box label, and `In Review` in the bird selector.

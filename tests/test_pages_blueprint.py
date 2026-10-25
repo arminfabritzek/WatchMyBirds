@@ -1,7 +1,10 @@
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 
 @pytest.fixture
@@ -55,6 +58,40 @@ def test_assets_served_with_public_cache_header(client):
     resp = client.get("/assets/design-system.css")
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "public, max-age=604800"
+
+
+def test_page_dependencies_are_available_without_internet(client: FlaskClient) -> None:
+    dependencies = []
+
+    class Resources(HTMLParser):
+        def handle_starttag(
+            self, tag: str, attrs: list[tuple[str, str | None]]
+        ) -> None:
+            values = dict(attrs)
+            if tag == "script" and values.get("src"):
+                dependencies.append(values["src"])
+            if tag == "link" and values.get("rel") in {
+                "stylesheet",
+                "preconnect",
+                "dns-prefetch",
+                "preload",
+                "modulepreload",
+            }:
+                dependencies.append(values["href"])
+
+    response = client.get("/privacy")
+    assert response.status_code == 200
+    Resources().feed(response.get_data(as_text=True))
+    assert dependencies
+    for dependency in dependencies:
+        parsed = urlsplit(dependency)
+        assert not parsed.scheme and not parsed.netloc, dependency
+        asset = client.get(dependency)
+        assert asset.status_code == 200, dependency
+        if parsed.path.endswith(".css"):
+            assert asset.mimetype == "text/css"
+        elif parsed.path.endswith(".js"):
+            assert asset.mimetype in {"text/javascript", "application/javascript"}
 
 
 def test_admin_profile_rejects_non_whitelisted_route(client):
