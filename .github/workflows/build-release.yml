@@ -58,7 +58,8 @@ jobs:
   build-release:
     needs: [check, tests]
     if: github.ref == 'refs/heads/main' && needs.check.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    # Image assembly requires Ubuntu 24.04's qemu-aarch64-static package layout.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
