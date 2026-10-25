@@ -12,7 +12,7 @@
 torch==2.14.1+cpu; sys_platform != "darwin"
 torchvision==0.29.1+cpu; sys_platform != "darwin"
 torch==2.14.1; sys_platform == "darwin"
-torchvision==0.29.1; sys_platform == "darwin"
+torchvision==0.29.1+cpu; sys_platform == "darwin"
 open_clip_torch==3.3.0
 
 # Pin security fixes required by torch and the model cache.
