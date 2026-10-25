@@ -240,10 +240,10 @@
                 }
 
                 function reconnectStream() {
-                    if (document.hidden || !activeTransport) return;
+                    if (document.hidden || document.fullscreenElement || !activeTransport) return;
                     clearTimeout(reconnectTimer);
                     reconnectTimer = setTimeout(function () {
-                        if (document.hidden) return;
+                        if (document.hidden || document.fullscreenElement) return;
                         if (activeTransport === 'go2rtc') {
                             iframe.src = streamUrl;
                         } else if (activeTransport === 'mjpeg') {
@@ -255,7 +255,8 @@
                 }
 
                 document.addEventListener('visibilitychange', function () {
-                    if (!document.hidden) reconnectStream();
+                    // The go2rtc player resumes its own connection without navigating the iframe.
+                    if (!document.hidden && activeTransport === 'mjpeg') reconnectStream();
                 });
                 window.addEventListener('pageshow', function (event) {
                     if (event.persisted) reconnectStream();
@@ -851,9 +852,12 @@
             }
 
             function fetchStatus() {
+                if (document.hidden) return Promise.resolve();
                 return fetch('/api/v1/ptz/auto/status', { cache: 'no-store' })
                     .then(function (r) { return r.ok ? r.json() : null; })
                     .then(function (data) {
+                        window.wmbPtzStatus = data || {};
+                        window.dispatchEvent(new CustomEvent('wmb:ptz-status', { detail: window.wmbPtzStatus }));
                         const auto = (data && data.auto_ptz) || {};
                         paintExternalPauseBanner(auto.external_pause_reason);
                         cameraId = (typeof auto.camera_id === 'number') ? auto.camera_id : null;
@@ -884,6 +888,8 @@
                         paintStatusPill();
                     })
                     .catch(function () {
+                        window.wmbPtzStatus = {};
+                        window.dispatchEvent(new CustomEvent('wmb:ptz-status', { detail: window.wmbPtzStatus }));
                         autoEnabled = false;
                         settling = false;
                         returnDeadline = 0;
@@ -1039,6 +1045,7 @@
                             autoEnabled = !next;
                             paintStatusPill();
                         }
+                        fetchStatus();
                     })
                     .catch(function () {
                         autoEnabled = !next;
@@ -1527,6 +1534,9 @@
             }
             refresh();
             window.setInterval(fetchStatus, STATUS_POLL_MS);
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden) refresh();
+            });
             window.addEventListener('resize', function () {
                 syncOverlayToCanvas();
             });

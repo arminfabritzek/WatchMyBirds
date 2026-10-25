@@ -632,6 +632,7 @@
         }
 
         function pollAutoCam() {
+            if (document.hidden) return;
             fetch('/api/v1/ptz/auto/status', { cache: 'no-store' })
                 .then(function (r) { return r.ok ? r.json() : null; })
                 .then(function (data) {
@@ -643,6 +644,9 @@
 
         pollAutoCam();
         setInterval(pollAutoCam, 5000);  // slower than Live's poll
+        document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) pollAutoCam();
+        });
     })();
 
     function toggleNav() {

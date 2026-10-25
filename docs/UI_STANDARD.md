@@ -190,6 +190,15 @@ photos remain protected until receipt is confirmed. Export actions wrap at narro
 widths. Creating and acknowledging exports require authenticated CSRF-protected
 POSTs; downloads never acknowledge receipt.
 
+## Live camera status
+
+PTZ status polling pauses in hidden tabs. On Live, the tracking overlay reuses
+the page's initial and 15-second status snapshots while Auto Cam or the overlay
+is off. Its 200 ms polling runs only while both are enabled and the page is
+visible, with at most one overlay request in flight. Successful Auto Cam changes
+refresh the shared snapshot immediately. Manual controls remain available with
+Auto Cam off. Status reads report app state; they do not send ONVIF commands.
+
 ## Homepage species cards
 
 The Live page renders its camera shell and today's observations without waiting
