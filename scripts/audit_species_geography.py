@@ -76,7 +76,7 @@ def audit(
                 )
             """)
             rows = source.execute("""
-                SELECT d.*, i.timestamp AS captured_at
+                SELECT d.detection_id, d.status, d.image_filename, d.thumbnail_path, d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h, d.frame_width, d.frame_height, d.created_at, i.timestamp AS captured_at
                 FROM detections d JOIN images i ON i.filename = d.image_filename
                 ORDER BY d.detection_id
             """)

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from config import get_config
+from core.technical_storage import prune_samples
 from logging_config import get_logger
 from web.services import db_service
 
@@ -148,6 +149,7 @@ def fetch_weather_data() -> None:
                         is_day,
                     ),
                 )
+                prune_samples(conn, "weather_logs")
                 conn.commit()
             logger.info(
                 "Weather updated: %.1f°C, %s %s, Wind %.0f km/h",

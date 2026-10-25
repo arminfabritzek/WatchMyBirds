@@ -35,11 +35,8 @@ SOLO_COLOUR = (30, 30, 200)
 
 def _reset_test_config(monkeypatch, tmp_path):
     output_dir = tmp_path / "output"
-    ingest_dir = tmp_path / "ingest"
     output_dir.mkdir()
-    ingest_dir.mkdir()
     monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
-    monkeypatch.setenv("INGEST_DIR", str(ingest_dir))
     monkeypatch.setenv("EDIT_PASSWORD", "test-password")
     reset_config_in_place()
     return output_dir

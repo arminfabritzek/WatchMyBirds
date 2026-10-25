@@ -6,28 +6,13 @@ serving as an abstraction over utils.db.
 """
 
 from utils.db import (
-    apply_species_override as _apply_species_override,
-)
-from utils.db import (
-    apply_species_override_many as _apply_species_override_many,
-)
-from utils.db import (
     closing_connection as _closing_connection,
 )
 from utils.db import (
     fetch_active_detection_ids_in_date_range as _fetch_active_detection_ids_in_date_range,
 )
 from utils.db import (
-    fetch_active_detection_selection_by_source_type as _fetch_active_detection_selection_by_source_type,
-)
-from utils.db import (
     fetch_active_detection_selection_in_date_range as _fetch_active_detection_selection_in_date_range,
-)
-from utils.db import (
-    fetch_all_detection_times as _fetch_all_detection_times,
-)
-from utils.db import (
-    fetch_analytics_summary as _fetch_analytics_summary,
 )
 from utils.db import (
     fetch_count_last_24h as _fetch_count_last_24h,
@@ -75,12 +60,6 @@ from utils.db import (
     fetch_species_story_board_candidates as _fetch_species_story_board_candidates,
 )
 from utils.db import (
-    fetch_species_timestamps as _fetch_species_timestamps,
-)
-from utils.db import (
-    fetch_trash_candidate_selection_by_source_type as _fetch_trash_candidate_selection_by_source_type,
-)
-from utils.db import (
     fetch_trash_candidate_selection_in_date_range as _fetch_trash_candidate_selection_in_date_range,
 )
 from utils.db import (
@@ -99,16 +78,7 @@ from utils.db import (
     restore_detections as _restore_detections,
 )
 from utils.db import (
-    restore_no_bird_images as _restore_no_bird_images,
-)
-from utils.db import (
-    set_manual_bbox_review as _set_manual_bbox_review,
-)
-from utils.db import (
     update_downloaded_timestamp as _update_downloaded_timestamp,
-)
-from utils.db import (
-    update_review_status as _update_review_status,
 )
 
 # --- Connection Management ---
@@ -149,54 +119,18 @@ def fetch_active_detection_selection_in_date_range(
     return _fetch_active_detection_selection_in_date_range(conn, from_date, to_date)
 
 
-def fetch_active_detection_selection_by_source_type(
-    conn, source_type: str
-) -> dict:
-    return _fetch_active_detection_selection_by_source_type(conn, source_type)
-
-
 def fetch_trash_candidate_selection_in_date_range(
     conn, from_date: str, to_date: str
 ) -> dict:
     return _fetch_trash_candidate_selection_in_date_range(conn, from_date, to_date)
 
 
-def fetch_trash_candidate_selection_by_source_type(
-    conn, source_type: str
-) -> dict:
-    return _fetch_trash_candidate_selection_by_source_type(conn, source_type)
-
-
-def reject_detections(
-    conn, detection_ids: list[int], *, commit: bool = True
-) -> None:
+def reject_detections(conn, detection_ids: list[int], *, commit: bool = True) -> None:
     _reject_detections(conn, detection_ids, commit=commit)
-
-
-def apply_species_override(conn, detection_id: int, species: str, source: str) -> None:
-    _apply_species_override(conn, detection_id, species, source)
-
-
-def apply_species_override_many(
-    conn, detection_ids: list[int], species: str, source: str
-) -> int:
-    return _apply_species_override_many(conn, detection_ids, species, source)
-
-
-def set_manual_bbox_review(
-    conn, detection_id: int, review_state: str | None
-) -> None:
-    _set_manual_bbox_review(conn, detection_id, review_state)
 
 
 def restore_detections(conn, detection_ids: list[int]) -> None:
     _restore_detections(conn, detection_ids)
-
-
-def update_review_status(
-    conn, filenames, new_status: str, *, commit: bool = True
-) -> int:
-    return _update_review_status(conn, filenames, new_status, commit=commit)
 
 
 def update_downloaded_timestamp(conn, filenames, download_time) -> None:
@@ -248,23 +182,7 @@ def fetch_trash_count(conn) -> int:
     return _fetch_trash_count(conn)
 
 
-def restore_no_bird_images(conn, image_filenames: list[str]) -> int:
-    return _restore_no_bird_images(conn, image_filenames)
-
-
 # --- Analytics Operations ---
-
-
-def fetch_analytics_summary(conn, min_score: float = 0.0) -> dict:
-    return _fetch_analytics_summary(conn, min_score=min_score)
-
-
-def fetch_all_detection_times(conn, min_score: float = 0.0) -> list:
-    return _fetch_all_detection_times(conn, min_score=min_score)
-
-
-def fetch_species_timestamps(conn, min_score: float = 0.0) -> list:
-    return _fetch_species_timestamps(conn, min_score=min_score)
 
 
 def fetch_day_count(conn, date_str_iso: str) -> int:
@@ -278,12 +196,10 @@ def fetch_review_queue_count(conn, gallery_threshold: float) -> int:
 def fetch_review_queue_images(
     conn,
     gallery_threshold: float,
-    exclude_deep_scanned: bool = False,
 ) -> list:
     return _fetch_review_queue_images(
         conn,
         gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
     )
 
 
@@ -291,13 +207,11 @@ def fetch_review_queue_image(
     conn,
     filename: str,
     gallery_threshold: float,
-    exclude_deep_scanned: bool = False,
 ):
     return _fetch_review_queue_image(
         conn,
         filename,
         gallery_threshold=gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
     )
 
 
@@ -330,12 +244,8 @@ def fetch_review_queue_item_by_identity(
     )
 
 
-def fetch_recent_review_species(
-    conn, limit: int = 8, lookback_days: int = 7
-) -> list:
-    return _fetch_recent_review_species(
-        conn, limit=limit, lookback_days=lookback_days
-    )
+def fetch_recent_review_species(conn, limit: int = 8, lookback_days: int = 7) -> list:
+    return _fetch_recent_review_species(conn, limit=limit, lookback_days=lookback_days)
 
 
 # --- 24h Rolling Window Operations ---

@@ -42,17 +42,14 @@ All API endpoints follow this response pattern:
 ### 1. Status & Control
 
 #### GET `/api/status`
-Returns system status including detection state and deep scan progress.
+Returns system status including detection state and restart requirements.
 
 **Response:**
 ```json
 {
   "detection_paused": false,
   "detection_running": true,
-  "restart_required": false,
-  "deep_scan_active": false,
-  "deep_scan_queue_pending": 0,
-  "deep_scan_candidates_remaining": 42
+  "restart_required": false
 }
 ```
 
@@ -61,9 +58,6 @@ Returns system status including detection state and deep scan progress.
 | `detection_paused` | bool | Whether the detection loop is paused |
 | `detection_running` | bool | Inverse of `detection_paused` |
 | `restart_required` | bool | Whether a service restart is pending |
-| `deep_scan_active` | bool | `true` while a Deep Scan job is executing (live DET+CLS loops are gated) |
-| `deep_scan_queue_pending` | int | Number of Deep Scan jobs waiting in the worker queue |
-| `deep_scan_candidates_remaining` | int | DB count of nightly-eligible orphan images (never-scanned + error retries) |
 
 ---
 
@@ -151,7 +145,7 @@ Updates application settings. Only runtime-modifiable keys are accepted.
 
 > **Note:** Legacy endpoints `GET/POST /api/settings`, `POST /api/settings/update`,
 > and `POST /api/settings/ingest` have been removed.
-> Use `POST /api/v1/settings` for settings and `POST /api/ingest/start` for ingest.
+> Use `POST /api/v1/settings` for settings.
 
 ---
 
@@ -401,51 +395,16 @@ Sets camera as active video source.
 
 ### 5. Analytics
 
-#### GET `/api/analytics/summary`
-Returns detection analytics summary.
+#### GET `/analytics`
+Renders the current station report with date filters and the shared observation
+cards. Report generation runs in the background on first access.
 
-**Response:**
-```json
-{
-  "total_detections": 1234,
-  "total_species": 15,
-  "total_days": 42,
-  "species_counts": {
-    "Parus major": 450,
-    "Cyanistes caeruleus": 320,
-    "Erithacus rubecula": 210
-  }
-}
-```
+#### GET `/api/station-report`
+Returns the report worker's current `state` and `revision` for the same optional
+`start` / `end` date selection. Responses use `Cache-Control: no-store`.
 
----
-
-#### GET `/api/analytics/time_of_day`
-Returns detection time distribution.
-
-**Response:**
-```json
-{
-  "points": [0.5, 6.25, 7.0, 12.5, 18.75],
-  "peak_hour": 7,
-  "histogram": [0, 0, 0, 5, 12, 45, 120, 85, 42, 15, 8, 3, ...]
-}
-```
-
----
-
-#### GET `/api/analytics/species_activity`
-Returns species activity heatmap data.
-
-**Response:**
-```json
-{
-  "heatmap": {
-    "Parus major": [0, 0, 0, 5, 12, 25, ...],
-    "Cyanistes caeruleus": [0, 0, 2, 8, 15, 20, ...]
-  }
-}
-```
+The diagnostic analytics page and its `/api/analytics/*` endpoints have been
+removed and return 404.
 
 ---
 
@@ -579,65 +538,6 @@ Captures current camera frame as JPEG.
 
 ---
 
-### 8. Inbox (Web Upload)
-
-#### POST `/api/inbox`
-Uploads images to inbox for processing.
-
-**Request:** Multipart form with `files[]` containing images.
-
-**Response:**
-```json
-{
-  "status": "success",
-  "uploaded": 5,
-  "files": ["image1.jpg", "image2.jpg", ...]
-}
-```
-
----
-
-#### GET `/api/inbox/status`
-Returns inbox processing status.
-
-**Response:**
-```json
-{
-  "status": "success",
-  "pending": 5,
-  "processing": false
-}
-```
-
----
-
-#### POST `/api/inbox/process`
-Starts processing uploaded inbox images.
-
-**Response:**
-```json
-{
-  "status": "success",
-  "message": "Processing started for 5 images"
-}
-```
-
----
-
-### 9. Ingest
-
-#### POST `/api/ingest/start`
-Triggers ingest from configured directory.
-
-**Response:**
-```json
-{
-  "status": "success"
-}
-```
-
----
-
 ### 10. Backup & Restore
 
 #### GET `/api/backup/stats`
@@ -761,11 +661,6 @@ Cleans up temporary restore files.
 ## Changelog
 
 ### 2026-02-13
-- **Deep Scan Stability Hardening:**
-  - `GET /api/status` now includes `deep_scan_active`, `deep_scan_queue_pending`, `deep_scan_candidates_remaining`.
-  - `POST /api/review/analyze/<filename>` accepts `?force=1` to bypass no-hit DB exclusion.
-- **UI: Review Modal "Preview only" Fallback** (no API change):
-  - Review modal (`orphan_modal.html`) now shows a visible amber "Preview only" badge when the full-size image fails to load and falls back to thumbnail. Previously the fallback was silent.
 - **UI: Global Zoom Preference Persistence** (no API change):
   - Smart Zoom toggle state (`Full` / `Zoom`) is now persisted globally via `localStorage` key `wmb_modal_zoom_pref`. Preference survives page reloads and modal navigation. Applies wherever bbox-based zoom is available (Gallery modals).
 

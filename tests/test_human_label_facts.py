@@ -208,11 +208,19 @@ def test_existing_legacy_rows_upgrade_without_backfill_or_mutation(
             "manual",
             "correct",
         )
-        assert upgraded.execute("SELECT COUNT(*) FROM label_subjects").fetchone()[0] == 0
-        assert upgraded.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0] == 0
-        assert upgraded.execute(
-            "SELECT export_status FROM training_exports WHERE detection_id=1"
-        ).fetchone()[0] == "exported"
+        assert (
+            upgraded.execute("SELECT COUNT(*) FROM label_subjects").fetchone()[0] == 0
+        )
+        assert (
+            upgraded.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
+            == 0
+        )
+        assert (
+            upgraded.execute(
+                "SELECT export_status FROM training_exports WHERE detection_id=1"
+            ).fetchone()[0]
+            == "exported"
+        )
     finally:
         upgraded.close()
 
@@ -359,9 +367,10 @@ def test_supersession_and_retraction_preserve_history(
         (second, "asserted", "corrected", first),
         (retracted, "retracted", None, second),
     ]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM current_human_label_facts"
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute("SELECT COUNT(*) FROM current_human_label_facts").fetchone()[0]
+        == 0
+    )
 
 
 def test_bbox_quality_retraction_clears_fact_and_legacy_projection(
@@ -540,9 +549,7 @@ def test_hard_delete_detection_keeps_image_facts(
     )
     conn.commit()
 
-    rows = conn.execute(
-        "SELECT scope FROM current_human_label_facts"
-    ).fetchall()
+    rows = conn.execute("SELECT scope FROM current_human_label_facts").fetchall()
     assert [row[0] for row in rows] == ["image"]
 
 
@@ -682,9 +689,10 @@ def test_merge_restore_remaps_subject_and_supersession_ids(
     assert rows[0][2] is None
     assert rows[1][1] == "suitable"
     assert rows[1][2] == rows[0][0]
-    assert conn.execute(
-        "SELECT answer_value FROM current_human_label_facts"
-    ).fetchone()[0] == "suitable"
+    assert (
+        conn.execute("SELECT answer_value FROM current_human_label_facts").fetchone()[0]
+        == "suitable"
+    )
 
 
 def test_merge_restore_reports_fact_axis_conflict_without_guessing(
@@ -742,12 +750,13 @@ def test_merge_restore_reports_fact_axis_conflict_without_guessing(
 
     assert imported == {"subjects": 0, "facts": 0, "conflicts": 1}
     assert result["conflicts"][0]["type"] == "human_label_fact_axis"
-    assert conn.execute(
-        "SELECT answer_value FROM current_human_label_facts"
-    ).fetchone()[0] == "present"
+    assert (
+        conn.execute("SELECT answer_value FROM current_human_label_facts").fetchone()[0]
+        == "present"
+    )
 
 
-def test_one_human_answer_writes_independent_facts_and_legacy_projection(
+def test_one_human_answer_leaves_automation_and_legacy_columns_unchanged(
     conn: sqlite3.Connection,
     seeded: dict[str, int | str],
     provenance: LabelProvenance,
@@ -792,14 +801,14 @@ def test_one_human_answer_writes_independent_facts_and_legacy_projection(
         """,
         (seeded["detection_id"],),
     ).fetchone()
-    assert image_status == "confirmed_bird"
+    assert image_status == "untagged"
     assert tuple(legacy) == (
         "active",
-        "correct",
-        "Cyanistes_caeruleus",
-        "manual",
-        "confirmed",
-        "species",
+        None,
+        None,
+        None,
+        None,
+        None,
     )
 
 
@@ -842,7 +851,7 @@ def test_species_answer_is_stored_relative_to_original_proposal(
         "SELECT manual_species_override FROM detections WHERE detection_id = ?",
         (seeded["detection_id"],),
     ).fetchone()[0]
-    assert override == species_key
+    assert override is None
 
 
 def test_review_projection_repairs_legacy_answer_words(
@@ -893,17 +902,23 @@ def test_object_rejection_projection_does_not_mark_whole_image_no_bird(
     )
     conn.commit()
 
-    assert conn.execute(
-        "SELECT status FROM detections WHERE detection_id = ?",
-        (seeded["detection_id"],),
-    ).fetchone()[0] == "rejected"
-    assert conn.execute(
-        "SELECT review_status FROM images WHERE filename = ?",
-        (seeded["filename"],),
-    ).fetchone()[0] == "untagged"
+    assert (
+        conn.execute(
+            "SELECT status FROM detections WHERE detection_id = ?",
+            (seeded["detection_id"],),
+        ).fetchone()[0]
+        == "active"
+    )
+    assert (
+        conn.execute(
+            "SELECT review_status FROM images WHERE filename = ?",
+            (seeded["filename"],),
+        ).fetchone()[0]
+        == "untagged"
+    )
 
 
-def test_explicit_image_no_bird_projects_without_object_answer(
+def test_explicit_image_no_bird_writes_each_object_answer(
     conn: sqlite3.Connection,
     seeded: dict[str, int | str],
     provenance: LabelProvenance,
@@ -918,10 +933,16 @@ def test_explicit_image_no_bird_projects_without_object_answer(
     )
     conn.commit()
 
-    assert conn.execute(
-        "SELECT review_status FROM images WHERE filename = ?",
-        (seeded["filename"],),
-    ).fetchone()[0] == "no_bird"
-    assert conn.execute(
-        "SELECT COUNT(*) FROM current_human_label_facts WHERE scope='object'"
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT review_status FROM images WHERE filename = ?",
+            (seeded["filename"],),
+        ).fetchone()[0]
+        == "untagged"
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM current_human_label_facts WHERE scope='object'"
+        ).fetchone()[0]
+        == 1
+    )

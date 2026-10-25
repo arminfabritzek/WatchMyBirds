@@ -12,7 +12,9 @@ from utils.db.detections import (
     _top1_confidence_sql,
     _top1_species_sql,
     effective_species_sql,
+    human_species_source_sql,
 )
+from utils.db.observations import fact_sql
 
 
 def fetch_trash_items(
@@ -29,7 +31,7 @@ def fetch_trash_items(
 
     ``review_status='no_bird'`` images are **not** trash — they are
     user-verified false-positive crops kept for the training-data
-    pipeline (``utils.db.user_groundtruth.fetch_hard_negatives``).
+    pipeline (the canonical human-label history).
     Surfacing them here would invite an "Empty Trash" sweep that
     silently wipes the hard-negative corpus. The legacy UNION ALL
     over ``images.review_status='no_bird'`` was removed for that
@@ -80,8 +82,8 @@ def fetch_trash_items(
             d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
             d.od_class_name,
             d.od_confidence,
-            d.manual_species_override,
-            d.species_source,
+            {fact_sql(conn, "species_identity", "species_key")} AS human_species_key,
+            {human_species_source_sql(conn)} AS human_species_source,
             d.created_at,
             REPLACE(i.filename, '.jpg', '.webp') as optimized_name_virtual,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
@@ -121,8 +123,8 @@ def fetch_trash_items(
                 "bbox_h": row["bbox_h"],
                 "od_class_name": row["od_class_name"],
                 "od_confidence": row["od_confidence"],
-                "manual_species_override": row["manual_species_override"],
-                "species_source": row["species_source"],
+                "human_species_key": row["human_species_key"],
+                "human_species_source": row["human_species_source"],
                 "cls_class_name": row["cls_class_name"],
                 "cls_confidence": row["cls_confidence"],
                 "species_key": row["species_key"],

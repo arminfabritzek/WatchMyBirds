@@ -107,7 +107,7 @@ def test_unknown_answer_stores_one_species_fact_and_clears_the_override(case) ->
 
     row = _detection_row(detection_id)
     assert not str(row["manual_species_override"] or "").strip()
-    assert row["species_source"] == "manual_unknown"
+    assert row["species_source"] is None
 
 
 def test_unknown_answer_preserves_the_original_prediction_and_box(case) -> None:
@@ -232,7 +232,7 @@ def test_a_later_species_answer_supersedes_the_unknown(case) -> None:
     assert species_facts[0]["species_key"] == "Parus_major"
 
     row = _detection_row(detection_id)
-    assert row["manual_species_override"] == "Parus_major"
+    assert row["manual_species_override"] is None
     assert row["species_source"] != "manual_unknown"
     assert row["raw_species_name"] == AI_SPECIES, "model history was rewritten"
 

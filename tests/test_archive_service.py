@@ -12,7 +12,6 @@ import pytest
 from web.services import (
     archive_service,
     image_download_service,
-    user_groundtruth_export_service,
 )
 
 
@@ -47,10 +46,8 @@ def test_selected_image_zip_memory_is_bounded(tmp_path, archive_directory, monke
     assert not list(archive_directory.iterdir())
 
 
-@pytest.mark.parametrize(
-    "service", [image_download_service, user_groundtruth_export_service]
-)
-def test_archive_build_failure_closes_file(archive_directory, monkeypatch, service):
+def test_archive_build_failure_closes_file(archive_directory, monkeypatch):
+    service = image_download_service
     created = []
 
     def create():
@@ -65,9 +62,6 @@ def test_archive_build_failure_closes_file(archive_directory, monkeypatch, servi
     monkeypatch.setattr(service.zipfile, "ZipFile", fail)
     monkeypatch.setattr(image_download_service.mx, "burn_in_enabled", lambda: False)
     with pytest.raises(OSError, match="disk full"):
-        if service is image_download_service:
-            service.build_zip([])
-        else:
-            service.stream_batch_zip(None)
+        service.build_zip([])
     assert created[0].closed
     assert not list(archive_directory.iterdir())

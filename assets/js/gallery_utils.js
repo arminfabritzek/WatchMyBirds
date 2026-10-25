@@ -261,6 +261,11 @@ function navigateModal(btn, direction) {
     const currentModalEl = btn.closest('.modal');
     if (!currentModalEl) return;
 
+    if (currentModalEl.dataset.reviewLazy && window.WmReviewModal) {
+        window.WmReviewModal.navigate(currentModalEl, direction);
+        return;
+    }
+
     const navScope = currentModalEl.getAttribute('data-nav-scope');
     if (navScope) {
         const scopedModals = Array.from(
@@ -328,6 +333,29 @@ function navigateModal(btn, direction) {
 /* =========================================
    Deletion Logic
    ========================================= */
+function updateStationReportObject(id, updates) {
+    const report = document.querySelector('[data-report-state]');
+    if (!report) return false;
+    const tile = report.querySelector('article[data-detection-id="' + id + '"]');
+    if (!tile) return false;
+    const modal = document.getElementById('modal-station_report-' + id);
+    const viewer = modal && modal.querySelector('.wm-image-viewer');
+    if (!viewer) return false;
+    const current = JSON.parse(viewer.dataset.currentDetection || '{}');
+    const siblings = JSON.parse(viewer.dataset.siblings || '[]');
+    const objects = new Map();
+    [current].concat(siblings).forEach(function (item) {
+        if (Number(item.detection_id) === id) Object.assign(item, updates);
+        objects.set(item.object_key || 'detection:' + item.detection_id, item);
+    });
+    viewer.dataset.currentDetection = JSON.stringify(current);
+    viewer.dataset.siblings = JSON.stringify(Array.from(objects.values()));
+    document.dispatchEvent(new CustomEvent('wmb:bird-objects-updated', {
+        detail: {filename: tile.dataset.imageFilename, objects: Array.from(objects.values())}
+    }));
+    return true;
+}
+
 async function deleteDetection(event, id) {
     if (event) {
         event.preventDefault();
@@ -336,7 +364,7 @@ async function deleteDetection(event, id) {
     if (!confirm('Move this detection to trash?')) return;
 
     try {
-        const response = await fetch('/api/detections/reject', {
+        const response = await fetch('/api/trash/move', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -371,6 +399,7 @@ async function deleteDetection(event, id) {
                 }
             }
 
+            if (updateStationReportObject(id, {object_status: 'rejected'})) return;
             // Fallback: main detection deleted or last one — reload page
             location.reload();
         } else {
@@ -415,16 +444,25 @@ async function relabelDetection(event, detectionId, currentSpecies) {
 
     // Perform the single-item relabel POST
     try {
-        const resp = await fetch('/api/detections/relabel', {
+        const resp = await fetch('/api/labels/answer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ detection_id: detectionId, species: choice.scientific })
+            body: JSON.stringify({ detection_id: detectionId, species_identity: 'corrected', species_key: choice.scientific })
         });
         if (isAuthRedirect(resp)) {
             redirectToLogin();
             return;
         }
         if (resp.ok) {
+            if (updateStationReportObject(detectionId, {
+                species_key: choice.scientific,
+                human_species_key: choice.scientific,
+                human_species_source: 'manual',
+                human_review_state: 'corrected',
+                provenance: 'manually_identified',
+                common_name: choice.common,
+                needs_review: false
+            })) return;
             // Species changed — reload to get correct groupings and status
             location.reload();
             return;

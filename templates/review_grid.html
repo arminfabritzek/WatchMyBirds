@@ -1,19 +1,9 @@
 {% extends 'base.html' %}
 
-{#
-  Review Grid: filter card plus vertical event-card stack. The former
-  rail/stage/decision-rail desk remains available through the legacy
-  layout path, but this template is the default Review surface.
-#}
-
 {% block title %}Review Desk · WatchMyBirds{% endblock %}
 
 {% block content %}
-{# batch_action_footer retired here. Card-header
-   Approve / Relabel / No Bird / Trash now operate in Smart-Mode (respect
-   per-card checkbox selection if any, fall back to event-wide otherwise).
-   Cross-event bulk action is no longer reachable from this page;
-   per-card workflow is the only path. #}
+
 {% from 'components/review_grid_card.html' import render_review_grid_card %}
 
 <nav class="page-control-bar review-desk-bar" role="navigation"
@@ -38,13 +28,11 @@
                     data-review-grid-size-action="shrink"
                     title="Smaller tiles (more per row)"
                     aria-label="Smaller tiles">−</button>
-            {# Default to crop-mode range (120-320, 256px source).
-               JS reassigns min/max/value on load and on every
-               crop/full mode swap. #}
+
             <input type="range"
                    id="review-grid-size-slider"
                    class="review-grid__size-slider"
-                   min="120" max="320" step="40" value="240"
+                   min="120" max="320" step="40" value="320"
                    title="Drag to resize tiles (Apple Photos style)"
                    aria-label="Tile size in pixels">
             <button type="button"
@@ -53,83 +41,60 @@
                     title="Larger tiles (fewer per row)"
                     aria-label="Larger tiles">+</button>
         </div>
-        <button type="button"
-                class="btn btn--secondary"
-                id="reviewClearQueueBtn"
-                title="{{ 'Review queue is empty — nothing to clear' if not review_events else 'Move active Review detections to Trash without creating training labels' }}"
-                {{ 'disabled' if not review_events }}>🧹 Move Review Detections to Trash</button>
+
         <a href="/" class="btn btn--secondary" title="Back to live stream">← Stream</a>
     </div>
 </nav>
 
-<div class="review-cleanup-modal" id="reviewCleanupModal" hidden
-     role="dialog" aria-modal="true" aria-labelledby="reviewCleanupTitle">
-    <div class="review-cleanup-modal__backdrop" data-cleanup-dismiss></div>
-    <div class="review-cleanup-modal__panel" role="document">
-        <h3 class="review-cleanup-modal__title" id="reviewCleanupTitle">
-            Move Review Detections to Trash
-        </h3>
-        <div class="review-cleanup-modal__body" id="reviewCleanupBody">
-            <p class="review-cleanup-modal__loading">Counting review items…</p>
-        </div>
-        <div class="review-cleanup-modal__actions">
-            <button type="button" class="btn btn--secondary"
-                    data-cleanup-dismiss>Cancel</button>
-            <button type="button" class="btn btn--primary"
-                    id="reviewCleanupConfirmBtn" disabled>Move to Trash</button>
-        </div>
-    </div>
-</div>
+{% include 'partials/review_tabs.html' %}
+{% include 'partials/review_day_navigation.html' %}
+
+<p>Select objects to answer just those, or answer all open objects in an event. A human answer completes each object. Double-click a photo to inspect and correct their answers.</p>
+<p>{{ review.day_items }} objects on this day · {{ review.total_items }} open objects across the selected period.</p>
 
 <section class="review-grid">
 
-    {# Stack container. One review-grid__card per event; batch variants
-       render for events that participate in a continuity batch. #}
     <div class="review-grid__stack" data-review-grid-stack
          data-default-tile-size="4">
         {% if review_events %}
-            {# Track which batch keys we have already seen so only the
-               first event of each continuity batch renders the batch-
-               strip header (Apply Species + Approve Batch). Subsequent
-               sibling events stay normal cards visually but still
-               carry the batch data-attributes for client-side picks. #}
-            {% set _seen_batch_keys = namespace(value=[]) %}
-            {% set _prev_batch_key = namespace(value=none) %}
+
             {% for event in review_events %}
-                {% set _bkey = event.continuity_batch_key if (event.continuity_batch_key is defined and event.continuity_batch_key) else none %}
-                {% set _is_lead = false %}
-                {% if _bkey and _bkey not in _seen_batch_keys.value %}
-                    {% set _is_lead = true %}
-                    {% set _ = _seen_batch_keys.value.append(_bkey) %}
-                {% endif %}
-                {# Inter-event separator. Rendered before every card except
-                   the first, and suppressed between siblings of the same
-                   continuity batch (the batch-strip already visually
-                   unifies them — a divider there would fight the group). #}
-                {% if not loop.first and not (_bkey and _bkey == _prev_batch_key.value) %}
-                <hr class="review-grid__event-separator" aria-hidden="true">
-                {% endif %}
-                {{ render_review_grid_card(event, default_size=4, is_batch_lead=_is_lead) }}
-                {% set _prev_batch_key.value = _bkey %}
+                {% if not loop.first %}<hr class="review-grid__event-separator" aria-hidden="true">{% endif %}
+                {{ render_review_grid_card(event, default_size=4) }}
             {% endfor %}
         {% else %}
         <div class="alert alert-success review-grid__placeholder">
+            {% if review_navigation is defined and review_navigation.selected_day != 'all' %}
+            <h4>No open events on {{ review_navigation.selected_day }}.</h4>
+            <p>Choose another day or All days to continue reviewing.</p>
+            {% else %}
             <h4>Inbox zero.</h4>
             <p>No events currently need review.</p>
+            {% endif %}
         </div>
         {% endif %}
     </div>
 
 </section>
 
+{% include 'partials/review_pagination.html' %}
+
+{% endblock %}
+
+{% block modals %}
+
+{% from 'components/detection_modal.html' import render_modal %}
+{% for event in review_events %}{% for member in event.members %}{{ render_modal(member.modal_detection, 'station_review') }}{% endfor %}{% endfor %}
+
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/gallery_utils.js?v=20260922-bbox-label-v4"></script>
-<script src="/assets/js/tile_actions.js?v=20260920-bird-editor-v4"></script>
-<script src="/assets/js/species_picker.js?v=20260920-bird-editor-v5"></script>
-<script src="/assets/js/batch_actions.js?v=1"></script>
-<script src="/assets/js/review_grid.js?v=20260819-full-image-no-bird"></script>
-<script src="/assets/js/review_grid_keyboard.js?v=1"></script>
-<script src="/assets/js/review_cleanup.js?v=2-trash-housekeeping"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/batch_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/review_modal.js?v={{ asset_version }}"></script>
+<script src="/assets/js/review_grid.js?v={{ asset_version }}"></script>
+<script src="/assets/js/review_grid_keyboard.js?v={{ asset_version }}"></script>
+<script src="/assets/js/station_browse.js?v={{ asset_version }}"></script>
 {% endblock %}

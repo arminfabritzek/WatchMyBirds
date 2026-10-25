@@ -18,21 +18,18 @@ The fix:
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
 
 import pytest
 
+import config
+
 
 @pytest.fixture
 def fresh_config(monkeypatch, tmp_path: Path):
-    """Reload config.py with OUTPUT_DIR pointing at tmp_path."""
+    """Reset config without replacing the module shared by imported consumers."""
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    sys.modules.pop("config", None)
-    import config
-    importlib.reload(config)
-    # Reset the singleton so get_config rebuilds from env in the new tmp_path.
+    # Imported get_config functions must keep the same module globals.
     config._CONFIG = None
     yield config
     config._CONFIG = None
@@ -68,7 +65,7 @@ def test_setting_telegram_mode_default_still_persists(fresh_config, tmp_path):
 
 
 def test_legacy_migration_does_not_fire_when_env_provides_telegram_enabled(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, fresh_config
 ):
     """Critical Docker-deploy scenario: settings.yaml has TELEGRAM_MODE=off,
     docker-compose.yml has TELEGRAM_ENABLED=True in env. The legacy
@@ -82,9 +79,6 @@ def test_legacy_migration_does_not_fire_when_env_provides_telegram_enabled(
 
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     monkeypatch.setenv("TELEGRAM_ENABLED", "True")  # docker-compose sets it
-    sys.modules.pop("config", None)
-    import config
-    importlib.reload(config)
     config._CONFIG = None
 
     cfg = config.get_config()
@@ -92,7 +86,7 @@ def test_legacy_migration_does_not_fire_when_env_provides_telegram_enabled(
 
 
 def test_legacy_migration_fires_when_yaml_has_telegram_enabled_only(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, fresh_config
 ):
     """Real upgrade from a pre-TELEGRAM_MODE build: settings.yaml has
     only TELEGRAM_ENABLED=true and no mode. The migration must still
@@ -102,9 +96,6 @@ def test_legacy_migration_fires_when_yaml_has_telegram_enabled_only(
 
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     monkeypatch.delenv("TELEGRAM_ENABLED", raising=False)
-    sys.modules.pop("config", None)
-    import config
-    importlib.reload(config)
     config._CONFIG = None
 
     cfg = config.get_config()
@@ -112,7 +103,7 @@ def test_legacy_migration_fires_when_yaml_has_telegram_enabled_only(
 
 
 def test_explicit_telegram_mode_in_yaml_wins_over_telegram_enabled(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, fresh_config
 ):
     """Belt-and-suspenders: when YAML has both keys, TELEGRAM_MODE
     is the source of truth and the legacy migration is skipped."""
@@ -122,9 +113,6 @@ def test_explicit_telegram_mode_in_yaml_wins_over_telegram_enabled(
     )
 
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    sys.modules.pop("config", None)
-    import config
-    importlib.reload(config)
     config._CONFIG = None
 
     cfg = config.get_config()

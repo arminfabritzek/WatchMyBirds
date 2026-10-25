@@ -21,6 +21,8 @@ from config import get_config
 from core.event_metadata import EventMetadata, SpeciesEntry
 from logging_config import get_logger
 from utils.db import closing_connection
+from utils.db.detections import human_species_source_sql
+from utils.db.observations import fact_sql
 from utils.image_ops import build_xmp_packet, save_jpeg_copy_with_metadata
 from utils.path_manager import get_path_manager
 from utils.species_names import (
@@ -60,19 +62,18 @@ def _rows_for_image(conn: sqlite3.Connection, image_filename: str) -> list:
     included — a copy reflects what the operator considers real on that
     frame (mirrors the canonical gallery filter, not just "not rejected").
     """
-    query = """
+    query = f"""
         SELECT
             d.detection_id,
-            d.manual_species_override,
-            d.species_source,
+            {fact_sql(conn, "species_identity", "species_key")} AS human_species_key,
+            {human_species_source_sql(conn)} AS human_species_source,
             d.od_class_name,
             c.cls_class_name,
             COALESCE(c.cls_confidence, d.od_confidence) AS confidence,
             COALESCE(d.detector_model_name, d.od_model_id) AS detector_model,
             d.classifier_model_name AS classifier_model,
             d.is_favorite,
-            d.rating,
-            i.review_status AS review_status
+            NULL AS review_status
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         LEFT JOIN classifications c
@@ -119,7 +120,7 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
     """Build the metadata envelope for one image at current DB state.
 
     Resolves each detection's effective species (honoring
-    ``manual_species_override``) and its localized common name. Bird vs.
+    current species facts) and its localized common name. Bird vs.
     non-bird is decided from the OD class token so dwc class/kingdom are
     gated correctly.
     """
@@ -139,10 +140,10 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
     for row in rows:
         od_class = row["od_class_name"]
         key = species_key_from_candidates(
-            manual_override=row["manual_species_override"],
+            manual_override=row["human_species_key"],
             cls_class_name=row["cls_class_name"],
             od_class_name=od_class,
-            species_source=row["species_source"],
+            species_source=row["human_species_source"],
         )
         if not key or key == "Unknown_species":
             continue
@@ -150,8 +151,10 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
         # A bird is anything whose identity does NOT come from a non-bird OD
         # token. Garden mammals (squirrel/marten/…) come straight off the OD
         # class and must not receive Aves/Animalia.
-        is_bird = is_non_species_od_token(od_class) or not od_class or (
-            row["cls_class_name"] is not None
+        is_bird = (
+            is_non_species_od_token(od_class)
+            or not od_class
+            or (row["cls_class_name"] is not None)
         )
         # The override can name a non-bird too; if the resolved key matches
         # the raw OD non-bird token, treat as non-bird.
@@ -161,7 +164,6 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
         scientific = key.replace("_", " ")
         common = resolve_common_name(key, common_names)
         confidence = row["confidence"]
-        rating = row["rating"]
         species.append(
             SpeciesEntry(
                 scientific=scientific,
@@ -170,7 +172,6 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
                 detection_id=row["detection_id"],
                 confidence=float(confidence) if confidence is not None else None,
                 is_favorite=bool(row["is_favorite"]),
-                rating=int(rating) if rating is not None else None,
             )
         )
         detector_model = detector_model or row["detector_model"]

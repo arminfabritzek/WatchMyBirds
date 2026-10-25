@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+- Station reports summarize observations and species, keep results stable while
+  reading, and show when corrected answers require a refresh of report totals.
+- Optional Review separates Open and Done answers by day, including answered
+  objects whose original photos are no longer available.
+- Review offers numbered pages and direct page jumps, preserves date filters,
+  and keeps pagination keys separate from bird-answer shortcuts.
+- Review adds object-scoped Trash and explicit crop-only no-bird labels.
+  Completed actions and navigation clear selections; Shift-click ranges stay
+  within their event.
+- Human answers use one API and one fact history. Withdrawing an answer removes
+  everything written by that action; stored automatic decisions stay separate.
+- Updates preserve older answers, keep withdrawn answers withdrawn, and return
+  conflicting bird answers to Review. No-bird answers appear under Done instead
+  of Trash. Deliberate trash actions record their date.
+- Automatic deletion starts off on existing installations, with a Settings
+  notice. Deletion waits for the answer migration to finish.
+- Full-image no-bird answers and manually added birds now exclude each other.
+- Blurry but confidently identified birds now count as observations.
+- Image import, Companion, Deep Scan, and star ratings are removed; favorites stay.
+- Telegram detection alerts exclude non-birds, including squirrels and cats.
+- Training exports stream directly, support repeat downloads, and keep photos
+  protected until you confirm **Export received**.
+- Storage previews explain ordered photo deletion, protection and deadlines;
+  automatic cleanup preserves favorites, pending training and retained answers.
+- Low free space triggers earlier eligible photo cleanup. If space remains
+  insufficient, photo saving pauses while live view and inference continue,
+  then resumes when space is available.
+- Storage estimates lasting growth from recent captures and warns when estimated
+  capacity falls below three months.
+- Gallery, species pages, reports and Telegram share the same photo ranking.
+- Frame-processing and notification errors no longer stop subsequent detection
+  frames, and app updates refresh browser assets automatically.
+- Applying unrelated settings keeps the current video capture running.
+- Homepage photo selection avoids repeated database queries for sibling birds.
+- Archive queries limit loaded photo records; homepage archive highlights load
+  separately from live content and offer Retry if loading fails.
+- Optional telemetry retains 90 days of installation reports in the cloud,
+  independently of the maintainer's computer. Additional usage and diagnostic
+  summaries require separate consent, retry failed deliveries, and show delivery
+  status in Settings. Source installations report Git version information.
+- The interface loads its scripts and styles locally and uses system fonts,
+  so local pages and controls work without internet access or cached CDN files.
+- Image processing and telemetry development tools use patched dependencies;
+  security checks include the npm development dependency tree. Telemetry ingestion
+  enforces payload limits, validation and rate limits.
+- Security guidance clarifies initial password requirements and persistent
+  session-key storage.
+- Runtime and inference dependencies are updated, including HTTP, certificate
+  and compression security fixes. Aesthetic tagging uses pinned CPU builds and
+  blocking dependency audits; ONNX Runtime's upstream telemetry is disabled
+  before initialization.
+
+### Fixed
+
+- Live view preserves fullscreen during visibility changes. PTZ status polling
+  pauses in hidden tabs and limits fast updates to active Auto Cam overlays.
+
+
+## 0.5.9 - 2026-10-13
+
 ### Added
 
 - Species classification can use the configured location and capture season
@@ -9,9 +69,29 @@
   human corrections without installation-specific species rules.
 - Optional local UI development uses verified copies of appliance bird data,
   keeping edits local while camera controls and background jobs remain disabled.
+- An offline training-export checker validates canonical bundles and creates
+  private visual reports with independent box and species overlays.
+- Review supports day navigation and adding missing birds to stored images,
+  with overlap checks that preserve existing bird identities and history.
+
+- Storage usage reports measured files, database reuse and overlapping
+  original-protection reasons through an authenticated background scan.
+
+### Changed
+
+- Gallery, Review and Training Export share canonical bird identities, including
+  manually added birds. Box training requires completely assessed positive frames.
+  The legacy User-Groundtruth pages and download endpoints are removed.
+- Homepage species cards show up to four distinct source photos in equal rows;
+  Best of Species expands additional species through Show more.
+
+- Gallery day lists and species details use paginated database queries,
+  keeping older dates accessible while limiting loaded records.
 
 ### Fixed
 
+- Read caches remain bounded as images arrive and combine concurrent
+  rebuilds; saved human corrections invalidate cached analytics.
 - Geographic species ranking resolves documented scientific-name synonyms
   locally and preserves the original image ranking when bird candidates cannot
   all be mapped, preventing unmatched names from gaining a ranking advantage.
@@ -27,6 +107,13 @@
   updates, preventing stale editing controls without manual version changes.
 - Species review now distinguishes a confirmed model proposal from a corrected
   species, including in earlier labels shown in the gallery.
+- Homepage image modals refresh saved human answers independently of cached
+  photo selections; species confirmation and withdrawal follow the label state.
+- Restoring dismissed birds preserves their corrections and history, and human
+  evidence remains protected during retention cleanup.
+- Telemetry tooling uses updated dependencies to address known vulnerabilities.
+- PTZ preset diagnostics retain structured fault codes and the preceding
+  motion command.
 - Live-view Overview controls now report failed preset requests, prompt for
   login when the session expires, and clear the return countdown only after
   the server accepts the request.

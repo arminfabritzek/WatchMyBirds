@@ -8,10 +8,12 @@ Covers:
 - FilterContext validation
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -221,95 +223,14 @@ class TestResolveSelection:
         assert resp.status_code == 400
         assert "from_date must be on or before to_date" in resp.get_json()["message"]
 
-    @patch("web.blueprints.moderation.db_service")
-    def test_logical_filter_resolves_user_import_selection(self, mock_db, client):
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_trash_candidate_selection_by_source_type.return_value = {
-            "detection_ids": [9, 10],
-            "image_filenames": ["import-a.jpg"],
-            "image_count": 1,
-        }
-
-        resp = client.post(
-            "/api/moderation/resolve-selection",
-            json={"mode": "logical_filter", "source_type": "folder_upload"},
-        )
-
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["status"] == "success"
-        assert data["detection_ids"] == [9, 10]
-        assert data["image_filenames"] == ["import-a.jpg"]
-        assert data["total_count"] == 2
-        assert data["image_count"] == 1
-        mock_db.fetch_trash_candidate_selection_by_source_type.assert_called_once_with(
-            mock_conn, "folder_upload"
-        )
-
-    @patch("web.blueprints.moderation.db_service")
-    def test_logical_filter_returns_zero_matches(self, mock_db, client):
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_trash_candidate_selection_by_source_type.return_value = {
-            "detection_ids": [],
-            "image_filenames": [],
-            "image_count": 0,
-        }
-
-        resp = client.post(
-            "/api/moderation/resolve-selection",
-            json={"mode": "logical_filter", "source_type": "folder_upload"},
-        )
-
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["detection_ids"] == []
-        assert data["image_filenames"] == []
-        assert data["total_count"] == 0
-        assert data["image_count"] == 0
-
-    @patch("web.blueprints.moderation.db_service")
-    def test_logical_filter_counts_orphan_images_in_total(self, mock_db, client):
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_trash_candidate_selection_by_source_type.return_value = {
-            "detection_ids": [],
-            "image_filenames": ["orphan-import.jpg"],
-            "image_count": 1,
-            "orphan_count": 1,
-        }
-
-        resp = client.post(
-            "/api/moderation/resolve-selection",
-            json={"mode": "logical_filter", "source_type": "folder_upload"},
-        )
-
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["detection_ids"] == []
-        assert data["image_filenames"] == ["orphan-import.jpg"]
-        assert data["orphan_count"] == 1
-        assert data["image_count"] == 1
-        assert data["total_count"] == 1
-
-    def test_logical_filter_requires_source_type(self, client):
+    def test_logical_filter_is_no_longer_supported(self, client):
         resp = client.post(
             "/api/moderation/resolve-selection",
             json={"mode": "logical_filter"},
         )
 
         assert resp.status_code == 400
-        assert "source_type required" in resp.get_json()["message"]
+        assert "Unknown mode" in resp.get_json()["message"]
 
     def test_unknown_mode_returns_400(self, client):
         resp = client.post(
@@ -324,199 +245,9 @@ class TestResolveSelection:
 # ---------------------------------------------------------------------------
 
 
-class TestBulkRelabel:
-    def test_requires_detection_ids(self, client):
-        resp = client.post(
-            "/api/moderation/bulk/relabel",
-            json={"species": "Parus_major"},
-        )
-        assert resp.status_code == 400
-        assert "detection_ids" in resp.get_json()["message"]
-
-    def test_requires_species(self, client):
-        resp = client.post(
-            "/api/moderation/bulk/relabel",
-            json={"detection_ids": [1, 2]},
-        )
-        assert resp.status_code == 400
-        assert "species" in resp.get_json()["message"]
-
-    @patch("web.blueprints.moderation.gallery_service")
-    @patch("web.blueprints.moderation.db_service")
-    @patch(
-        "web.blueprints.moderation.build_species_picker_entries",
-        return_value=[
-            {
-                "scientific": "Parus_major",
-                "common": "Great Tit",
-                "source": "model",
-                "score": None,
-                "rank": None,
-            }
-        ],
-    )
-    def test_relabel_succeeds(
-        self, _mock_species_entries, mock_db, mock_gallery, client
-    ):
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.execute.return_value.fetchall.return_value = [
-            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
-            for detection_id in (1, 2, 3)
-        ]
-
-        with patch(
-            "web.blueprints.moderation.human_label_service.record_answer"
-        ) as mock_record:
-            resp = client.post(
-                "/api/moderation/bulk/relabel",
-                json={"detection_ids": [1, 2, 3], "species": "Parus_major"},
-            )
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["status"] == "success"
-        assert data["relabeled"] == 3
-        assert data["new_species"] == "Parus_major"
-        assert mock_record.call_count == 3
-        assert all(
-            call.args[1].species_identity == "corrected"
-            and call.args[1].species_key == "Parus_major"
-            for call in mock_record.call_args_list
-        )
-        mock_gallery.invalidate_cache.assert_called_once()
-
-    @patch("web.blueprints.moderation.gallery_service")
-    @patch("web.blueprints.moderation.db_service")
-    @patch(
-        "web.blueprints.moderation.build_species_picker_entries",
-        return_value=[
-            {"scientific": "Parus_major", "common": "Great Tit",
-             "source": "model", "score": None, "rank": None}
-        ],
-    )
-    def test_relabel_flips_decision_level_to_species(
-        self, _mock_species_entries, mock_db, _mock_gallery, client
-    ):
-        """Regression: bulk-relabel must flip decision_level to 'species'
-        so the rows re-enter /species and gallery."""
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.execute.return_value.fetchall.return_value = [
-            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
-            for detection_id in (1, 2, 3)
-        ]
-
-        with patch(
-            "web.blueprints.moderation.human_label_service.record_answer"
-        ) as mock_record:
-            resp = client.post(
-                "/api/moderation/bulk/relabel",
-                json={"detection_ids": [1, 2, 3], "species": "Parus_major"},
-            )
-        assert resp.status_code == 200
-        assert all(
-            call.args[1].species_identity == "corrected"
-            for call in mock_record.call_args_list
-        )
-
-
 # ---------------------------------------------------------------------------
 # bulk/reject
 # ---------------------------------------------------------------------------
-
-
-class TestBulkReject:
-    def test_requires_targets(self, client):
-        resp = client.post(
-            "/api/moderation/bulk/reject",
-            json={},
-        )
-        assert resp.status_code == 400
-
-    @patch("web.blueprints.moderation.gallery_service")
-    @patch("web.blueprints.moderation.db_service")
-    def test_reject_detections(self, mock_db, mock_gallery, client):
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.execute.return_value.fetchall.return_value = [
-            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
-            for detection_id in (5, 6, 7)
-        ]
-
-        with patch(
-            "web.blueprints.moderation.human_label_service.record_answer"
-        ) as mock_record:
-            resp = client.post(
-                "/api/moderation/bulk/reject",
-                json={"detection_ids": [5, 6, 7]},
-            )
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["rejected_detections"] == 3
-        mock_db.reject_detections.assert_called_once_with(mock_conn, [5, 6, 7])
-        mock_record.assert_not_called()
-
-    @patch("web.blueprints.moderation.gallery_service")
-    @patch("web.blueprints.moderation.db_service")
-    def test_reject_accepts_legacy_ids_alias(self, mock_db, mock_gallery, client):
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.execute.return_value.fetchall.return_value = [
-            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
-            for detection_id in (8, 9)
-        ]
-
-        with patch(
-            "web.blueprints.moderation.human_label_service.record_answer"
-        ) as mock_record:
-            resp = client.post(
-                "/api/moderation/bulk/reject",
-                json={"ids": [8, 9]},
-            )
-
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["rejected_detections"] == 2
-        mock_db.reject_detections.assert_called_once_with(mock_conn, [8, 9])
-        mock_record.assert_not_called()
-
-    @patch("web.blueprints.moderation.gallery_service")
-    @patch("web.blueprints.moderation.db_service")
-    def test_reject_review_images(self, mock_db, mock_gallery, client):
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.execute.return_value.fetchall.return_value = [
-            {"detection_id": 11, "image_filename": "orphan1.jpg"},
-            {"detection_id": 12, "image_filename": "orphan2.jpg"},
-        ]
-
-        with patch(
-            "web.blueprints.moderation.human_label_service.record_answer"
-        ) as mock_record:
-            resp = client.post(
-                "/api/moderation/bulk/reject",
-                json={"image_filenames": ["orphan1.jpg", "orphan2.jpg"]},
-            )
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["rejected_images"] == 2
-        mock_db.reject_detections.assert_called_once_with(mock_conn, [11, 12])
-        mock_record.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -527,11 +258,6 @@ class TestBulkReject:
 class TestAuthExpiry:
     ENDPOINTS = [
         ("/api/moderation/resolve-selection", "POST"),
-        ("/api/moderation/bulk/relabel", "POST"),
-        ("/api/moderation/bulk/reject", "POST"),
-        ("/api/moderation/bulk/rescan", "POST"),
-        ("/api/moderation/rescan-jobs/abc123/status", "GET"),
-        ("/api/moderation/rescan-proposals/1/apply", "POST"),
     ]
 
     @pytest.mark.parametrize("url,method", ENDPOINTS)
@@ -594,46 +320,37 @@ class TestFilterContext:
 
 
 class TestFilterResolverThresholds:
-    @patch("web.services.filter_service.db_service")
-    @patch("web.services.filter_service.get_config")
-    def test_species_overview_explicit_zero_keeps_zero_threshold(
-        self, mock_get_config, mock_db
-    ):
+    def test_species_overview_uses_history_independent_of_photo_threshold(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from config import get_config
+        from tests.test_station_observations import answer, seed
+        from utils.db import closing_connection
+        from utils.db.detections import fetch_detections_for_gallery
         from web.services.filter_service import FilterContext, resolve_filtered_ids
 
-        mock_get_config.return_value = {"GALLERY_DISPLAY_THRESHOLD": 0.5}
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_detections_for_gallery.return_value = [
-            {
-                "detection_id": 11,
-                "cls_class_name": "Parus_major",
-                "od_class_name": "Parus_major",
-                "score": 0.2,
-            }
-        ]
-
+        monkeypatch.setitem(get_config(), "OUTPUT_DIR", str(tmp_path))
+        with closing_connection() as conn:
+            filename = seed(conn, identifier=11, species="Parus_major", quality=0)
+            answer(conn, 11, filename, species="Parus_major")
+            assert [r["detection_id"] for r in fetch_detections_for_gallery(conn)] == [
+                11
+            ]
         ctx = FilterContext.from_dict(
             {
                 "surface": "species_overview",
                 "species_key": "Parus_major",
-                "min_score": 0.0,
+                "min_score": 1.0,
+                "favorites_only": True,
             }
         )
-
         result = resolve_filtered_ids(ctx)
-
         assert result.detection_ids == [11]
         assert result.total_count == 1
 
     @patch("web.services.filter_service.db_service")
     @patch("web.services.filter_service.get_config")
-    def test_gallery_missing_min_score_falls_back_to_config_threshold(
-        self, mock_get_config, mock_db
-    ):
+    def test_gallery_has_no_second_default_score_filter(self, mock_get_config, mock_db):
         from web.services.filter_service import FilterContext, resolve_filtered_ids
 
         mock_get_config.return_value = {"GALLERY_DISPLAY_THRESHOLD": 0.5}
@@ -672,8 +389,8 @@ class TestFilterResolverThresholds:
 
         result = resolve_filtered_ids(ctx)
 
-        assert result.detection_ids == [22]
-        assert result.total_count == 1
+        assert result.detection_ids == [22, 21]
+        assert result.total_count == 2
 
     @patch("web.services.filter_service.db_service")
     @patch("web.services.filter_service.get_config")
@@ -728,6 +445,7 @@ class TestFilterResolverThresholds:
             {
                 "surface": "gallery",
                 "date": "2026-03-06",
+                "min_score": 0.5,
             }
         )
 
@@ -769,3 +487,17 @@ class TestFilterResolverThresholds:
 
         assert result.detection_ids == [31]
         assert result.total_count == 1
+
+
+@pytest.mark.parametrize(
+    "url,method",
+    [
+        ("/api/moderation/bulk/rescan", "POST"),
+        ("/api/moderation/rescan-jobs/abc123/status", "GET"),
+        ("/api/moderation/rescan-proposals/1/apply", "POST"),
+    ],
+)
+def test_removed_rescan_routes_return_404(
+    client: FlaskClient, url: str, method: str
+) -> None:
+    assert client.open(url, method=method).status_code == 404

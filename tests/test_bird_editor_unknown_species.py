@@ -59,8 +59,8 @@ def _unknown_row(**overrides) -> dict:
         "manual_object_id": None,
         "species_key": None,
         "common_name": "Bird · species unknown",
-        "species_source": "manual_unknown",
-        "manual_species_override": None,
+        "human_species_source": "manual_unknown",
+        "human_species_key": None,
         "cls_class_name": AI_SPECIES,
         "cls_confidence": 0.92,
         "od_class_name": "bird",
@@ -82,10 +82,24 @@ def test_explicit_unknown_keeps_no_species_key() -> None:
     )
 
 
+@pytest.mark.parametrize("review_field", ["needsReview", "needs_review"])
+def test_pending_review_does_not_assert_human_unknown(review_field: str) -> None:
+    got = _normalize(
+        _unknown_row(
+            human_species_source="model_top1",
+            provenance="model_proposal",
+            **{review_field: True},
+        )
+    )
+    assert got["speciesKey"] == AI_SPECIES
+    assert got["humanReviewState"] == "unreviewed"
+    assert got["provenance"] == "model_proposal"
+
+
 def test_explicit_unknown_survives_a_missing_provenance_hint() -> None:
     """Surfaces that do not compute provenance must still be safe.
 
-    ``species_source`` rides on every detection row; ``provenance`` is
+    ``human_species_source`` rides on every detection row; ``provenance`` is
     template-computed. The JS must not depend on the richer field alone.
     """
     got = _normalize(_unknown_row(provenance=None))
@@ -111,7 +125,7 @@ def test_explicit_unknown_keeps_the_original_prediction_for_context() -> None:
 def test_untouched_proposal_still_resolves_its_species() -> None:
     got = _normalize(
         _unknown_row(
-            species_source="model_top1",
+            human_species_source="model_top1",
             provenance="model_proposal",
             common_name="Kleiber",
         )
@@ -124,8 +138,8 @@ def test_human_confirmed_species_is_unaffected() -> None:
     got = _normalize(
         _unknown_row(
             species_key="Parus_major",
-            manual_species_override="Parus_major",
-            species_source="manual",
+            human_species_key="Parus_major",
+            human_species_source="manual",
             provenance="manually_identified",
             common_name="Kohlmeise",
         )
@@ -187,7 +201,7 @@ def test_untouched_proposal_survives_the_round_trip_unchanged() -> None:
     got = _roundtrip(
         _unknown_row(
             species_key=AI_SPECIES,
-            species_source="model_top1",
+            human_species_source="model_top1",
             provenance="model_proposal",
             common_name="Kleiber",
         )

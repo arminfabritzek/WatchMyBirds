@@ -1,0 +1,46 @@
+{% set current_page = review.page %}
+{% set page_count = review.page_count %}
+<nav class="pagination-wrapper review-pagination" aria-label="Review pages">
+    {% if page_count > 1 %}
+    {% if page_count <= 20 %}
+        {% set pages = range(1, page_count + 1) %}
+    {% else %}
+        {% set window_start = [2, current_page - 2] | max %}
+        {% set window_end = [page_count - 1, current_page + 2] | min %}
+        {% set pages = [1] + (range(window_start, window_end + 1) | list) + [page_count] %}
+    {% endif %}
+    <ul class="pagination">
+        {% if current_page > 1 %}
+        <li><a href="{{ url_for('review.review_page', answered=1 if answered else 0, day=review.selected_day, page=current_page - 1, **selection) }}" rel="prev">Previous</a></li>
+        {% endif %}
+        {% for number in pages %}
+            {% if not loop.first and number > loop.previtem + 1 %}
+            <li class="review-pagination__ellipsis" aria-hidden="true"><span>…</span></li>
+            {% endif %}
+            {% if number == current_page %}
+            <li class="active"><span aria-current="page" aria-label="Page {{ number }} of {{ page_count }}">{{ number }}</span></li>
+            {% else %}
+            <li><a href="{{ url_for('review.review_page', answered=1 if answered else 0, day=review.selected_day, page=number, **selection) }}" aria-label="Page {{ number }}">{{ number }}</a></li>
+            {% endif %}
+        {% endfor %}
+        {% if current_page < page_count %}
+        <li><a href="{{ url_for('review.review_page', answered=1 if answered else 0, day=review.selected_day, page=current_page + 1, **selection) }}" rel="next">Next</a></li>
+        {% endif %}
+    </ul>
+    {% if page_count > 20 %}
+    <form class="review-pagination__jump" method="get" action="{{ url_for('review.review_page') }}">
+        <input type="hidden" name="answered" value="{{ 1 if answered else 0 }}">
+        <input type="hidden" name="day" value="{{ review.selected_day }}">
+        {% for key, value in selection.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+        <label for="review-page-jump">Go to page</label>
+        <input class="form-control" id="review-page-jump" name="page" type="number"
+               min="1" max="{{ page_count }}" step="1" value="{{ current_page }}"
+               inputmode="numeric" required>
+        <span>of {{ page_count }}</span>
+        <button type="submit" class="btn btn--secondary btn--sm">Go</button>
+    </form>
+    {% endif %}
+    {% else %}
+    <span>Page {{ current_page }} of {{ page_count }}</span>
+    {% endif %}
+</nav>

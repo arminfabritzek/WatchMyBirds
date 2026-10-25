@@ -16,9 +16,9 @@ nav_index (int|None): Optional index within nav_scope
 {% from "components/bird_editor_toolbar.html" import render_bird_editor_toolbar %}
 
 {% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}
-{% set can_moderate = session.get('authenticated') %}
+{% set can_moderate = session.get('authenticated') and not det.retracted_manual %}
 {% set show_nav = kwargs.show_nav if kwargs.show_nav is defined else true %}
-<div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
+<div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.modal_key | default(det.detection_id) }}" tabindex="-1"
     aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}"
     {% if interactive_labels %}data-human-review-state="{{ det.human_review_state | default('unreviewed') }}"{% endif %}
     {% if nav_scope %}data-nav-scope="{{ nav_scope }}"{% endif %}
@@ -33,15 +33,15 @@ nav_index (int|None): Optional index within nav_scope
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
-                    {# A human "species unknown" answer clears manual_species_override, so an
+                    {# A human "species unknown" answer clears human_species_key, so an
                        explicit unknown and a never-answered box both arrive with an empty
-                       override. species_source is the only signal that separates them and the
+                       override. The fact-derived source separates them and the
                        only one present on every detail entrance. #}
-                    {% set _species_source = det.species_source | default('', true) %}
+                    {% set _species_source = det.human_species_source | default('', true) %}
                     {% set has_human_unknown_species = (_species_source in ['manual_unknown', 'manual_wrong']) or (det.human_review_state | default('', true) == 'reviewed_unknown') %}
-                    {% set has_manual_species_review = (_species_source == 'manual') and det.manual_species_override %}
+                    {% set has_manual_species_review = (_species_source == 'manual') and det.human_species_key %}
                     {% set is_trusted = has_manual_species_review or has_human_unknown_species or (det.decision_state == 'confirmed') or (det.decision_state is none) %}
-                    {% set title_species = det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name %}
+                    {% set title_species = none if has_human_unknown_species or det.species_key == 'Unknown_species' else (det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name) %}
                     {% set review_status_text = render_review_status_text(det, "font-size: 0.7rem; opacity: 0.8;") %}
                     {# No species to look up: the unknown label is not a search term. #}
                     {% set wiki_url = none if has_human_unknown_species else wikipedia_species_url(det.common_name, title_species) %}
@@ -72,14 +72,14 @@ nav_index (int|None): Optional index within nav_scope
                         {% if has_human_unknown_species and det.cls_class_name %}
                         · <span class="wm-modal__title-conf" data-editor-title-original-ai>Original AI: {{ det.cls_class_name | replace('_', ' ') }}{% if det.cls_confidence is not none %} CLS {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}</span>
                         {% endif %}
-                        <span data-editor-title-provenance>{% if has_human_unknown_species %} · Marked unknown by a person{% elif det.human_review_state | default('', true) == 'confirmed' %} · Human confirmed{% elif has_manual_species_review %} · Manually identified{% elif review_status_text|trim %} · {{ review_status_text }}{% endif %}</span>
+                        <span data-editor-title-provenance>{% if _species_source == 'manual_wrong' %} · Species proposal refuted{% elif has_human_unknown_species %} · Bird · species unknown · Answered{% elif det.human_review_state | default('', true) == 'confirmed' %} · Human confirmed{% elif has_manual_species_review %} · Manually identified{% elif review_status_text|trim %} · {{ review_status_text }}{% endif %}</span>
                     </span>
                 </div>
                 <div class="wm-modal__header-actions">
                     {{ render_action_bar(
                     detection_id=det.detection_id,
                     original_url=det.original_path,
-                    original_retired=(det.original_present is defined and det.original_present == 0),
+                    original_retired=((det.original_present is defined and det.original_present == 0) or det.original_available is sameas false),
                     optimized_url=(det.optimized_path if det.optimized_path is defined and det.optimized_path else det.full_path),
                     bbox={
                     'x': det.bbox_x,
@@ -102,6 +102,7 @@ nav_index (int|None): Optional index within nav_scope
                 </div>
             </div>
 
+            {% if det.media_status %}<p class="station-media-status" role="note">{{ det.media_status }}{% if det.media_placeholder %} · No stored image available. The placeholder is not image evidence.{% endif %}</p>{% endif %}
             <div class="wm-modal__body">
                 <div class="wm-modal__image wm-toolbox-host">
                     {{ render_image_viewer(

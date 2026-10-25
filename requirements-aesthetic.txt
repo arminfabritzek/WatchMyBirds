@@ -1,30 +1,20 @@
-# Dependencies for the nightly aesthetic tagger
-# (web/services/aesthetic_tag_scheduler.py + scripts/aesthetic_tag_nightly.py).
+# Standard dependencies for the default-on nightly aesthetic tagger.
+# Install after requirements.txt in a separate pip invocation so the
+# PyTorch index configuration stays confined to this dependency stack.
+# Disable the feature with AESTHETIC_TAG_ENABLED=False.
 #
-# The tagger is a default-ON shipped feature; every standard build
-# installs this file. To disable it, set AESTHETIC_TAG_ENABLED=False
-# rather than skipping these packages.
-#
-# Kept separate from the main requirements.txt for CPU-index isolation:
-#  * torch + torchvision must resolve from the PyTorch CPU index. Putting
-#    that --index-url directive in the main file would force every package
-#    through the PyTorch index during the primary resolver run.
-#  * The CPU-only PyTorch wheels (~150 MB instead of ~1.5 GB with cuDNN)
-#    require the custom index URL pinned below.
-#
-# Install with:
-#   pip install -r requirements-aesthetic.txt
-#
-# The index directives below are pinned in-file so a plain `-r` install
-# pulls torch/torchvision from PyTorch's CPU distribution. Without them,
-# a bare `pip install torchvision>=0.27` resolves to the PyPI CUDA wheels
-# and drags ~3.8 GB of nvidia-*/cuda-*/triton onto CPU-only hosts (e.g.
-# the Raspberry Pi appliance). --extra-index-url falls back to PyPI for
-# open_clip_torch.
+# pip considers both indexes without priority. Exact +cpu pins prevent
+# Linux/Windows from selecting CUDA builds; macOS uses native wheels.
 
 --index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://pypi.org/simple
 
-torch>=2.13.0
-torchvision>=0.27.1
-open_clip_torch>=3.3.0
+torch==2.14.1+cpu; sys_platform != "darwin"
+torchvision==0.29.1+cpu; sys_platform != "darwin"
+torch==2.14.1; sys_platform == "darwin"
+torchvision==0.29.1; sys_platform == "darwin"
+open_clip_torch==3.3.0
+
+# Pin security fixes required by torch and the model cache.
+filelock==4.2.4
+setuptools==84.2.1

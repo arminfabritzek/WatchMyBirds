@@ -1,15 +1,17 @@
-"""Read-only preview and manual download of the canonical label bundle."""
+"""Training preview, recorded exports, streaming downloads and receipts."""
 
 from __future__ import annotations
 
 from flask import (
     Blueprint,
+    Response,
+    abort,
     jsonify,
     redirect,
     render_template,
     request,
-    send_file,
     session,
+    url_for,
 )
 
 from utils.path_manager import PathManager
@@ -37,7 +39,7 @@ def _build():
     with db_service.closing_connection() as conn:
         bundle = canonical_dataset_service.build_bundle(
             conn,
-            path_resolver=path_manager.get_original_path,
+            path_resolver=canonical_dataset_service.original_resolver(path_manager),
         )
     return bundle, path_manager
 
@@ -45,10 +47,29 @@ def _build():
 @canonical_dataset_bp.route("/admin/canonical-dataset")
 @login_required
 def canonical_dataset_page():
-    bundle, _ = _build()
+    bundle, paths = _build()
+    with db_service.closing_connection() as conn:
+        waiting = canonical_dataset_service.waiting_revisions(
+            conn,
+            media_exists=lambda name: canonical_dataset_service.original_resolver(
+                paths
+            )(name).is_file(),
+        )
+        exports = canonical_dataset_service.list_exports(conn)
     return render_template(
         "canonical_dataset.html",
         bundle=bundle,
+        waiting=waiting,
+        waiting_photos=len({row["image_filename"] for row in waiting}),
+        exports=exports,
+        download_export_id=next(
+            (
+                item["export_id"]
+                for item in exports
+                if item["export_id"] == request.args.get("download")
+            ),
+            None,
+        ),
         included=[row for row in bundle.manifest if row["decision"] == "included"],
         excluded=[row for row in bundle.manifest if row["decision"] == "excluded"],
         cls_ready_count=len(bundle.classifier_ready),
@@ -127,36 +148,93 @@ def canonical_dataset_preview():
     )
 
 
-@canonical_dataset_bp.route("/api/canonical-dataset/download")
-@login_required
-def canonical_dataset_download():
-    bundle, path_manager = _build()
-    tmp_dir, archive_path = (
-        canonical_dataset_service.render_canonical_bundle_to_tempdir(
-            bundle,
-            path_resolver=path_manager.get_original_path,
-            temporary_root=path_manager.backup_dir,
-        )
+def _download_response(
+    bundle: canonical_dataset_service.CanonicalDataset,
+    paths: PathManager,
+    media_map: dict[str, str] | None = None,
+) -> Response:
+    resolve = canonical_dataset_service.original_resolver(paths)
+    media_map = media_map or {}
+    for filename in bundle.media_filenames:
+        if not resolve(media_map.get(filename, filename)).is_file():
+            abort(409, "An original required by this export is missing")
+    return Response(
+        canonical_dataset_service.stream_canonical_bundle(
+            bundle, path_resolver=lambda name: resolve(media_map.get(name, name))
+        ),
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="watchmybirds-labels-{bundle.bundle_id[:12]}.zip"',
+            "Cache-Control": "no-store",
+        },
     )
 
-    def _cleanup() -> None:
-        archive_path.unlink(missing_ok=True)
-        try:
-            tmp_dir.rmdir()
-        except OSError:
-            pass
 
+def _create_export(
+    selection: set[str] | None = None,
+) -> tuple[str, canonical_dataset_service.CanonicalDataset]:
+    paths = _path_manager()
     try:
-        response = send_file(
-            archive_path,
-            mimetype="application/zip",
-            as_attachment=True,
-            download_name=f"watchmybirds-labels-{bundle.bundle_id[:12]}.zip",
-            max_age=0,
-        )
-    except BaseException:
-        _cleanup()
-        raise
-    response.direct_passthrough = False
-    response.call_on_close(_cleanup)
-    return response
+        with db_service.closing_connection() as conn:
+            return canonical_dataset_service.create_export(
+                conn,
+                paths=paths,
+                labeling_installation_id=canonical_dataset_service.get_or_create_labeling_installation_id(
+                    str(paths.base_dir)
+                ),
+                selection=selection,
+            )
+    except ValueError as error:
+        abort(409, str(error))
+
+
+@canonical_dataset_bp.route("/api/canonical-dataset/download", methods=["POST"])
+@login_required
+def canonical_dataset_download() -> Response:
+    selection = None
+    if request.is_json:
+        payload = request.get_json(silent=True)
+        values = payload.get("selection") if isinstance(payload, dict) else None
+        if (
+            not isinstance(values, list)
+            or len(values) > 10000
+            or not all(isinstance(value, str) and len(value) <= 50 for value in values)
+        ):
+            abort(400, "selection must be a list of answer keys")
+        selection = set(values)
+    _, bundle = _create_export(selection)
+    return _download_response(bundle, _path_manager())
+
+
+@canonical_dataset_bp.route("/api/canonical-dataset/exports", methods=["POST"])
+@login_required
+def canonical_dataset_prepare() -> Response:
+    export_id, _ = _create_export()
+    return redirect(
+        url_for("canonical_dataset.canonical_dataset_page", download=export_id),
+        code=303,
+    )
+
+
+@canonical_dataset_bp.route("/api/canonical-dataset/exports/<export_id>/download")
+@login_required
+def canonical_dataset_download_again(export_id: str) -> Response:
+    with db_service.closing_connection() as conn:
+        try:
+            bundle, media_map = canonical_dataset_service.load_export(conn, export_id)
+        except LookupError:
+            abort(404)
+    return _download_response(bundle, _path_manager(), media_map)
+
+
+@canonical_dataset_bp.route(
+    "/api/canonical-dataset/exports/<export_id>/received", methods=["POST"]
+)
+@login_required
+def canonical_dataset_received(export_id: str) -> Response:
+    with db_service.closing_connection() as conn:
+        try:
+            canonical_dataset_service.receive_export(conn, export_id)
+        except LookupError:
+            abort(404)
+    return redirect(url_for("canonical_dataset.canonical_dataset_page"), code=303)

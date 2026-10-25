@@ -2,7 +2,6 @@ import sqlite3
 
 from utils.db.detections import (
     fetch_active_detection_ids_in_date_range,
-    fetch_active_detection_selection_by_source_type,
     fetch_bbox_centers,
     fetch_count_last_24h,
     fetch_daily_covers,
@@ -27,7 +26,7 @@ def test_mqtt_gallery_gate_excludes_review_only_and_hidden_detections():
         (3, "uncertain", "species", None, "untagged", "active", 0.9),
         (4, "confirmed", "species", 0, "untagged", "active", 0.9),
         (5, "confirmed", "species", None, "untagged", "active", 0.05),
-        (6, "confirmed", "species", None, "no_bird", "active", 0.9),
+        (6, "confirmed", "species", None, "no_bird", "rejected", 0.9),
         (7, "confirmed", "species", None, "untagged", "rejected", 0.9),
     ]
     for detection_id, state, level, quality, review, status, score in cases:
@@ -37,85 +36,34 @@ def test_mqtt_gallery_gate_excludes_review_only_and_hidden_detections():
             (filename, "20260923_120000", review),
         )
         conn.execute(
-            """INSERT INTO detections(
+            """INSERT INTO detections(od_class_name,
                 detection_id, image_filename, status, score, decision_state,
                 decision_level, quality_gallery_ok
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES ('Parus_major', ?, ?, ?, ?, ?, ?, ?)""",
             (detection_id, filename, status, score, state, level, quality),
         )
 
+    conn.execute(
+        "INSERT INTO classifications(detection_id, cls_class_name, rank) SELECT detection_id, 'Parus_major', 1 FROM detections"
+    )
     assert [
         is_detection_visible_in_gallery(conn, detection_id, min_score=0.1)
         for detection_id in range(1, 8)
-    ] == [True, False, False, False, False, False, False]
+    ] == [True, False, False, True, True, False, False]
 
 
 def _build_conn() -> sqlite3.Connection:
+    from utils.db.connection import _init_schema
+
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE sources (
-            source_id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            type TEXT NOT NULL
-        );
-
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            source_id INTEGER,
-            review_status TEXT DEFAULT 'untagged',
-            downloaded_timestamp TEXT,
-            ptz_origin TEXT
-        );
-
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY,
-            image_filename TEXT NOT NULL,
-            status TEXT DEFAULT 'active',
-            created_at TEXT,
-            bbox_x REAL,
-            bbox_y REAL,
-            bbox_w REAL,
-            bbox_h REAL,
-            od_class_name TEXT,
-            od_confidence REAL,
-            score REAL,
-            thumbnail_path TEXT,
-            manual_species_override TEXT,
-            species_source TEXT,
-            rating REAL,
-            rating_source TEXT,
-            is_favorite INTEGER DEFAULT 0,
-            is_gallery_eligible INTEGER DEFAULT 0,
-            aesthetic_score REAL,
-            aesthetic_score_at TEXT,
-            decision_state TEXT,
-            bbox_quality REAL,
-            unknown_score REAL,
-            decision_reasons TEXT,
-            decision_level TEXT,
-            sharpness_score REAL,
-            quality_gallery_ok INTEGER
-        );
-
-        CREATE TABLE classifications (
-            classification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            detection_id INTEGER NOT NULL,
-            cls_class_name TEXT,
-            cls_confidence REAL,
-            rank INTEGER DEFAULT 1,
-            status TEXT DEFAULT 'active'
-        );
-        """
-    )
+    _init_schema(conn)
     return conn
 
 
 def _seed_visibility_fixture(conn: sqlite3.Connection) -> None:
     conn.executemany(
-        "INSERT INTO sources(source_id, name, type) VALUES (?, ?, ?)",
+        "INSERT OR REPLACE INTO sources(source_id, name, type) VALUES (?, ?, ?)",
         [
             (1, "Garden Cam", "ipcam"),
             (2, "Inbox Import", "folder_upload"),
@@ -136,7 +84,7 @@ def _seed_visibility_fixture(conn: sqlite3.Connection) -> None:
     )
     conn.executemany(
         """
-        INSERT INTO detections(
+        INSERT INTO detections(decision_level,
             detection_id,
             image_filename,
             status,
@@ -150,7 +98,7 @@ def _seed_visibility_fixture(conn: sqlite3.Connection) -> None:
             score,
             is_favorite,
             decision_state
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ('species', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -231,7 +179,7 @@ def _seed_visibility_fixture(conn: sqlite3.Connection) -> None:
             (
                 6,
                 "20260328_100000_trash.jpg",
-                "active",
+                "rejected",
                 "20260328_100000",
                 0.30,
                 0.30,
@@ -277,13 +225,13 @@ def test_visibility_policy_filters_gallery_like_surfaces():
         for row in fetch_detections_for_gallery(conn, order_by="score")
         if row["detection_id"] == 2
     )
-    assert mixed_row["sibling_count"] == 1
+    assert mixed_row["sibling_count"] == 2
 
     sibling_ids = [
         row["detection_id"]
         for row in fetch_sibling_detections(conn, "20260327_130000_mixed.jpg")
     ]
-    assert sibling_ids == [2]
+    assert sibling_ids == [3, 2]
 
     favorite_ids = {
         row["detection_id"] for row in fetch_random_favorites(conn, limit=10)
@@ -356,13 +304,6 @@ def test_visibility_policy_propagates_to_rolling_and_bulk_selection_queries():
     )
     assert ids_in_range == [1, 2]
 
-    selection = fetch_active_detection_selection_by_source_type(conn, "folder_upload")
-    assert selection == {
-        "detection_ids": [2],
-        "image_filenames": ["20260327_130000_mixed.jpg"],
-        "image_count": 1,
-    }
-
 
 def test_gallery_queries_canonicalize_space_separated_species_labels():
     conn = _build_conn()
@@ -378,7 +319,7 @@ def test_gallery_queries_canonicalize_space_separated_species_labels():
     )
     conn.executemany(
         """
-        INSERT INTO detections(
+        INSERT INTO detections(decision_level,
             detection_id,
             image_filename,
             status,
@@ -392,7 +333,7 @@ def test_gallery_queries_canonicalize_space_separated_species_labels():
             score,
             is_favorite,
             decision_state
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ('species', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -458,7 +399,7 @@ def test_uncertain_detection_never_appears_in_gallery_even_if_image_is_confirmed
     )
     conn.execute(
         """
-        INSERT INTO detections(
+        INSERT INTO detections(decision_level,
             detection_id,
             image_filename,
             status,
@@ -472,7 +413,7 @@ def test_uncertain_detection_never_appears_in_gallery_even_if_image_is_confirmed
             score,
             is_favorite,
             decision_state
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ('species', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             99,
@@ -506,10 +447,7 @@ def test_uncertain_detection_never_appears_in_gallery_even_if_image_is_confirmed
     assert gallery_ids == []
 
 
-def test_quality_gallery_ok_floor_hides_only_explicit_zero():
-    """The quality floor (quality_gallery_ok) is NULL-safe: NULL and 1
-    both show, only an explicit 0 hides. Confirms the COALESCE(...,1)=1
-    clause in _gallery_visibility_sql."""
+def test_sharpness_never_vetoes_admitted_observations():
     conn = _build_conn()
     conn.executemany(
         """
@@ -524,12 +462,12 @@ def test_quality_gallery_ok_floor_hides_only_explicit_zero():
     )
     conn.executemany(
         """
-        INSERT INTO detections(
+        INSERT INTO detections(decision_level,
             detection_id, image_filename, status, created_at,
             bbox_x, bbox_y, bbox_w, bbox_h,
             od_class_name, od_confidence, score, is_favorite,
             decision_state, sharpness_score, quality_gallery_ok
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES ('species', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             # Un-scored crop: quality_gallery_ok NULL → shown.
@@ -568,7 +506,7 @@ def test_quality_gallery_ok_floor_hides_only_explicit_zero():
                 3000.0,
                 1,
             ),
-            # Scored and below floor: quality_gallery_ok=0 → hidden.
+            # A blurry crop remains an admitted observation.
             (
                 203,
                 "20260401_120200_floored.jpg",
@@ -605,5 +543,5 @@ def test_quality_gallery_ok_floor_hides_only_explicit_zero():
         row["detection_id"]
         for row in fetch_detections_for_gallery(conn, order_by="score")
     }
-    # NULL (201) and 1 (202) show; explicit 0 (203) is hidden.
-    assert gallery_ids == {201, 202}
+    # All three persisted decisions remain admitted.
+    assert gallery_ids == {201, 202, 203}

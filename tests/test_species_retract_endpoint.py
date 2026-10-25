@@ -85,8 +85,12 @@ def _confirm(client, filename, detection_id):
 def _undo(client, filename, detection_id):
     return post(
         client,
-        "/api/labels/species/retract",
-        {"filename": filename, "detection_id": detection_id},
+        "/api/labels/answer",
+        {
+            "filename": filename,
+            "detection_id": detection_id,
+            "retract": "species_identity",
+        },
     )
 
 
@@ -117,10 +121,10 @@ def test_undo_requires_a_filename(case):
     client, _, detection_id = case
     response = post(
         client,
-        "/api/labels/species/retract",
+        "/api/labels/answer",
         {"filename": "", "detection_id": detection_id},
     )
-    assert response.status_code == 400
+    assert response.status_code == 409
 
 
 def test_undo_rejects_a_mismatched_image(case):
@@ -128,10 +132,10 @@ def test_undo_rejects_a_mismatched_image(case):
     _confirm(client, "x", detection_id)
     response = post(
         client,
-        "/api/labels/species/retract",
+        "/api/labels/answer",
         {"filename": "20260101_000000_other.jpg", "detection_id": detection_id},
     )
-    assert response.status_code == 400
+    assert response.status_code == 409
 
 
 def test_a_guest_cannot_undo(case):
@@ -143,7 +147,14 @@ def test_a_guest_cannot_undo(case):
     response = _undo(client, filename, detection_id)
 
     assert response.status_code in (302, 401, 403)
-    assert _row(detection_id)["manual_species_override"] == AI_SPECIES
+    with db_connection.closing_connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT species_key FROM current_human_label_facts WHERE detection_id=? AND fact_type='species_identity'",
+                (detection_id,),
+            ).fetchone()[0]
+            == AI_SPECIES
+        )
 
 
 def _set_verdict(client, filename, detection_id, verdict):
@@ -161,8 +172,8 @@ def _set_verdict(client, filename, detection_id, verdict):
 def _clear_verdict(client, filename, detection_id):
     return post(
         client,
-        "/api/labels/bbox-quality/retract",
-        {"filename": filename, "detection_id": detection_id},
+        "/api/labels/answer",
+        {"filename": filename, "detection_id": detection_id, "retract": "bbox_quality"},
     )
 
 
@@ -201,10 +212,10 @@ def test_clearing_a_box_verdict_requires_a_filename(case):
     client, _, detection_id = case
     response = post(
         client,
-        "/api/labels/bbox-quality/retract",
+        "/api/labels/answer",
         {"filename": "", "detection_id": detection_id},
     )
-    assert response.status_code == 400
+    assert response.status_code == 409
 
 
 def test_a_guest_cannot_clear_a_box_verdict(case):

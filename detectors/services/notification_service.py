@@ -5,12 +5,15 @@ Implements NotificationInterface for sending detection alerts via Telegram.
 Extracts notification logic from DetectionManager for independent operation.
 """
 
+import sqlite3
 import threading
 import time
 
 from config import get_config
 from detectors.interfaces.notification import NotificationInterface, SpeciesInfo
 from logging_config import get_logger
+from utils.cover_selection import cover_sort_key
+from utils.db import closing_connection
 from utils.species_names import is_known_species, resolve_common_name
 from utils.telegram_notifier import send_telegram_message
 
@@ -25,7 +28,7 @@ class NotificationService(NotificationInterface):
     - Collects detections during cooldown period
     - Sends summary with all observed species when cooldown expires
     - Thread-safe for concurrent detection processing
-    - Keeps best image per species (highest score)
+    - Keeps the best photo per species using the shared cover rule
     """
 
     def __init__(self, common_names: dict | None = None):
@@ -84,8 +87,7 @@ class NotificationService(NotificationInterface):
         """
         Queue a detection for notification.
 
-        Only updates the entry if the new score is higher than existing.
-        This ensures we send the best image for each species.
+        Updates a species entry when the shared photo-quality key improves.
 
         Catalog-orphan species (e.g. classifier genus-fallbacks like
         ``Phoenicurus_sp.``) are dropped here so live alerts never send a
@@ -131,9 +133,12 @@ class NotificationService(NotificationInterface):
         with self._pending_lock:
             existing = self._pending_species.get(species_info.latin_name)
 
-            # Only update if this is a new species or has higher score
-            if existing is None or species_info.score > existing["score"]:
+            quality = cover_sort_key(
+                {**species_info.cover_metadata, "score": species_info.score}
+            )
+            if existing is None or quality > existing["cover_quality"]:
                 self._pending_species[species_info.latin_name] = {
+                    "cover_quality": quality,
                     "common": species_info.common_name,
                     "score": species_info.score,
                     "image_path": species_info.image_path,
@@ -193,10 +198,9 @@ class NotificationService(NotificationInterface):
                 # Build summary message
                 species_count = len(self._pending_species)
 
-                # Sort by score descending
                 sorted_species = sorted(
                     self._pending_species.items(),
-                    key=lambda x: x[1]["score"],
+                    key=lambda x: x[1]["cover_quality"],
                     reverse=True,
                 )
 
@@ -208,9 +212,7 @@ class NotificationService(NotificationInterface):
                     latin_formatted = latin_name.replace("_", " ")
                     species_lines.append(f"• {info['common']} ({latin_formatted})")
 
-                device_name = str(
-                    get_config().get("DEVICE_NAME", "") or ""
-                ).strip()
+                device_name = str(get_config().get("DEVICE_NAME", "") or "").strip()
                 prefix = f"[{device_name}] " if device_name else ""
 
                 # New-species-only mode gets its own headline so the operator
@@ -228,7 +230,6 @@ class NotificationService(NotificationInterface):
                         + "\n".join(species_lines)
                     )
 
-                # Use image of highest scoring species
                 image_path = sorted_species[0][1]["image_path"]
 
                 # Copy data before clearing
@@ -291,7 +292,12 @@ class NotificationService(NotificationInterface):
         return resolve_common_name(latin_name, self._common_names)
 
     def create_species_info(
-        self, latin_name: str, score: float, image_path: str
+        self,
+        latin_name: str,
+        score: float,
+        image_path: str,
+        *,
+        detection_id: int | None = None,
     ) -> SpeciesInfo:
         """
         Factory method to create SpeciesInfo with auto-resolved common name.
@@ -304,9 +310,27 @@ class NotificationService(NotificationInterface):
         Returns:
             SpeciesInfo with resolved common name.
         """
+        metadata = {}
+        if detection_id is not None:
+            try:
+                with closing_connection() as conn:
+                    row = conn.execute(
+                        "SELECT d.*, i.timestamp, i.ptz_origin FROM detections d "
+                        "JOIN images i ON i.filename = d.image_filename "
+                        "WHERE d.detection_id = ?",
+                        (detection_id,),
+                    ).fetchone()
+                    if row is not None:
+                        metadata = dict(row)
+            except sqlite3.Error:
+                logger.warning(
+                    "Could not read notification cover metadata; using score",
+                    exc_info=True,
+                )
         return SpeciesInfo(
             latin_name=latin_name,
             common_name=self.get_common_name(latin_name),
             score=score,
             image_path=image_path,
+            cover_metadata=metadata,
         )

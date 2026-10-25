@@ -70,16 +70,7 @@ HUMAN_UNKNOWN_SPECIES_SOURCES = frozenset({"manual_unknown", "manual_wrong"})
 
 
 def is_human_unknown_species_source(species_source: str | None) -> bool:
-    """Return True when a human explicitly answered "species unknown".
-
-    ``core.human_label_core`` writes ``species_source`` as
-    ``f"manual_{answer.species_identity}"``, so an explicit unknown/wrong
-    answer lands as ``manual_unknown`` / ``manual_wrong`` while it clears
-    ``manual_species_override``. Without this check the fallback chain
-    below would walk straight past the cleared override into the model's
-    own ``cls_class_name`` and resurrect the very species the human just
-    withdrew.
-    """
+    """Keep fact-derived unknown and wrong answers from falling back to the model."""
     value = str(species_source or "").strip().lower()
     return value in HUMAN_UNKNOWN_SPECIES_SOURCES
 

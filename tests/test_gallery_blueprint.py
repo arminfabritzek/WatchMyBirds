@@ -23,6 +23,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask.testing import FlaskClient
 
 import config
 from tests.labeling_helpers import post
@@ -35,11 +36,8 @@ from web.web_interface import create_web_interface
 
 def _reset_test_config(monkeypatch, tmp_path):
     output_dir = tmp_path / "output"
-    ingest_dir = tmp_path / "ingest"
     output_dir.mkdir()
-    ingest_dir.mkdir()
     monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
-    monkeypatch.setenv("INGEST_DIR", str(ingest_dir))
     monkeypatch.setenv("EDIT_PASSWORD", "test-password")
     config._CONFIG = None
     db_connection._schema_initialized_paths.clear()
@@ -86,6 +84,7 @@ def _seed_detection(
             "created_at": timestamp,
             "score": score,
             "decision_state": decision_state,
+            "decision_level": "species",
             "thumbnail_path": filename.replace(".jpg", "_crop_1.webp"),
         },
     )
@@ -223,7 +222,7 @@ def test_species_route_renders(seeded_client):
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert 'current_path' not in body  # sanity: template rendered, not echoed
+    assert "current_path" not in body  # sanity: template rendered, not echoed
     assert "species" in body.lower()
 
 
@@ -316,15 +315,16 @@ def test_gallery_review_progress_uses_canonical_human_facts(seeded_client):
     assert 'data-review-progress="1/1"' in reviewed_subgallery
     assert reviewed_subgallery.count('data-review-progress="0/1"') == 1
     assert "data-bird-editor" in reviewed_subgallery
-    assert 'data-current-detection=' in reviewed_subgallery
+    assert "data-current-detection=" in reviewed_subgallery
     assert '"human_review_state": "confirmed"' in reviewed_subgallery
 
     relabeled = post(
         client,
-        "/api/detections/relabel",
+        "/api/labels/answer",
         {
             "detection_id": row["detection_id"],
-            "species": "Cyanistes_caeruleus",
+            "species_identity": "corrected",
+            "species_key": "Cyanistes_caeruleus",
         },
     )
     assert relabeled.status_code == 200, relabeled.get_data(as_text=True)
@@ -410,3 +410,29 @@ def test_species_answer_response_and_gallery_follow_proposal(seeded_client):
     assert '"human_review_state": "confirmed"' in client.get(
         f"/gallery/{today_iso}"
     ).get_data(as_text=True)
+
+
+def test_human_answer_invalidates_cached_analytics(
+    seeded_client: tuple[FlaskClient, str],
+) -> None:
+    from web.services import cache_service
+
+    client, _ = seeded_client
+    cache_service.clear()
+    cache_service.cached("analytics.summary", 60, lambda: "before correction")
+    with db_connection.closing_connection() as conn:
+        row = conn.execute(
+            "SELECT detection_id, image_filename FROM detections LIMIT 1"
+        ).fetchone()
+    response = post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": row["image_filename"],
+            "detection_id": row["detection_id"],
+            "species_identity": "corrected",
+            "species_key": "Cyanistes_caeruleus",
+        },
+    )
+    assert response.status_code == 200
+    assert cache_service.size() == 0

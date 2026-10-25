@@ -1,0 +1,7 @@
+<nav class="station-filters" aria-label="Review tabs">
+    {% for value, label in [(0, 'Open'), (1, 'Done')] %}
+    <a class="btn {{ 'btn--primary' if answered == (value == 1) else 'btn--secondary' }}"
+       href="{{ url_for('review.review_page', answered=value, day=review.selected_day or 'latest', **selection) }}"
+       {% if answered == (value == 1) %}aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>

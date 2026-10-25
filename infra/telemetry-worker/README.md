@@ -1,103 +1,73 @@
-# WatchMyBirds Telemetry Worker
+# WatchMyBirds telemetry Worker
 
-Cloudflare Worker that receives anonymous opt-in usage heartbeats
-from running WatchMyBirds installations.
+Cloudflare D1 holds 90 UTC dates of opt-in installation history. The maintainer's
+computer is a read-only reporting client, not a collection or retention dependency.
+See [Privacy](../../docs/PRIVACY.md) for the exact consent, fields and retention policy.
 
-**This Worker does not run unless an operator explicitly enables
-telemetry in Settings → Privacy.** The default in the app is OFF.
-See `docs/PRIVACY.md` (or Settings → Privacy in a running install)
-for the full data policy.
+## Protocol and storage
 
-## Architecture
+`POST /v1/heartbeat` accepts the original eight-field payload and the explicitly
+consented version-2 payload described in Privacy. Existing clients remain supported.
+`heartbeats` stores one row per installation/date; `diagnostic_reports` stores the
+optional metrics for that same date. Both writes are atomic. A 204 acknowledges
+persistence; a 503 must be retried. Version-2 clients refresh daily summaries at most
+hourly, with a seven-day backfill window. This is self-reported installation activity,
+not authenticated people or guaranteed device health.
 
-- **Endpoint:** `POST https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat`
-- **Storage:** Cloudflare D1 (`watchmybirds-heartbeats`),
-  `jurisdiction=eu` for hard EU data residency.
-- **Retention:** 90 days, enforced by daily cron (04:00 UTC) inside
-  this same Worker.
-- **Read access:** local `wrangler d1 execute` only. No public
-  dashboard, no admin endpoint.
+At 04:30 UTC, one transaction rebuilds completed dates backed by raw reports,
+preserves older aggregate-only history, expires individual rows older than the
+90-date window, and records success in `telemetry_jobs`. Failed transactions roll
+back and are retried on the next scheduled run. Reads must also filter the window.
+No schema migration can recover reports already removed by the old daily pruning.
+Long-term aggregates hold installation/cohort counts only, not diagnostic details.
 
-## What gets stored
+## Security
 
-One row per (installation_id, UTC date) — see `schema.sql`. PK
-prevents duplicate writes per day even from misbehaving clients.
+- JSON only, 4096-byte streamed body cap, strict field/type/range/date allowlists.
+- Parameterized SQL; database diagnostics never returned to callers.
+- Cloudflare rate-limit bindings: 120 requests/minute for ingress and 12/minute per
+  installation. Missing/broken bindings fail closed with 503; denials return 429.
+- Limits are approximate and per Cloudflare location, not a global budget or identity
+  check. Distributed abuse and forged installation IDs remain possible. Monitor
+  Worker traffic and D1 usage; no shared secret is embedded in public clients.
+- IP/location metadata is not stored in D1 or used as a rate-limit key.
+- `/health` is liveness only. Use the authenticated D1 API for cleanup freshness;
+  alert if `telemetry_jobs.daily_retention` is over 48 hours old.
+- No public reporting endpoint. Keep D1 Read and deploy credentials separate.
 
-What does NOT get stored: IP address, country, region, locale,
-hostname, MAC, exact RAM bytes, kernel version, Pi model string,
-observation count, species names, image data. The Worker explicitly
-does not read CF-injected request metadata before writing to D1.
+Rate-limit semantics: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
 
 ## Local development
 
-```bash
-npm ci
-npx wrangler login                  # browser opens for OAuth
-npx wrangler dev                    # local dev with mock D1
-```
+Wrangler builds/deploys the Worker; Miniflare tests it locally with disposable D1
+instances. Their patched dependencies, including undici, run on developer machines
+and CI and are not imported by the deployed Worker or Python appliance.
+Use the npm version in package.json, `npm ci --ignore-scripts`, `npm test`, and
+`npm audit --package-lock-only --include=dev`. No cloud credentials are needed for tests.
 
-Use the npm version declared in `package.json`. Dependency installation scripts
-are disabled by the project `.npmrc`; native tools use their platform packages.
-Run `npm audit` after updating dependencies.
+## Upgrade order (requires separate deployment authorization)
 
-## First-time deploy
+1. Apply `schema.sql` to the existing EU-jurisdiction D1 database. It is additive and
+   idempotent: existing tables/rows remain; diagnostics and job-status tables are new.
+2. Check that rate-limit namespace IDs 10421 and 10422 are unused by unrelated Workers
+   in this account, then deploy the Worker and its configured bindings/schedule.
+3. Verify storage acknowledgements and scheduled cleanup with an explicitly authorized
+   production check. Deploy updated clients and activate the private reporting client.
+4. Ask operators to opt into the expanded scope. Never upgrade old consent silently.
 
-1. Create the D1 database with EU jurisdiction:
-   ```bash
-   npx wrangler d1 create watchmybirds-heartbeats \
-     --location=weur \
-     --jurisdiction=eu
-   ```
-   Copy the `database_id` from the output into `wrangler.toml`.
+Commands for an authorized rollout: `npm run db:apply`, then `npm run deploy`.
+Applying schema alone does not change the old Worker's daily deletion behavior.
+Avoid rollback to the old pruning Worker: it would remove retained raw history.
+A restored backup must run retention before reporting resumes.
 
-2. Apply the schema:
-   ```bash
-   npm run db:apply
-   ```
+## Reporting
 
-3. Deploy the Worker:
-   ```bash
-   npm run deploy
-   ```
+The private Python reader uses fixed SELECT queries via a D1 Read token and joins
+retained reports with diagnostic flags. Its cache trims expired individual rows on
+opening and merging, preserves aggregate trends, and exits nonzero on fetch failure.
+Never add that private reader, token, device mapping or installation IDs to this repo.
 
-4. Test:
-   ```bash
-   curl -X POST https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat \
-     -H "Content-Type: application/json" \
-     -d '{
-       "installation_id": "0123456789abcdef0123456789abcdef",
-       "app_version": "v0.0.0-test",
-       "os": "linux",
-       "arch": "aarch64",
-       "cpu_count": 4,
-       "total_ram_gb": 8,
-       "python_version": "3.12.3",
-       "detector_variant": "yolox-tiny-int8"
-     }'
-   # expect: 204 No Content
-   ```
-
-5. Verify the row landed:
-   ```bash
-   npm run db:dau
-   ```
-
-## Operations
-
-- **DAU/WAU/MAU snapshot:**
-  ```bash
-  npm run db:dau
-  npm run db:wau
-  npm run db:mau
-  ```
-- **Live request stream:** `npm run tail`
-- **Free-tier headroom:** 100k row-writes/day, 5M row-reads/day,
-  5GB storage. We can support ~70k installations on the free plan
-  before hitting storage; well-watch on the dashboard.
-
-## When to upgrade plan
-
-If we ever cross ~50k active opted-in installations consistently,
-upgrade to Workers Paid ($5/mo) for 10M req/day and 25M D1 row-writes.
-Until then, Free tier is fine and aligned with the project's
-hobbyist-scale economics.
+`npm run db:dau`, `db:wau`, and `db:mau` count distinct reporting IDs for today,
+7 dates and 30 dates. Coverage is incomplete until sufficient history accumulates;
+these are neither total users nor retention percentages. For returning activity,
+count IDs reporting on more than one distinct date within the chosen window.

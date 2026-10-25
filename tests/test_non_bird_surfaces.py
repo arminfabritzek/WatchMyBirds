@@ -84,45 +84,9 @@ def test_events_resolve_bird_without_cls_is_unknown():
 
 
 def _make_minimal_schema(conn: sqlite3.Connection) -> None:
-    """Create just enough schema for _fetch_species_best_photos to run."""
-    conn.execute(
-        """
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            ptz_origin TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            image_filename TEXT NOT NULL,
-            status TEXT DEFAULT 'active',
-            od_class_name TEXT,
-            od_confidence REAL,
-            manual_species_override TEXT,
-            score REAL,
-            bbox_quality REAL,
-            aesthetic_score REAL,
-            decision_state TEXT,
-            decision_level TEXT,
-            bbox_x REAL, bbox_y REAL, bbox_w REAL, bbox_h REAL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE classifications (
-            classification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            detection_id INTEGER,
-            cls_class_name TEXT,
-            cls_confidence REAL,
-            rank INTEGER DEFAULT 1,
-            status TEXT DEFAULT 'active'
-        )
-        """
-    )
+    from utils.db.connection import _init_schema
+
+    _init_schema(conn)
 
 
 def test_daily_report_excludes_unknown_species(tmp_path, monkeypatch):
@@ -143,9 +107,7 @@ def test_daily_report_excludes_unknown_species(tmp_path, monkeypatch):
     from utils import daily_report as dr_mod
 
     monkeypatch.setattr(dr_mod, "get_path_manager", lambda *_a, **_k: _FakePM())
-    monkeypatch.setattr(
-        dr_mod, "get_config", lambda: {"OUTPUT_DIR": str(tmp_path)}
-    )
+    monkeypatch.setattr(dr_mod, "get_config", lambda: {"OUTPUT_DIR": str(tmp_path)})
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -153,7 +115,7 @@ def test_daily_report_excludes_unknown_species(tmp_path, monkeypatch):
 
     # Seed:
     # 1. bird with CLS Parus_major -> visible
-    # 2. squirrel without CLS      -> visible (od_class is species)
+    # 2. squirrel without CLS      -> excluded by admission
     # 3. bird without CLS          -> filtered (Unknown_species)
     rows = [
         ("20260417_100000_img.jpg", "bird", 0.9, 0.85, 0.8, "Parus_major", 0.88),
@@ -162,12 +124,22 @@ def test_daily_report_excludes_unknown_species(tmp_path, monkeypatch):
     ]
     for filename, od, score, quality, od_conf, cls_name, cls_conf in rows:
         (cam_dir / filename).write_bytes(b"fake jpeg payload")
+        from detectors.services.decision_policy_service import DecisionPolicyService
+
+        reasons = DecisionPolicyService().admission_reasons(
+            score=score, species_key=cls_name or od, geography_json=None
+        )
+        state = "uncertain" if reasons else "confirmed"
+        conn.execute(
+            "INSERT INTO images(filename, timestamp) VALUES (?, ?)",
+            (filename, filename[:15]),
+        )
         cur = conn.execute(
             """INSERT INTO detections
                (image_filename, od_class_name, score, bbox_quality, od_confidence,
-                decision_state, bbox_x, bbox_y, bbox_w, bbox_h)
-               VALUES (?, ?, ?, ?, ?, 'confirmed', 0.1, 0.1, 0.2, 0.2)""",
-            (filename, od, score, quality, od_conf),
+                decision_state, decision_level, bbox_x, bbox_y, bbox_w, bbox_h)
+               VALUES (?, ?, ?, ?, ?, ?, 'species', 0.1, 0.1, 0.2, 0.2)""",
+            (filename, od, score, quality, od_conf, state),
         )
         det_id = cur.lastrowid
         if cls_name:
@@ -182,7 +154,7 @@ def test_daily_report_excludes_unknown_species(tmp_path, monkeypatch):
     result = _fetch_species_best_photos(conn, "2026-04-17")
     species_in_result = sorted(r["species"] for r in result)
     assert "Parus_major" in species_in_result
-    assert "squirrel" in species_in_result
+    assert "squirrel" not in species_in_result
     assert "bird" not in species_in_result
     assert UNKNOWN_SPECIES_KEY not in species_in_result
     # 'Unclassified' was the legacy placeholder; must not appear either

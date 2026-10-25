@@ -237,7 +237,7 @@ def test_relabel_only_example_is_species_answered_box_unchecked(case):
 @pytest.mark.parametrize(
     "extra,status",
     [
-        ({"retract_bbox_quality": "true"}, 400),
+        ({"retract_bbox_quality": "true"}, 409),
         ({"retract_bbox_quality": True, "bbox_quality": "suitable"}, 409),
         ({"retract_bbox_quality": True, "filename": "other.jpg"}, 409),
     ],

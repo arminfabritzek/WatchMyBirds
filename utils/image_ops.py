@@ -230,9 +230,7 @@ _XMP_NS = {
 
 def _rdf_bag(terms: list[str]) -> str:
     """Serialise a keyword list as an ``rdf:Bag`` body (one li per term)."""
-    items = "".join(
-        f"<rdf:li>{_xml_escape(t)}</rdf:li>" for t in terms if t
-    )
+    items = "".join(f"<rdf:li>{_xml_escape(t)}</rdf:li>" for t in terms if t)
     return f"<rdf:Bag>{items}</rdf:Bag>"
 
 
@@ -242,14 +240,13 @@ def build_xmp_packet(metadata: "EventMetadata") -> str:
     Writes (all optional, emitted only when populated):
       - ``dc:subject``      species keywords (rdf:Bag) — the iNat match key
       - ``dc:description``  composed "Common (Scientific)" caption
-      - ``xmp:Rating``      0-5 stars (favorite → 5, else max star rating)
       - ``xmp:Label``       "Favorite" when any detection is starred
       - ``xmp:CreatorTool`` / ``dc:creator`` — provenance in standard fields
       - ``dwc:*``           per-species scientific/genus/class/kingdom
                             (class/kingdom gated on birds only)
       - ``wmb:*``           private provenance (schema version, models,
                             review status, favorite flag, per-detection
-                            id/confidence/rating)
+                            id/confidence)
 
     Accepts a ``core.event_metadata.EventMetadata``; typed loosely to keep
     this module free of a core import (image_ops is a leaf utility).
@@ -265,16 +262,8 @@ def build_xmp_packet(metadata: "EventMetadata") -> str:
 
     caption = metadata.primary_caption()
     if caption:
-        body_parts.append(
-            f"<dc:description>{_xml_escape(caption)}</dc:description>"
-        )
+        body_parts.append(f"<dc:description>{_xml_escape(caption)}</dc:description>")
 
-    # Class A — standard image-wide rating/label that foto tools display.
-    # A favorite pins the image to 5 stars + a "Favorite" colour label;
-    # otherwise the highest star rating on the frame wins.
-    rating = metadata.xmp_rating()
-    if rating is not None:
-        body_parts.append(f"<xmp:Rating>{int(rating)}</xmp:Rating>")
     label = metadata.xmp_label()
     if label:
         body_parts.append(f"<xmp:Label>{_xml_escape(label)}</xmp:Label>")
@@ -282,8 +271,7 @@ def build_xmp_packet(metadata: "EventMetadata") -> str:
     # Class B — provenance in standard fields (CreatorTool, dc:creator).
     if metadata.creator_tool:
         body_parts.append(
-            f"<xmp:CreatorTool>{_xml_escape(metadata.creator_tool)}"
-            f"</xmp:CreatorTool>"
+            f"<xmp:CreatorTool>{_xml_escape(metadata.creator_tool)}</xmp:CreatorTool>"
         )
     if metadata.creator:
         body_parts.append(
@@ -298,14 +286,10 @@ def build_xmp_packet(metadata: "EventMetadata") -> str:
                 f"</dwc:scientificName>"
             )
         if entry.genus:
-            body_parts.append(
-                f"<dwc:genus>{_xml_escape(entry.genus)}</dwc:genus>"
-            )
+            body_parts.append(f"<dwc:genus>{_xml_escape(entry.genus)}</dwc:genus>")
         # Aves/Animalia only for birds; squirrels/martens get no dwc class.
         if entry.dwc_class:
-            body_parts.append(
-                f"<dwc:class>{_xml_escape(entry.dwc_class)}</dwc:class>"
-            )
+            body_parts.append(f"<dwc:class>{_xml_escape(entry.dwc_class)}</dwc:class>")
         if entry.dwc_kingdom:
             body_parts.append(
                 f"<dwc:kingdom>{_xml_escape(entry.dwc_kingdom)}</dwc:kingdom>"
@@ -335,19 +319,12 @@ def build_xmp_packet(metadata: "EventMetadata") -> str:
     for entry in metadata.species:
         if entry.detection_id is not None:
             body_parts.append(
-                f"<wmb:detectionId>{int(entry.detection_id)}"
-                f"</wmb:detectionId>"
+                f"<wmb:detectionId>{int(entry.detection_id)}</wmb:detectionId>"
             )
         if entry.confidence is not None:
             body_parts.append(
-                f"<wmb:confidence>{float(entry.confidence):.4f}"
-                f"</wmb:confidence>"
+                f"<wmb:confidence>{float(entry.confidence):.4f}</wmb:confidence>"
             )
-        if entry.rating:
-            body_parts.append(
-                f"<wmb:rating>{int(entry.rating)}</wmb:rating>"
-            )
-
     body = "".join(body_parts)
     return (
         '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>'

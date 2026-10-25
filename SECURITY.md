@@ -44,8 +44,8 @@ the appliance is suitable for direct exposure to untrusted networks.
   - Minimal group privileges (`video`, `gpio`, `plugdev`).
 - **Web UI Authentication:** 
   - The Web Interface is protected by a password (`EDIT_PASSWORD`) loaded from `/etc/app/app.env` or `settings.yaml`.
-  - Default is empty unless configured; an empty password currently allows login and should be avoided on real networks.
-  - Flask sessions use `FLASK_SECRET_KEY`; if unset, a static dev key is used and should be overridden in production.
+  - Empty passwords are rejected. The application default is `watchmybirds`; Raspberry Pi appliance installs require an initial password change when a known default is configured. Other installations must configure a strong password explicitly.
+  - Flask sessions use `FLASK_SECRET_KEY` when configured; otherwise the app loads or generates a random persistent key in `OUTPUT_DIR/.flask_secret_key`. Keep this file private and preserve it across restarts.
 - **Root Locked:** The `root` account is locked (`passwd -l root`) and has no password access.
 - **No Interactive Access:** There are no interactive users enabled by default.
 - **Dev Images (Non-Production):** `build-dev` images relax access controls for local debugging and faster iteration.

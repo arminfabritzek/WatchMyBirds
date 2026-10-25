@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 
 @pytest.fixture
@@ -190,34 +191,6 @@ class TestApiV1Onvif:
             # API contract: empty result still returns success
             assert data["status"] == "success"
             assert data["cameras"] == []
-
-
-class TestApiV1Analytics:
-    """Test /api/v1/analytics endpoints."""
-
-    def test_analytics_summary_returns_structure(self, client):
-        """GET /api/v1/analytics/summary returns expected structure."""
-        mock_context = MagicMock()
-        mock_context.__enter__ = MagicMock(return_value=MagicMock())
-        mock_context.__exit__ = MagicMock(return_value=False)
-
-        with patch("web.blueprints.api_v1.db_service") as mock_db:
-            mock_db.get_connection.return_value = mock_context
-            mock_db.fetch_analytics_summary.return_value = {
-                "total_detections": 100,
-                "total_species": 5,
-                "total_days": 10,
-            }
-
-            response = client.get("/api/v1/analytics/summary")
-
-            assert response.status_code == 200
-            data = response.get_json()
-
-            # API contract:
-            assert "total_detections" in data
-            assert "total_species" in data
-            assert "total_days" in data
 
 
 class TestApiV1Weather:
@@ -475,72 +448,6 @@ class TestApiV1SpeciesThumbnails:
             data["thumbnails"]["Kleiber"]
             == "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
         )
-
-
-class TestApiV1AnalyticsDecisionMetrics:
-    """Test /api/v1 analytics decision metric endpoints."""
-
-    def _mock_decisions_db(self):
-        """Create a mock connection that returns decision state rows."""
-        mock_conn = MagicMock()
-        # Simulate rows returned by COALESCE(decision_state, 'null')
-        mock_row_confirmed = {"state": "confirmed", "cnt": 90}
-        mock_row_uncertain = {"state": "uncertain", "cnt": 15}
-        mock_row_unknown = {"state": "unknown", "cnt": 8}
-        mock_row_null = {"state": "null", "cnt": 5}
-        mock_states_cursor = MagicMock()
-        mock_states_cursor.fetchall.return_value = [
-            mock_row_confirmed,
-            mock_row_uncertain,
-            mock_row_unknown,
-            mock_row_null,
-        ]
-        mock_manual_cursor = MagicMock()
-        mock_manual_cursor.fetchone.return_value = [12]
-        mock_conn.execute.side_effect = [mock_states_cursor, mock_manual_cursor]
-        return mock_conn
-
-    def test_analytics_decisions_returns_structure(self, client):
-        """GET /api/v1/analytics/decisions returns decision state distribution."""
-        mock_conn = self._mock_decisions_db()
-
-        with patch("web.blueprints.api_v1.db_service") as mock_db:
-            mock_db.get_connection.return_value = mock_conn
-            mock_db.fetch_review_queue_count.return_value = 23
-
-            response = client.get("/api/v1/analytics/decisions")
-
-            assert response.status_code == 200
-            data = response.get_json()
-
-            assert data["status"] == "success"
-            assert data["total"] == 118  # 90+15+8+5
-            assert "states" in data
-            assert data["states"]["confirmed"] == 90
-            assert data["states"]["uncertain"] == 15
-            assert data["states"]["unknown"] == 8
-            assert data["review_queue_count"] == 23
-            assert data["manual_confirmed_count"] == 12
-
-    def test_decision_metrics_alias_returns_same_structure(self, client):
-        """GET /api/v1/decision-metrics is an alias for analytics/decisions."""
-        mock_conn = self._mock_decisions_db()
-
-        with patch("web.blueprints.api_v1.db_service") as mock_db:
-            mock_db.get_connection.return_value = mock_conn
-            mock_db.fetch_review_queue_count.return_value = 23
-
-            response = client.get("/api/v1/decision-metrics")
-
-            assert response.status_code == 200
-            data = response.get_json()
-
-            # Must return the exact same shape as /analytics/decisions
-            assert data["status"] == "success"
-            assert data["total"] == 118
-            assert "states" in data
-            assert data["review_queue_count"] == 23
-            assert data["manual_confirmed_count"] == 12
 
 
 class TestApiV1DetectionControl:
@@ -1001,3 +908,18 @@ class TestPtzClickToAim:
 
         assert response.status_code == 200
         assert controller.cancelled == 4
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/public/bbox-heatmap",
+        "/api/v1/analytics/summary",
+        "/api/v1/analytics/decisions",
+        "/api/v1/decision-metrics",
+        "/api/v1/analytics/decisions/daily",
+    ],
+)
+def test_removed_endpoints_are_not_registered(client: FlaskClient, path: str) -> None:
+    assert path not in {rule.rule for rule in client.application.url_map.iter_rules()}
+    assert client.get(path).status_code == 404

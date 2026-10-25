@@ -42,9 +42,8 @@ jobs:
           #
           # We declare three platform tags and three ABI tags so pip accepts
           # any combination present in our pinned set:
-          #   - manylinux2014 / 2_27 / 2_28 covers the spread from older
-          #     pure-python deps to numpy 2.4.x and onnxruntime 1.24.x which
-          #     ship only newer-manylinux ARM64 wheels.
+          #   - manylinux2014 / 2_27 / 2_28 covers the different minimum
+          #     glibc versions required by the native ARM64 dependencies.
           #   - cp312 / abi3 / none covers cpython-specific (numpy, lxml),
           #     stable-ABI (opencv, psutil, protobuf), and pure-python wheels.
           # The Trixie golden-image base ships glibc 2.40, so 2_28 is safe.

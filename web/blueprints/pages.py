@@ -5,10 +5,11 @@ from flask.blueprints import BlueprintSetupState
 
 from config import get_config, get_settings_payload
 from logging_config import get_logger
+from utils.deploy_info import read_build_metadata
 from utils.settings import mask_rtsp_url
 from web import view_helpers
 from web.blueprints.auth import login_required
-from web.services import asset_service, db_service
+from web.services import db_service
 
 logger = get_logger(__name__)
 config = get_config()
@@ -21,9 +22,7 @@ _ASSETS_FOLDER = os.path.join(_PROJECT_ROOT, "assets")
 
 @pages_bp.record_once
 def register_asset_versions(state: BlueprintSetupState) -> None:
-    state.app.jinja_env.globals["bird_editor_version"] = asset_service.editor_version(
-        _ASSETS_FOLDER
-    )
+    state.app.jinja_env.globals["asset_version"] = read_build_metadata()["git_commit"]
 
 
 RUNTIME_BOOL_KEYS = {
@@ -32,8 +31,6 @@ RUNTIME_BOOL_KEYS = {
     "TELEGRAM_ENABLED",
     "DEBUG_MODE",
     "EXIF_GPS_ENABLED",
-    "INBOX_REQUIRE_EXIF_DATETIME",
-    "INBOX_REQUIRE_EXIF_GPS",
     "MOTION_DETECTION_ENABLED",
     "EXPORT_BURN_IN_METADATA",
 }
@@ -72,7 +69,6 @@ SETTING_LABELS = {
     "STREAM_FPS": "Stream Display FPS (Visual smoothness in the web browser)",
     "STREAM_FPS_CAPTURE": "Stream Capture FPS (Internal capture rate - affects CPU impact)",
     "EDIT_PASSWORD": "Edit Password (Required to apply changes or delete images)",
-    "INGEST_DIR": "Ingest Directory (Source path for manual image imports)",
     "OUTPUT_DIR": "Output Directory (Main storage for images and database)",
     "MODEL_BASE_PATH": "Model Base Path (Storage directory for AI model weights)",
     "DEBUG_MODE": "Debug Mode (Enables verbose logging and developer features)",
@@ -86,8 +82,6 @@ SETTING_LABELS = {
     "TELEGRAM_CHAT_ID": "Telegram Chat ID (Numeric ID or JSON list of IDs)",
     "EXIF_GPS_ENABLED": "Write GPS to Exif (Safe to disable for privacy)",
     "EXPORT_BURN_IN_METADATA": "Burn Metadata Into Downloads (Embed species name + location into downloaded copies for iNaturalist re-import; the stored original is never changed. Off downloads the raw original)",
-    "INBOX_REQUIRE_EXIF_DATETIME": "Inbox Require EXIF Date/Time (Skip imports without DateTimeOriginal/DateTimeDigitized)",
-    "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
     "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, EN=English, NO=Norsk)",
     "MAX_DETECTIONS_PER_BURST": "Burst Cap (Max detections persisted per rolling window — protects review queue from flocks; 0 disables)",
     "BURST_WINDOW_SECONDS": "Burst Window (Seconds for the rolling burst-cap window)",
@@ -113,8 +107,6 @@ RUNTIME_KEYS_ORDER = [
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",
     "EXPORT_BURN_IN_METADATA",
-    "INBOX_REQUIRE_EXIF_DATETIME",
-    "INBOX_REQUIRE_EXIF_GPS",
     "SPECIES_COMMON_NAME_LOCALE",
     "TELEGRAM_COOLDOWN",
     "TELEGRAM_ENABLED",
@@ -142,7 +134,6 @@ ADVANCED_KEYS = {
 
 SYSTEM_KEYS_ORDER = [
     "OUTPUT_DIR",
-    "INGEST_DIR",
     "MODEL_BASE_PATH",
 ]
 
@@ -156,16 +147,6 @@ def serve_asset(filename):
         private=False,
         immutable=False,
     )
-
-
-@pages_bp.route("/tbwd", methods=["GET"])
-def tbwd_presentation_route():
-    return render_template("tbwd_presentation.html", current_path="/tbwd")
-
-
-@pages_bp.route("/tbwd-vision", methods=["GET"])
-def tbwd_vision_route():
-    return render_template("tbwd_vision.html", current_path="/tbwd-vision")
 
 
 @pages_bp.route("/privacy", methods=["GET"])
@@ -186,7 +167,9 @@ def settings_route():
     payload = get_settings_payload()
 
     if "VIDEO_SOURCE" in payload:
-        payload["VIDEO_SOURCE"]["value"] = mask_rtsp_url(payload["VIDEO_SOURCE"]["value"])
+        payload["VIDEO_SOURCE"]["value"] = mask_rtsp_url(
+            payload["VIDEO_SOURCE"]["value"]
+        )
     if "CAMERA_URL" in payload:
         payload["CAMERA_URL"]["value"] = mask_rtsp_url(payload["CAMERA_URL"]["value"])
 

@@ -235,6 +235,8 @@ def system_stats_route():
 @system_bp.route("/api/status", methods=["GET"])
 @login_required
 def api_status():
+    from web.services import storage_service
+
     try:
         output_dir = config.get("OUTPUT_DIR", "./data/output")
 
@@ -242,17 +244,8 @@ def api_status():
             "detection_paused": _detection_manager.paused,
             "detection_running": not _detection_manager.paused,
             "restart_required": backup_restore_service.is_restart_required(output_dir),
+            "photo_saving": storage_service.saving_state(_detection_manager),
         }
-
-        try:
-            from core.analysis_queue import analysis_queue
-            from web.services.analysis_service import count_deep_scan_candidates
-
-            response["deep_scan_active"] = _detection_manager.is_deep_scan_active()
-            response["deep_scan_queue_pending"] = analysis_queue.pending_count()
-            response["deep_scan_candidates_remaining"] = count_deep_scan_candidates()
-        except Exception as ds_err:
-            logger.debug(f"Could not compute deep scan status: {ds_err}")
 
         try:
             response["decision_state_counts"] = dict(

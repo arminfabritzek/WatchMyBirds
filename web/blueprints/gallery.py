@@ -2,7 +2,7 @@
 
 Extracted from the ``create_web_interface`` factory closure in
 ``web/web_interface.py``. Follows the ``init_*_bp()`` pattern used across
-``web/blueprints/`` (reference: ``web/blueprints/inbox.py``): a module-level
+``web/blueprints/`` (reference: ``web/blueprints/stream.py``): a module-level
 ``Blueprint``, an ``init_gallery_bp(detection_manager=...)`` injector, and
 routes as top-level functions.
 
@@ -22,19 +22,19 @@ import math
 import re
 from datetime import datetime
 
-from flask import Blueprint, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, jsonify, redirect, render_template, request, url_for
 
 from config import get_config
 from core.species_colours import assign_species_colours as _assign_species_colours
 from logging_config import get_logger
 from web import view_helpers
 from web.blueprints.auth import login_required
-from web.security import safe_log_value as _slv
 from web.services import (
     db_service,
     gallery_service,
     human_label_service,
     image_download_service,
+    station_service,
 )
 
 logger = get_logger(__name__)
@@ -237,47 +237,12 @@ def edit_actions_route():
         if safe_date is None:
             return redirect("/gallery")
 
-    if action == "reject_all":
-        if not safe_date:
-            return redirect("/gallery")
-
-        with db_service.closing_connection() as conn:
-            date_prefix = safe_date.replace("-", "")
-
-            query = """
-                SELECT d.detection_id
-                FROM detections d
-                JOIN images i ON d.image_filename = i.filename
-                WHERE i.timestamp LIKE ?
-                AND (d.status IS NULL OR d.status != 'rejected')
-            """
-            rows = conn.execute(query, (f"{date_prefix}%",)).fetchall()
-            all_ids = [r["detection_id"] for r in rows]
-
-            if all_ids:
-                db_service.reject_detections(conn, all_ids)
-                logger.info(
-                    "Rejected ALL %d detections for %s",
-                    len(all_ids),
-                    _slv(safe_date),
-                )
-
-        gallery_service.invalidate_cache()
-        return redirect(_safe_date_redirect("/gallery", safe_date))
-
     if not det_ids:
         return redirect(_safe_date_redirect("/edit", safe_date))
 
     ids_int = [int(i) for i in det_ids]
 
-    if action == "reject":
-        with db_service.closing_connection() as conn:
-            db_service.reject_detections(conn, ids_int)
-
-        gallery_service.invalidate_cache()
-        return redirect(_safe_date_redirect("/edit", safe_date))
-
-    elif action == "download":
+    if action == "download":
         from flask import send_file
 
         zip_buffer = image_download_service.build_download_archive(ids_int)
@@ -295,9 +260,18 @@ def edit_actions_route():
     return redirect(_safe_date_redirect("/edit", date_iso))
 
 
-def species_route():
+def _station_selection() -> dict[str, str]:
+    try:
+        return station_service.validate_selection(
+            request.args.get("start", ""),
+            request.args.get("end", ""),
+        )
+    except ValueError as exc:
+        abort(400, description=str(exc))
 
-    all_detections = view_helpers.get_captured_detections()
+
+def species_route():
+    selection = _station_selection()
 
     try:
         min_score_param = request.args.get("min_score", type=float)
@@ -309,35 +283,19 @@ def species_route():
     else:
         current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-    if current_threshold > 0:
-        all_detections = [
-            d for d in all_detections if (d.get("score") or 0.0) >= current_threshold
-        ]
-
-    favorites_only = bool(request.args.get("favorites", type=int))
-    if favorites_only:
-        all_detections = [d for d in all_detections if gallery_service.is_favorite(d)]
-
-    species_candidates = {}
-    for det in all_detections:
-        species_key = view_helpers.get_species_key(det)
-        species_candidates.setdefault(species_key, []).append(det)
-
-    today_iso = datetime.now().strftime("%Y-%m-%d")
-    species_groups = {}
-    for s_key, candidates in species_candidates.items():
-        chosen = view_helpers.pick_cover_for_group(
-            candidates, seed_key=f"species:{s_key}", date_iso=today_iso
-        )
-        if chosen:
-            species_groups[s_key] = chosen
+    favorites_only = False
+    covers = gallery_service.get_species_covers(
+        min_score=current_threshold,
+        favorites_only=favorites_only,
+        selection=selection,
+    )
+    species_groups = {view_helpers.get_species_key(det): det for det in covers}
 
     detections = []
     modal_siblings = gallery_service.get_sibling_detections_batch(
         [
             str(det.get("original_name") or det.get("image_filename") or "")
             for det in species_groups.values()
-            if (det.get("sibling_count") or 1) > 1
         ]
     )
     for species, det in sorted(
@@ -370,7 +328,7 @@ def species_route():
         sibling_count = det.get("sibling_count", 1) or 1
         siblings = []
         original_name = str(det.get("original_name") or det.get("image_filename") or "")
-        if sibling_count > 1 and original_name:
+        if original_name:
             for sibling in modal_siblings.get(original_name, []):
                 sibling_species = view_helpers.get_species_key(sibling)
                 sibling_thumb = sibling.get("thumbnail_path_virtual")
@@ -404,22 +362,30 @@ def species_route():
                     "display_path": display_url,
                     "full_path": full_url,
                     "original_path": original_url,
+                    **station_service.media_paths(det),
                 },
             )
         )
 
+    view_helpers.enrich_modal_review_states(detections)
     return render_template(
         "species.html",
+        selection=selection,
         current_path="/species",
         detections=detections,
         image_width=IMAGE_WIDTH,
         current_threshold=current_threshold,
-        species_count=len(detections),
+        species_count=sum(
+            det["species_key"] != view_helpers.UNKNOWN_SPECIES_KEY
+            and det.get("observation_count", 0) > 0
+            for det in detections
+        ),
         favorites_only=favorites_only,
     )
 
 
 def species_overview_route():
+    selection = _station_selection()
 
     raw_species_key = request.args.get("species_key", type=str) or ""
     species_key = raw_species_key.strip().replace(" ", "_")
@@ -440,28 +406,23 @@ def species_overview_route():
     else:
         current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-    favorites_only = bool(request.args.get("favorites", type=int))
+    favorites_only = False
 
-    all_detections = view_helpers.get_captured_detections()
-
-    filtered = []
-    for det in all_detections:
-        det_species_key = view_helpers.get_species_key(det)
-        if det_species_key != species_key:
-            continue
-        if current_threshold > 0 and (det.get("score") or 0.0) < current_threshold:
-            continue
-        if favorites_only and not gallery_service.is_favorite(det):
-            continue
-        filtered.append(det)
-
-    total_items = len(filtered)
+    page_detections_raw, total_items, page = gallery_service.get_species_page(
+        species_key,
+        min_score=current_threshold,
+        favorites_only=favorites_only,
+        page=page,
+        per_page=PAGE_SIZE,
+        selection=selection,
+    )
     total_pages = math.ceil(total_items / PAGE_SIZE) or 1
-    page = max(1, min(page, total_pages))
-    start_index = (page - 1) * PAGE_SIZE
-    end_index = page * PAGE_SIZE
-    page_detections_raw = filtered[start_index:end_index]
 
+    modal_siblings = gallery_service.get_sibling_detections_batch(
+        sorted(
+            {str(det.get("original_name") or "") for det in page_detections_raw} - {""}
+        )
+    )
     detections = []
     for det in page_detections_raw:
         full_path = det.get("relative_path") or det.get("optimized_name_virtual", "")
@@ -489,10 +450,10 @@ def species_overview_route():
 
         sibling_count = det.get("sibling_count", 1) or 1
         siblings = []
-        if sibling_count > 1:
+        if det.get("original_name"):
             original_name = det.get("original_name", "")
             if original_name:
-                sibling_rows = gallery_service.get_sibling_detections(original_name)
+                sibling_rows = modal_siblings.get(original_name, [])
                 for sib in sibling_rows:
                     sib_species_key = view_helpers.get_species_key(sib)
                     sib_thumb = sib.get("thumbnail_path_virtual")
@@ -527,6 +488,7 @@ def species_overview_route():
                     "display_path": display_url,
                     "full_path": full_url,
                     "original_path": original_url,
+                    **station_service.media_paths(det),
                 },
             )
         )
@@ -549,8 +511,10 @@ def species_overview_route():
             pagination_range.append("...")
         pagination_range.append(total_pages)
 
+    view_helpers.enrich_modal_review_states(detections)
     return render_template(
         "species_overview.html",
+        selection=selection,
         current_path="/species",
         species_key=species_key,
         species_common_name=view_helpers.get_common_name(species_key),
@@ -567,56 +531,15 @@ def species_overview_route():
 
 def gallery_route():
 
-    daily_covers = view_helpers.get_daily_covers()
-    detections_by_date = view_helpers.get_captured_detections_by_date()
-    all_detection_ids = [
-        int(det["detection_id"])
-        for detections in detections_by_date.values()
-        for det in detections
-        if det.get("detection_id")
-    ]
-    with db_service.closing_connection() as conn:
-        review_states = human_label_service.fetch_detection_review_states(
-            conn, all_detection_ids
-        )
-    sorted_dates = sorted(daily_covers.keys(), reverse=True)
-
-    days = []
-    for date_str in sorted_dates:
-        data = daily_covers.get(date_str)
-        if not data:
-            continue
-
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-            display_date = dt.strftime("%A, %d. %B %Y")
-        except Exception:
-            display_date = date_str
-
-        day_detection_ids = [
-            int(det["detection_id"])
-            for det in detections_by_date.get(date_str, [])
-            if det.get("detection_id")
-        ]
-        review_progress = human_label_service.summarize_detection_review_progress(
-            review_states, day_detection_ids
-        )
-        days.append(
-            {
-                "date": date_str,
-                "display_date": display_date,
-                "cover_path": data.get("path", ""),
-                "count": data.get("count", 0),
-                "cover_detection_id": data.get("detection_id"),
-                "review_progress": review_progress,
-            }
-        )
-
+    page = request.args.get("page", 1, type=int)
+    days, total_days, page = gallery_service.get_gallery_days(page=page)
     return render_template(
         "gallery.html",
         current_path="/gallery",
         days=days,
         image_width=IMAGE_WIDTH,
+        page=page,
+        total_pages=math.ceil(total_days / 30) or 1,
     )
 
 
@@ -637,7 +560,7 @@ def subgallery_route(date):
     if min_score_param is not None:
         current_threshold = min_score_param
     else:
-        current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
+        current_threshold = 0.0
 
     with db_service.closing_connection() as conn:
         rows = db_service.fetch_detections_for_gallery(conn, date, order_by="time")
@@ -702,6 +625,27 @@ def subgallery_route(date):
                 break
 
     det_by_id = {d.get("detection_id"): d for d in detections_for_gallery}
+    modal_filenames = {
+        str(det_by_id.get(did, {}).get("original_name") or "")
+        for observation in page_observations
+        for did in observation["detection_ids"]
+    }
+    modal_siblings = gallery_service.get_sibling_detections_batch(
+        sorted(modal_filenames - {""})
+    )
+
+    with db_service.closing_connection() as conn:
+        review_states.update(
+            human_label_service.fetch_detection_review_states(
+                conn,
+                [
+                    int(sibling["detection_id"])
+                    for siblings in modal_siblings.values()
+                    for sibling in siblings
+                    if sibling.get("detection_id")
+                ],
+            )
+        )
 
     def human_review_extra(det: dict) -> dict:
         detection_id = int(det.get("detection_id") or 0)
@@ -748,10 +692,10 @@ def subgallery_route(date):
         sibling_count = det.get("sibling_count", 1) or 1
 
         siblings = []
-        if sibling_count > 1:
+        if det.get("original_name"):
             original_name = det.get("original_name", "")
             if original_name:
-                sibling_rows = gallery_service.get_sibling_detections(original_name)
+                sibling_rows = modal_siblings.get(original_name, [])
                 for sib in sibling_rows:
                     sib_species_key = view_helpers.get_species_key(sib)
                     sib_thumb = sib["thumbnail_path_virtual"]
@@ -893,7 +837,7 @@ def subgallery_route(date):
             enrich_detection(d)
             for d in sorted(
                 species_groups.values(),
-                key=lambda x: x.get("score", 0),
+                key=lambda x: x.get("score") or 0,
                 reverse=True,
             )
         ]

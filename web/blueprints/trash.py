@@ -6,9 +6,7 @@ Handles all trash-related routes:
 - POST /api/trash/restore - Restore trashed items
 - POST /api/trash/purge - Permanently delete specific items
 - POST /api/trash/empty - Empty entire trash
-- POST /api/detections/reject - Reject detections (move to trash)
-- POST /api/detections/relabel - Relabel a detection's species
-- POST /api/detections/rate - Set manual rating for a detection
+- POST /api/trash/move - Move selected objects to trash
 - GET /api/species-list - List known species
 """
 
@@ -19,7 +17,6 @@ from flask import Blueprint, jsonify, render_template, request
 
 from config import get_config
 from core import gallery_core as gallery_service
-from core.human_label_core import HumanAnswer
 from core.species_colours import assign_species_colours as _assign_species_colours
 from logging_config import get_logger
 from utils.review_metadata import format_review_timestamp
@@ -35,7 +32,6 @@ from web.services import (
     cache_service,
     db_service,
     detections_service,
-    human_label_service,
 )
 
 logger = get_logger(__name__)
@@ -45,6 +41,22 @@ trash_bp = Blueprint("trash", __name__)
 
 # Image width for template (matches web_interface.py)
 IMAGE_WIDTH = 450
+
+
+@trash_bp.route("/api/trash/move", methods=["POST"])
+@cache_service.invalidates("analytics.")
+@login_required
+def move_to_trash():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(status="error", message="invalid request"), 400
+    try:
+        with db_service.closing_connection() as conn:
+            result = detections_service.move_to_trash(conn, data)
+    except ValueError as exc:
+        return jsonify(status="error", message=str(exc)), 409
+    gallery_service.invalidate_cache()
+    return jsonify(status="success", **result)
 
 
 @trash_bp.route("/trash", methods=["GET"])
@@ -140,7 +152,8 @@ def trash_restore():
 
         # Support both new format and legacy format
         detection_ids = data.get("detection_ids", data.get("ids", []))
-        image_filenames = data.get("image_filenames", [])
+        if data.get("image_filenames"):
+            return jsonify(status="error", message="Select trashed objects"), 400
 
         restored_count = 0
 
@@ -151,11 +164,6 @@ def trash_restore():
                 db_service.restore_detections(conn, detection_ids)
                 restored_count += len(detection_ids)
 
-            # Restore no_bird images (back to untagged)
-            if image_filenames:
-                restored_count += db_service.restore_no_bird_images(
-                    conn, image_filenames
-                )
         finally:
             conn.close()
 
@@ -178,7 +186,8 @@ def trash_purge():
 
         # Support both new format and legacy format
         detection_ids = data.get("detection_ids", data.get("ids", []))
-        image_filenames = data.get("image_filenames", [])
+        if data.get("image_filenames"):
+            return jsonify(status="error", message="Select trashed objects"), 400
 
         det_deleted = 0
         img_deleted = 0
@@ -194,13 +203,6 @@ def trash_purge():
                 det_deleted = result.get("rows_deleted", 0)
                 files_deleted = result.get("files_deleted", 0)
 
-            # Purge no_bird images (with full file cleanup)
-            if image_filenames:
-                img_result = detections_service.hard_delete_images_with_conn(
-                    conn, filenames=image_filenames
-                )
-                img_deleted = img_result.get("rows_deleted", 0)
-                files_deleted += img_result.get("files_deleted", 0)
         finally:
             conn.close()
 
@@ -227,16 +229,7 @@ def trash_purge():
 @cache_service.invalidates("analytics.")
 @login_required
 def trash_empty():
-    """Empties trash (rejected detections only).
-
-    ``review_status='no_bird'`` images are intentionally preserved:
-    they are the training-data hard-negative corpus
-    (``utils.db.user_groundtruth.fetch_hard_negatives``). Wiping them
-    here would silently destroy verified FP crops. Per-item purge of
-    no_bird images is still possible via ``/api/trash/purge`` with
-    explicit ``image_filenames``, but the bulk-empty must not touch
-    them.
-    """
+    """Delete objects deliberately moved to trash after answer migration."""
     try:
         det_deleted = 0
         files_deleted = 0
@@ -271,20 +264,6 @@ def trash_empty():
         return error_response("Error emptying trash", exc)
 
 
-@trash_bp.route("/api/detections/reject", methods=["POST"])
-@cache_service.invalidates("analytics.")
-@login_required
-def reject_detection():
-    """Move detections to Trash without asserting a training label."""
-    data = request.get_json() or {}
-    ids = data.get("ids", [])
-    if not ids:
-        return jsonify({"error": "No IDs provided"}), 400
-    with db_service.closing_connection() as conn:
-        db_service.reject_detections(conn, ids)
-    return jsonify({"status": "success"})
-
-
 @trash_bp.route("/api/species-list", methods=["GET"])
 def species_list():
     """Returns the list of known species for relabeling (locale-aware)."""
@@ -304,147 +283,6 @@ def species_list():
         return jsonify({"status": "success", "species": species})
     except Exception as exc:
         return error_response("Failed to load species list", exc)
-
-
-@trash_bp.route("/api/detections/relabel", methods=["POST"])
-@cache_service.invalidates("analytics.")
-@login_required
-def relabel_detection():
-    """
-    Relabels a detection to a different species.
-    Accepts: { detection_id: int, species: "Scientific_name" }
-    Updates the final/manual species override on the detection only.
-    """
-    data = request.get_json() or {}
-    detection_id = data.get("detection_id")
-    new_species = data.get("species")
-
-    if not detection_id or not new_species:
-        return jsonify({"error": "detection_id and species required"}), 400
-
-    conn = db_service.get_connection()
-    try:
-        cfg = get_config()
-        locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
-        allowed_species = {
-            entry["scientific"]
-            for entry in build_species_picker_entries(conn, locale=locale)
-        }
-        if new_species not in allowed_species:
-            return jsonify({"error": "unknown species"}), 400
-
-        row = conn.execute(
-            """
-            SELECT image_filename
-            FROM detections
-            WHERE detection_id = ?
-              AND COALESCE(status, 'active') = 'active'
-            """,
-            (detection_id,),
-        ).fetchone()
-        if row is None:
-            return jsonify({"error": "Detection not found"}), 404
-        human_label_service.record_answer(
-            conn,
-            HumanAnswer(
-                image_filename=str(row["image_filename"]),
-                detection_id=int(detection_id),
-                species_identity="corrected",
-                species_key=str(new_species),
-            ),
-            source_ref="detections:relabel",
-        )
-        conn.commit()
-
-        gallery_service.invalidate_cache()
-        # Best-of-Species board is memoised separately on a 5-min TTL and
-        # would otherwise echo the old species on the next Live render.
-        from web.web_interface import invalidate_best_species_cache
-
-        invalidate_best_species_cache()
-        logger.info(
-            "Detection %s relabeled to %s",
-            _slv(detection_id),
-            _slv(new_species),
-        )
-        return jsonify({"status": "success", "new_species": new_species})
-    except Exception as exc:
-        return error_response(f"Error relabeling detection {_slv(detection_id)}", exc)
-    finally:
-        conn.close()
-
-
-def compute_auto_rating(od_confidence, cls_confidence, bbox_w, bbox_h):
-    """
-    Compute automatic detection quality rating (1-4).
-    4 = excellent, 3 = good, 2 = uncertain, 1 = poor.
-
-    NOTE: Legacy function kept for backward compatibility. The UI now uses
-    the simpler is_favorite toggle for cover image selection.
-    """
-    od_conf = od_confidence or 0
-    cls_conf = cls_confidence or 0
-    bbox_area = (bbox_w or 0) * (bbox_h or 0)
-
-    # Visual quality score
-    visual_score = od_conf * 0.4 + cls_conf * 0.6
-
-    # BBox size bonus/penalty
-    if bbox_area > 0.05:
-        visual_score += 0.1
-    elif bbox_area < 0.005:
-        visual_score -= 0.15
-
-    # Map to 1-4
-    if visual_score >= 0.65:
-        return 4
-    elif visual_score >= 0.45:
-        return 3
-    elif visual_score >= 0.25:
-        return 2
-    else:
-        return 1
-
-
-@trash_bp.route("/api/detections/rate", methods=["POST"])
-@login_required
-def rate_detection():
-    """
-    Set a manual rating for a detection.
-    Accepts: { detection_id: int, rating: int (1-5) }
-
-    NOTE: Legacy endpoint kept for backward compatibility.
-    The UI now uses /api/detections/favorite instead.
-    """
-    data = request.get_json() or {}
-    detection_id = data.get("detection_id")
-    rating = data.get("rating")
-
-    if not detection_id or rating is None:
-        return jsonify({"error": "detection_id and rating required"}), 400
-
-    rating = int(rating)
-    if rating < 1 or rating > 5:
-        return jsonify({"error": "Rating must be 1-5"}), 400
-
-    conn = db_service.get_connection()
-    try:
-        conn.execute(
-            "UPDATE detections SET rating = ?, rating_source = 'manual' WHERE detection_id = ?",
-            (rating, detection_id),
-        )
-        conn.commit()
-        gallery_service.invalidate_cache()
-        logger.info(
-            "Detection %s rated %s/5 (manual)",
-            _slv(detection_id),
-            _slv(rating),
-        )
-        return jsonify({"status": "success", "rating": rating})
-    except Exception as exc:
-        return error_response(f"Error rating detection {_slv(detection_id)}", exc)
-    finally:
-        conn.close()
 
 
 @trash_bp.route("/api/detections/favorite", methods=["POST"])

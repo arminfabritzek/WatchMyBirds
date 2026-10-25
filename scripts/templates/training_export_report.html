@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Export check · {{ report.source }}</title>
+<style>
+:root { color-scheme: light dark; --bg:#f5f5f1; --surface:#fff; --ink:#202827; --muted:#596460; --line:#d3dbd6; --bad:#ae2828; --od:#ab5100; --cls:#006dcc; }
+@media (prefers-color-scheme: dark) { :root { --bg:#171c1b; --surface:#222a27; --ink:#e5ece8; --muted:#b0beb6; --line:#435049; --bad:#ff9990; --od:#ffb866; --cls:#7fc8ff; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; }
+main { max-width:1200px; margin:auto; padding:32px 20px 60px; }
+a { color:inherit; text-underline-offset:3px; }
+h1 { margin:0; font-size:clamp(26px,4vw,40px); letter-spacing:-.04em; }
+h2 { font-size:21px; margin:0 0 12px; }
+p { margin:8px 0; }
+header { padding-bottom:24px; border-bottom:1px solid var(--line); }
+.eyebrow { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.1em; }
+.status { font-weight:700; font-size:20px; }
+.failed,.error { color:var(--bad); }
+.metrics { display:flex; flex-wrap:wrap; gap:24px; margin:24px 0; }
+.metrics strong { display:block; font-size:28px; line-height:1.2; }
+.metrics span,.muted { color:var(--muted); }
+section { margin-top:28px; }
+.issues { padding:16px 20px; border:1px solid var(--line); background:var(--surface); }
+.issues li { margin:10px 0; overflow-wrap:anywhere; }
+code { font-size:.85em; overflow-wrap:anywhere; }
+summary { cursor:pointer; padding:10px 0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr)); gap:24px; }
+article { min-width:0; background:var(--surface); border:1px solid var(--line); border-radius:8px; overflow:hidden; scroll-margin-top:15px; }
+article header { padding:16px; }
+article h3 { margin:0; font-size:15px; overflow-wrap:anywhere; }
+.frame { position:relative; background:#111; }
+.frame img { display:block; width:100%; height:auto; }
+.frame svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.frame rect { fill:none; stroke-width:3; vector-effect:non-scaling-stroke; }
+.frame .od { stroke:var(--od); }
+.frame text { stroke:#111 !important; stroke-width:2; paint-order:stroke; }
+.frame text.od { fill:var(--od); }
+.frame text.cls { fill:var(--cls); }
+.frame .cls { stroke:var(--cls); stroke-dasharray:7 4; }
+.legend { margin:0 0 16px; display:flex; flex-wrap:wrap; gap:16px; }
+.legend label { cursor:pointer; }
+#show-od:not(:checked) ~ .grid .od { display:none; }
+#show-cls:not(:checked) ~ .grid .cls { display:none; }
+.preview-controls { display:inline; margin-right:20px; }
+.box-list { padding:12px 16px; margin:0; list-style:none; font-size:13px; }
+.box-list li { margin:5px 0; overflow-wrap:anywhere; }
+.box-list .od { color:var(--od); }
+.box-list .cls { color:var(--cls); }
+.details { padding:0 16px 16px; }
+.decisions { list-style:none; margin:0; padding:0; font-size:13px; }
+.decisions li { padding:8px 0; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+.decisions span { display:block; color:var(--muted); }
+.unavailable { min-height:120px; display:grid; place-items:center; padding:24px; color:var(--muted); }
+footer { border-top:1px solid var(--line); margin-top:28px; padding-top:16px; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+<p class="eyebrow">WatchMyBirds · local development tool</p>
+<h1>Training export check</h1>
+<p>{{ report.source }}</p>
+<p class="status {{ 'failed' if not report.passed }}">{{ 'Checks passed' if report.passed else 'Check failed' }} · {{ report.errors }} errors · {{ report.warnings }} warnings</p>
+<p class="muted">This report reads the finished ZIP. It does not compare with the live database. Species identity and box placement still need visual review.</p>
+<p><a href="report.json">Machine-readable report (JSON)</a> · <a href="#images">Inspect exported images</a></p>
+<details><summary>Archive identity</summary><p>Created: {{ report.created_at }}</p><p>ZIP SHA-256: <code>{{ report.sha256 }}</code></p><p>Bundle: <code>{{ report.bundle_id or 'Unavailable' }}</code></p></details>
+</header>
+<div class="metrics">
+<div><strong>{{ report.summary.images }}</strong><span>images in ZIP</span></div>
+<div><strong>{{ report.summary.decoded_images }}</strong><span>images decoded</span></div>
+<div><strong>{{ report.summary.box_examples }}</strong><span>COCO boxes</span></div>
+<div><strong>{{ report.summary.species_examples }}</strong><span>species examples</span></div>
+</div>
+<section class="issues" aria-labelledby="checks-title">
+<h2 id="checks-title">Findings</h2>
+{% if report.issues %}
+<ul>{% for issue in report.issues %}<li class="{{ issue.severity }}"><strong>{{ issue.code }}</strong> — {{ issue.message }}{% if issue.filename %}<br>{% if issue.filename in anchors %}<a href="#{{ anchors[issue.filename] }}"><code>{{ issue.filename }}</code></a>{% else %}<code>{{ issue.filename }}</code>{% endif %}{% endif %}</li>{% endfor %}</ul>
+{% else %}<p>No inconsistencies found in the supported checks.</p>{% endif %}
+<details><summary>What is checked?</summary><p>Required files and supported format versions; ZIP paths and duplicate entries; image decoding and CRC integrity; manifest counts and included-view membership; referenced images and object identities; COCO dimensions, categories and boxes; normalized crop coordinates; species labels against exported object records.</p><p>Missing originals explicitly excluded by the manifest are expected. Images may be present for audit purposes without being eligible for training.</p></details>
+</section>
+<section id="images">
+<h2>Image review</h2>
+<p class="muted">{{ report.summary.previews }} previews · {{ report.summary.manifest_images }} image records. All exported images are checked, even when previews are limited. Coordinates are drawn from the training files, not recomputed from the app.</p>
+<input type="checkbox" id="show-od" checked><label class="preview-controls" for="show-od">Box training — orange, solid</label>
+<input type="checkbox" id="show-cls" checked><label class="preview-controls" for="show-cls">Species training — blue, dashed</label>
+<p class="muted">Open a preview for a larger image; see the labels and coordinates below it.</p>
+<div class="grid">
+{% for record in records %}
+<article id="{{ record.anchor }}">
+<header><h3>{{ record.filename }}</h3>{% for issue in record.problems %}<p class="{{ issue.severity }}">{{ issue.message }}</p>{% endfor %}</header>
+{% if record.preview %}
+<a href="{{ record.preview }}" title="Open the exported image preview"><div class="frame">
+<img src="{{ record.preview }}" alt="Exported image: {{ record.filename }}" loading="lazy" width="{{ record.width }}" height="{{ record.height }}">
+<svg viewBox="0 0 {{ record.width }} {{ record.height }}" aria-label="Exported training boxes">
+{% for item in record.boxes %}<rect class="{{ item.kind }}" x="{{ item.box[0] }}" y="{{ item.box[1] }}" width="{{ item.box[2] }}" height="{{ item.box[3] }}"><title>{{ item.label }}</title></rect><text class="{{ item.kind }}" x="{{ item.box[0] + 4 }}" y="{{ item.box[1] + 30 }}" font-size="{{ record.width / 35 }}">{{ loop.index }}</text>{% endfor %}
+</svg></div></a>
+{% else %}<div class="unavailable">{% if record.width > 1 %}Preview omitted by preview limit.{% else %}No readable image in this ZIP.{% endif %}</div>{% endif %}
+<ul class="box-list">{% for item in record.boxes %}<li class="{{ item.kind }}"><strong>{{ loop.index }} · {{ item.label }}</strong><br>x, y, w, h: {% for value in item.box %}{{ '%.1f' | format(value) }}{{ ', ' if not loop.last }}{% endfor %} px</li>{% else %}<li class="muted">No valid exported training boxes.</li>{% endfor %}</ul>
+<div class="details"><details><summary>Inclusion / exclusion decisions</summary><ul class="decisions">
+{% for decision in record.decisions %}<li><strong>{{ decision.view }} · {{ decision.decision }}</strong><span>{{ decision.object_key | default('Full image') }}</span><span>{{ decision.reasons | join(', ') if decision.reasons is iterable and decision.reasons is not string else decision.reasons }}</span></li>{% endfor %}
+</ul></details></div>
+</article>
+{% else %}<p>No image records are available in this archive.</p>{% endfor %}
+</div>
+</section>
+<footer>Local report · no server, login or external resources required. Preview copies are resized; originals and source ZIP are unchanged.</footer>
+</main>
+</body>
+</html>

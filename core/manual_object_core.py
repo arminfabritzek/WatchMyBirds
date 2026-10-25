@@ -12,7 +12,12 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.human_label_core import BBox, HumanLabelError, LabelProvenance
+from core.human_label_core import (
+    BBox,
+    HumanLabelError,
+    LabelProvenance,
+    require_no_image_absence,
+)
 from utils.species_names import canonical_species_key, is_known_bird_species
 
 
@@ -165,6 +170,7 @@ def create_manual_object(
             raise HumanLabelError("request_id already belongs to another object")
         return _row_payload(prior), False
 
+    require_no_image_absence(conn, filename)
     created_at = provenance.values()[-1]
     cursor = conn.execute(
         """

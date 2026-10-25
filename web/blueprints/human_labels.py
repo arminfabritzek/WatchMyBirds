@@ -7,7 +7,8 @@ import sqlite3
 from flask import Blueprint, jsonify, request
 
 from config import get_config
-from core.human_label_core import BBox, HumanAnswer, HumanLabelError
+from core.bird_identity import BirdMatchRequired
+from core.human_label_core import BBox, HumanLabelError
 from core.manual_object_core import ManualObjectDraft
 from logging_config import get_logger
 from utils.path_manager import PathManager
@@ -52,6 +53,7 @@ def _manual_object_error(exc: Exception):
             "manual object ",
             "request_id ",
             "species ",
+            "Withdraw No birds ",
         ),
         fallback="Manual object rejected",
     )
@@ -63,7 +65,12 @@ def _manual_object_error(exc: Exception):
 def manual_object_create():
     """Create a missed-bird object with explicit human provenance."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "invalid request"}), 400
     try:
+        for key in ("target_key", "match_token"):
+            if data.get(key) is not None and not isinstance(data[key], str):
+                raise HumanLabelError("manual object match is invalid")
         filename = str(data.get("filename") or "").strip()
         bbox = _request_bbox(data.get("bbox"))
         if bbox is None:
@@ -73,7 +80,13 @@ def manual_object_create():
         if species_key is not None and not isinstance(species_key, str):
             raise HumanLabelError("species is invalid")
         path_manager = PathManager(str(_shared["output_dir"]))
+        original_path = path_manager.contained_path(
+            path_manager.get_original_path(filename), path_manager.originals_dir
+        )
+        if original_path is None:
+            raise HumanLabelError("image path is invalid")
         with db_service.closing_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             obj, created = human_label_service.create_manual_object(
                 conn,
                 ManualObjectDraft(
@@ -82,11 +95,31 @@ def manual_object_create():
                     species_key=species_key,
                     request_id=request_id,
                 ),
-                original_path=path_manager.get_original_path(filename),
+                original_path=original_path,
                 locale=str(get_config().get("SPECIES_COMMON_NAME_LOCALE", "DE")),
                 app_version=_shared.get("app_version", ""),
+                target_key=data.get("target_key"),
+                match_token=data.get("match_token"),
             )
+            if obj.get("detection_id") is not None:
+                human_label_service.refresh_thumbnail_for_corrected_box(
+                    conn,
+                    detection_id=int(obj["detection_id"]),
+                    bbox=(bbox.x, bbox.y, bbox.w, bbox.h),
+                    original_resolver=lambda name: original_path,
+                    thumb_resolver=lambda name: path_manager.get_derivative_path(
+                        name, "thumb"
+                    ),
+                )
         gallery_service.invalidate_cache()
+    except BirdMatchRequired as exc:
+        payload = {
+            "status": "match_required",
+            "message": "Choose an existing box to correct, or a different bird.",
+            "candidates": exc.candidates,
+            "match_token": exc.token,
+        }
+        return jsonify(payload), 409
     except (HumanLabelError, sqlite3.IntegrityError) as exc:
         logger.info("Manual object create rejected: %s", type(exc).__name__)
         return _manual_object_error(exc)
@@ -176,6 +209,10 @@ def label_state():
             image_filename=filename,
             detection_id=detection_id,
         )
+        model_proposal = human_label_service.original_model_proposal(
+            conn, image_filename=filename, detection_id=detection_id
+        )
+        absence_blocker = human_label_service.full_image_absence_blocker(conn, filename)
         readiness = None
         object_progress = None
         if detection_id is not None:
@@ -189,181 +226,50 @@ def label_state():
         {
             "status": "success",
             "facts": facts,
+            "full_image_absence_blocker": absence_blocker,
+            "model_proposal": model_proposal,
             "readiness": readiness,
             "object_progress": object_progress,
         }
     )
 
 
-@human_labels_bp.route("/api/labels/bbox-quality/retract", methods=["POST"])
-@login_required
-def label_bbox_quality_retract():
-    data = request.get_json(silent=True) or {}
-    filename = str(data.get("filename") or "").strip()
-    if not filename:
-        return jsonify({"status": "error", "message": "filename required"}), 400
-
-    try:
-        detection_id = int(data.get("detection_id"))
-    except (TypeError, ValueError):
-        return jsonify({"status": "error", "message": "invalid detection_id"}), 400
-
-    try:
-        with db_service.closing_connection() as conn:
-            fact_id = human_label_service.retract_bbox_quality(
-                conn,
-                image_filename=filename,
-                detection_id=detection_id,
-                source_ref=f"image-correction:{filename}:{detection_id}",
-                app_version=_shared.get("app_version", ""),
-            )
-            conn.commit()
-    except HumanLabelError as exc:
-        logger.info("Bbox-quality retraction rejected: %s", type(exc).__name__)
-        return jsonify(
-            {"status": "error", "message": "unable to clear the box verdict"}
-        ), 400
-
-    gallery_service.invalidate_cache()
-    return jsonify({"status": "success", "fact_id": fact_id})
-
-
-@human_labels_bp.route("/api/labels/species/retract", methods=["POST"])
-@login_required
-def label_species_retract():
-    data = request.get_json(silent=True) or {}
-    filename = str(data.get("filename") or "").strip()
-    if not filename:
-        return jsonify({"status": "error", "message": "filename required"}), 400
-
-    try:
-        detection_id = int(data.get("detection_id"))
-    except (TypeError, ValueError):
-        return jsonify({"status": "error", "message": "invalid detection_id"}), 400
-
-    try:
-        with db_service.closing_connection() as conn:
-            fact_id = human_label_service.retract_species_identity(
-                conn,
-                image_filename=filename,
-                detection_id=detection_id,
-                source_ref=f"image-correction:{filename}:{detection_id}",
-                app_version=_shared.get("app_version", ""),
-            )
-            conn.commit()
-    except HumanLabelError as exc:
-        logger.info("Species retraction rejected: %s", type(exc).__name__)
-        return jsonify(
-            {"status": "error", "message": "unable to take the species back"}
-        ), 400
-
-    gallery_service.invalidate_cache()
-    return jsonify({"status": "success", "fact_id": fact_id})
-
-
 @human_labels_bp.route("/api/labels/answer", methods=["POST"])
 @login_required
 def label_answer():
-    data = request.get_json(silent=True) or {}
-    filename = str(data.get("filename") or "").strip()
-    if not filename:
-        return jsonify({"status": "error", "message": "filename required"}), 400
-
-    raw_detection_id = data.get("detection_id")
-    try:
-        detection_id = int(raw_detection_id) if raw_detection_id is not None else None
-    except (TypeError, ValueError):
-        return jsonify({"status": "error", "message": "invalid detection_id"}), 400
-
-    bbox_data = data.get("bbox_correction")
-    try:
-        bbox = (
-            BBox(
-                x=float(bbox_data["x"]),
-                y=float(bbox_data["y"]),
-                w=float(bbox_data["w"]),
-                h=float(bbox_data["h"]),
-            )
-            if isinstance(bbox_data, dict)
-            else None
-        )
-    except (KeyError, TypeError, ValueError):
-        return jsonify({"status": "error", "message": "invalid bbox"}), 400
-
-    if "retract_bbox_quality" in data and not isinstance(
-        data["retract_bbox_quality"], bool
-    ):
-        return jsonify({"status": "error", "message": "invalid box retraction"}), 400
-
-    answer = HumanAnswer(
-        image_filename=filename,
-        detection_id=detection_id,
-        image_bird_presence=data.get("image_bird_presence"),
-        object_bird_presence=data.get("object_bird_presence"),
-        bbox_quality=data.get("bbox_quality"),
-        bbox_correction=bbox,
-        species_identity=data.get("species_identity"),
-        species_key=data.get("species_key"),
-        detector_miss=data.get("detector_miss") is True,
-        retract_bbox_quality=data.get("retract_bbox_quality") is True,
-    )
-
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(status="error", message="invalid request"), 400
     try:
         with db_service.closing_connection() as conn:
-            fact_ids = human_label_service.record_answer(
-                conn,
-                answer,
-                source_ref=f"image-correction:{filename}:{detection_id or 'image'}",
-                app_version=_shared.get("app_version", ""),
+            result = human_label_service.apply_answer_request(
+                conn, data, app_version=_shared.get("app_version", "")
             )
-            if bbox is not None and detection_id is not None:
-                path_manager = PathManager(str(_shared["output_dir"]))
-                human_label_service.refresh_thumbnail_for_corrected_box(
-                    conn,
-                    detection_id=detection_id,
-                    bbox=(bbox.x, bbox.y, bbox.w, bbox.h),
-                    original_resolver=path_manager.get_original_path,
-                    thumb_resolver=lambda name: path_manager.get_derivative_path(
-                        name, "thumb"
-                    ),
+        if result["targets"]:
+            with db_service.closing_connection() as conn:
+                paths = PathManager(str(_shared["output_dir"]))
+                human_label_service.refresh_answer_thumbnails(
+                    conn, result["targets"], paths
                 )
-            facts = human_label_service.fetch_current_facts(
-                conn,
-                image_filename=filename,
-                detection_id=detection_id,
-            )
-            review_state = (
-                human_label_service.fetch_detection_review_states(conn, [detection_id])[
-                    detection_id
-                ]
-                if detection_id is not None
-                else None
-            )
+        result.pop("targets")
         gallery_service.invalidate_cache()
-    except HumanLabelError as exc:
-        logger.info("Label answer rejected: %s", type(exc).__name__)
+        return jsonify(status="success", **result)
+    except (HumanLabelError, ValueError) as exc:
         message = safe_validation_message(
             exc,
             allowed_prefixes=(
                 "bbox ",
                 "object ",
-                "detection ",
+                "detection",
                 "image ",
                 "answer ",
                 "bird-presence ",
+                "Remove the ",
+                "The selection ",
+                "Select detector ",
             ),
             fallback="Label answer rejected",
         )
-        return jsonify({"status": "error", "message": message}), 409
+        return jsonify(status="error", message=message), 409
     except sqlite3.IntegrityError:
-        logger.info("Label answer rejected: database constraint")
-        return jsonify({"status": "error", "message": "Label answer rejected"}), 409
-
-    return jsonify(
-        {
-            "status": "success",
-            "fact_ids": fact_ids,
-            "facts": facts,
-            "review_state": review_state,
-        }
-    )
+        return jsonify(status="error", message="Label answer rejected"), 409

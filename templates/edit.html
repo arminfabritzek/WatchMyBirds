@@ -105,7 +105,7 @@
             surface='gallery',
             is_favorite=det.is_favorite|default(false),
             can_moderate=can_moderate,
-            current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+            current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
             details_href='/gallery/' ~ date_iso ~ '?focus=' ~ det.detection_id ~ '#detection-' ~ det.detection_id
             ) }}
 
@@ -165,10 +165,10 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/species_picker.js?v=20260920-bird-editor-v5"></script>
-<script src="/assets/js/gallery_utils.js?v=20260922-bbox-label-v4"></script>
-<script src="/assets/js/tile_actions.js?v=20260920-bird-editor-v4"></script>
-<script src="/assets/js/batch_actions.js?v=1"></script>
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/batch_actions.js?v={{ asset_version }}"></script>
 <script>
     let lastClickedIndex = null;
 
@@ -244,7 +244,7 @@
         const result = await WmBatchActions.runBatchAction(
             'Move Selected to Trash',
             selection,
-            '/api/moderation/bulk/reject'
+            '/api/trash/move'
         );
 
         if (result.success) {
@@ -268,7 +268,7 @@
         const result = await WmBatchActions.runBatchAction(
             '⚠️ Move All Filtered to Trash',
             selection,
-            '/api/moderation/bulk/reject'
+            '/api/trash/move'
         );
 
         if (result.success) {

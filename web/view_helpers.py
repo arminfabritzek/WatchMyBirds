@@ -17,7 +17,7 @@ from utils.species_names import (
     species_key_from_candidates,
 )
 from web.security import safe_log_value as _slv
-from web.services import db_service, gallery_service
+from web.services import db_service, gallery_service, human_label_service
 
 logger = logging.getLogger(__name__)
 
@@ -128,14 +128,14 @@ def get_species_key(det: dict | None) -> str:
     if species_key:
         return species_key
 
-    manual_species = det.get("manual_species_override")
+    manual_species = det.get("human_species_key")
     if manual_species:
         return manual_species
 
     return species_key_from_candidates(
         cls_class_name=det.get("cls_class_name"),
         od_class_name=det.get("od_class_name"),
-        species_source=det.get("species_source"),
+        species_source=det.get("human_species_source"),
     )
 
 
@@ -153,9 +153,56 @@ def _detection_has_human_unknown_species(det: dict) -> bool:
     must suppress the species key and the old CLS guess — this is the guard
     fixed in 461f9918; dropping either branch resurrects a withdrawn species.
     """
-    if is_human_unknown_species_source(det.get("species_source")):
+    if is_human_unknown_species_source(det.get("human_species_source")):
         return True
     return det.get("human_review_state") == "reviewed_unknown"
+
+
+def enrich_modal_review_states(detections: list[dict]) -> None:
+    rows: list[dict] = []
+    seen: set[int] = set()
+
+    def collect(items: list[dict]) -> None:
+        for item in items:
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+            rows.append(item)
+            collect(item.get("siblings") or [])
+
+    collect(detections)
+    ids = [int(row["detection_id"]) for row in rows if row.get("detection_id")]
+    if not ids:
+        return
+    with db_service.closing_connection() as conn:
+        states = human_label_service.fetch_detection_review_states(conn, ids)
+    for row in rows:
+        if row.get("manual_object_id"):
+            continue
+        state = states.get(int(row.get("detection_id") or 0))
+        if state is None:
+            continue
+        answer = str(state["state"])
+        row["human_review_state"] = answer
+        row["human_reviewed"] = bool(state["reviewed"])
+        row["human_bbox_verdict"] = state.get("bbox_verdict")
+        row["human_species_key"] = state.get("species_key")
+        row.pop("human_common_name", None)
+        row["provenance"] = (
+            "human_confirmed"
+            if answer == "confirmed"
+            else "manually_identified"
+            if answer == "corrected"
+            else "human_unknown"
+            if answer == "reviewed_unknown"
+            else "model_proposal"
+        )
+        if answer in {"confirmed", "corrected"} and state.get("species_key"):
+            species_key = str(state["species_key"])
+            row["species_key"] = species_key
+            row["common_name"] = get_common_name(species_key)
+            row["human_common_name"] = row["common_name"]
+            row["needs_review"] = False
 
 
 def build_current_detection_payload(det: dict) -> dict:
@@ -167,8 +214,8 @@ def build_current_detection_payload(det: dict) -> dict:
     ``tests/test_detail_modal_unknown_species_head.py`` for the coverage.
     """
     has_human_unknown_species = _detection_has_human_unknown_species(det)
-    has_manual_species_review = det.get("species_source") == "manual" and bool(
-        det.get("manual_species_override")
+    has_manual_species_review = det.get("human_species_source") == "manual" and bool(
+        det.get("human_species_key")
     )
     human_review_state = det.get("human_review_state") or "unreviewed"
 
@@ -178,7 +225,7 @@ def build_current_detection_payload(det: dict) -> dict:
         species_key = (
             det.get("human_species_key")
             or det.get("species_key")
-            or det.get("manual_species_override")
+            or det.get("human_species_key")
             or det.get("cls_class_name")
             or det.get("od_class_name")
         )
@@ -199,15 +246,18 @@ def build_current_detection_payload(det: dict) -> dict:
 
     return {
         "detection_id": detection_id,
-        "manual_object_id": None,
-        "object_key": f"detection:{detection_id}",
-        "object_kind": "detection",
+        "manual_object_id": det.get("manual_object_id"),
+        "object_key": det.get("object_key") or f"detection:{detection_id}",
+        "object_kind": "manual" if det.get("manual_object_id") else "detection",
+        "revision": det.get("revision"),
         "image_filename": image_filename,
         "species_key": species_key,
         "common_name": det.get("human_common_name") or det.get("common_name"),
-        "species_source": det.get("species_source"),
+        "human_species_source": det.get("human_species_source"),
         "human_review_state": human_review_state,
         "human_bbox_verdict": det.get("human_bbox_verdict"),
+        "object_status": det.get("object_status") or det.get("status") or "active",
+        "needs_review": bool(det.get("needs_review", False)),
         "formatted_date": det.get("formatted_date"),
         "formatted_time": det.get("formatted_time"),
         "species_colour": det.get("species_colour"),
@@ -221,7 +271,6 @@ def build_current_detection_payload(det: dict) -> dict:
         "cls_class_name": det.get("cls_class_name"),
         "cls_confidence": det.get("cls_confidence"),
         "is_favorite": det.get("is_favorite"),
-        "revision": None,
     }
 
 
@@ -275,56 +324,6 @@ def build_detection_view_from_gallery_row(det_row: dict) -> dict:
     )
 
 
-def compute_auto_rating(od_confidence, cls_confidence, bbox_w, bbox_h):
-    od_conf = od_confidence or 0
-    cls_conf = cls_confidence or 0
-    bbox_area = (bbox_w or 0) * (bbox_h or 0)
-
-    visual_score = od_conf * 0.4 + cls_conf * 0.6
-    if bbox_area > 0.05:
-        visual_score += 0.1
-    elif bbox_area < 0.005:
-        visual_score -= 0.15
-
-    if visual_score >= 0.65:
-        return 4
-    if visual_score >= 0.45:
-        return 3
-    if visual_score >= 0.25:
-        return 2
-    return 1
-
-
-def compute_rating_lazy(det):
-    rating = compute_auto_rating(
-        det.get("od_confidence", 0),
-        det.get("cls_confidence", 0),
-        det.get("bbox_w", 0),
-        det.get("bbox_h", 0),
-    )
-
-    try:
-        det_id = det.get("detection_id")
-        if det_id:
-            conn = db_service.get_connection()
-            try:
-                conn.execute(
-                    "UPDATE detections SET rating = ?, rating_source = 'auto' "
-                    "WHERE detection_id = ? AND rating IS NULL",
-                    (rating, det_id),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-    except Exception:
-        logger.debug(
-            "auto-rating persistence failed; returning computed rating",
-            exc_info=True,
-        )
-
-    return rating
-
-
 def bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
     bx = det.get("bbox_x") or 0.0
     by = det.get("bbox_y") or 0.0
@@ -371,13 +370,13 @@ def build_detection_view_dict(
     payload = {
         "detection_id": det.get("detection_id"),
         "manual_object_id": det.get("manual_object_id"),
-        "object_key": det.get("object_key") or (
-            f"detection:{det.get('detection_id')}" if det.get("detection_id") else ""
-        ),
+        "object_key": det.get("object_key")
+        or (f"detection:{det.get('detection_id')}" if det.get("detection_id") else ""),
         "object_kind": det.get("object_kind") or "detection",
         "revision": det.get("revision"),
         "provenance": det.get("provenance"),
         "species_state": det.get("species_state"),
+        "human_review_state": det.get("human_review_state") or "unreviewed",
         "species_key": species_key,
         "common_name": common_name,
         "od_class_name": det.get("od_class_name", ""),
@@ -386,8 +385,8 @@ def build_detection_view_dict(
         "cls_confidence": det.get("cls_confidence", 0.0) or 0.0,
         "score": det.get("score", 0.0) or 0.0,
         "review_status": det.get("review_status"),
-        "manual_species_override": det.get("manual_species_override"),
-        "species_source": det.get("species_source"),
+        "human_species_key": det.get("human_species_key"),
+        "human_species_source": det.get("human_species_source"),
         "formatted_date": formatted_date,
         "formatted_time": formatted_time,
         "gallery_date": gallery_date,
@@ -398,8 +397,8 @@ def build_detection_view_dict(
         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
         "bbox_h": det.get("bbox_h", 0.0) or 0.0,
         "human_bbox_verdict": det.get("human_bbox_verdict"),
-        "rating": det.get("rating"),
-        "rating_source": det.get("rating_source", "auto"),
+        "object_status": det.get("object_status") or det.get("status") or "active",
+        "needs_review": bool(det.get("needs_review", False)),
         "is_favorite": is_favorite(det),
         "is_gallery_eligible": is_gallery_eligible(det),
         "original_present": (
@@ -407,10 +406,37 @@ def build_detection_view_dict(
             if det.get("original_present", 1) is None
             else int(det.get("original_present", 1))
         ),
-        "image_filename": (
-            det.get("image_filename") or det.get("original_name") or ""
-        ),
+        "image_filename": (det.get("image_filename") or det.get("original_name") or ""),
     }
+    for key in (
+        "source_type",
+        "warning",
+        "origin",
+        "answer",
+        "answered",
+        "conflict",
+        "answered_at",
+        "presence",
+        "observation_count",
+        "human_count",
+        "automatic_count",
+        "legacy_count",
+        "days",
+        "human_days",
+        "automatic_days",
+        "first_seen",
+        "first_seen_date",
+        "last_seen_date",
+        "archive_last_seen_date",
+        "last_seen",
+        "archive_last_seen",
+        "missing_originals",
+        "media_status",
+        "media_placeholder",
+        "unknown_bird",
+    ):
+        if key in det:
+            payload[key] = det[key]
     if include_decision_state:
         payload["decision_state"] = det.get("decision_state")
     if extra:
@@ -510,9 +536,7 @@ def format_stream_timestamp(ts: str) -> str:
     if not ts:
         return "Unknown"
     try:
-        return datetime.strptime(ts[:15], "%Y%m%d_%H%M%S").strftime(
-            "%d.%m.%Y %H:%M"
-        )
+        return datetime.strptime(ts[:15], "%Y%m%d_%H%M%S").strftime("%d.%m.%Y %H:%M")
     except ValueError:
         return "Unknown"
 
@@ -578,9 +602,7 @@ def enrich_species_board(board: dict[str, list[dict]]) -> dict[str, list[dict]]:
                     "last_seen_display": format_stream_timestamp(
                         item.get("last_seen_timestamp") or ""
                     ),
-                    "is_favorite_available": bool(
-                        item.get("is_favorite_available")
-                    ),
+                    "is_favorite_available": bool(item.get("is_favorite_available")),
                     "best_cover_score": float(item.get("best_cover_score") or 0.0),
                     "detection_id": primary_payload["detection_id"],
                     "display_path": primary_payload["display_path"],
@@ -630,6 +652,7 @@ def fetch_best_species_pools(
         if species_key not in pools_by_species:
             pools_by_species[species_key] = {
                 "species_key": species_key,
+                "total_species_count": int(det.get("total_species_count") or 0),
                 "visit_count": int(det.get("visit_count") or 0),
                 "last_seen_timestamp": det.get("last_seen_timestamp") or "",
                 "best_cover_score": float(det.get("best_cover_score") or 0.0),
@@ -643,7 +666,7 @@ def fetch_best_species_pools(
         pools_by_species[species_key]["candidates"].append(det)
 
         det_id = int(det.get("detection_id") or 0)
-        if det_id > 0:
+        if det_id != 0:
             modal_rows_by_id.setdefault(det_id, det)
 
     species_pools = [pools_by_species[species] for species in ordered_species]
@@ -655,7 +678,7 @@ def render_best_species_board(
     *,
     total_limit: int = 12,
     featured_count: int = 3,
-    frame_count: int = 3,
+    frame_count: int = 4,
 ) -> dict[str, list[dict]]:
     from core.gallery_core import _choose_story_board_frames
 
@@ -673,8 +696,7 @@ def render_best_species_board(
                 "last_seen_timestamp": pool["last_seen_timestamp"],
                 "best_cover_score": pool["best_cover_score"],
                 "is_favorite_available": pool["is_favorite_available"],
-                "primary_detection": primary
-                or (candidates[0] if candidates else None),
+                "primary_detection": primary or (candidates[0] if candidates else None),
                 "story_detections": frames,
             }
         )
@@ -683,3 +705,122 @@ def render_best_species_board(
         "featured": board_items[:featured_count],
         "grid": board_items[featured_count:total_limit],
     }
+
+
+def build_station_views(rows: list[dict]) -> list[dict]:
+    from web.services import station_service
+
+    siblings = gallery_service.get_sibling_detections_batch(
+        sorted({str(row["image_filename"]) for row in rows})
+    )
+    result = []
+    for row in rows:
+        timestamp = str(row.get("timestamp") or row.get("image_timestamp") or "")
+        compact = timestamp.replace("-", "").replace(":", "").replace("T", "_")
+        date_iso = (
+            f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}" if len(compact) >= 8 else ""
+        )
+        companions = [
+            build_detection_view_dict(
+                item,
+                species_key=get_species_key(item),
+                common_name=get_common_name(get_species_key(item)),
+                include_decision_state=True,
+            )
+            for item in siblings.get(str(row["image_filename"]), [])
+        ]
+        item = build_detection_view_dict(
+            row,
+            species_key=get_species_key(row),
+            common_name=get_common_name(get_species_key(row)),
+            formatted_date=date_iso,
+            formatted_time=f"{compact[9:11]}:{compact[11:13]}:{compact[13:15]}"
+            if len(compact) >= 15
+            else "",
+            gallery_date=date_iso,
+            siblings=companions,
+            sibling_count=len(companions),
+            include_decision_state=True,
+            extra=station_service.media_paths(row),
+        )
+        item["proposal_common_name"] = get_common_name(
+            row.get("proposed_species") or "Unknown_species"
+        )
+        result.append(item)
+    enrich_modal_review_states(result)
+    for item, row in zip(result, rows, strict=True):
+        if row.get("image_statement"):
+            labels = []
+            if row.get("image_presence") == "absent":
+                labels.append("No birds in full image")
+            elif row.get("image_presence") == "present":
+                labels.append("Bird in full image")
+            if row.get("detector_miss"):
+                labels.append("Bird missed by the detector")
+            item.update(
+                image_statement=True,
+                modal_key=f"image-{row['subject_id']}",
+                review_label=" · ".join(labels),
+                common_name=" · ".join(labels),
+            )
+        elif row.get("manual_object_id") and row.get("status") != "active":
+            item.update(
+                retracted_manual=True,
+                review_label="Manually added bird withdrawn",
+                common_name="Manually added bird withdrawn",
+            )
+        elif row.get("presence") == "absent":
+            item.update(
+                review_label="No bird",
+                common_name="No bird",
+                species_key="Unknown_species",
+            )
+        elif row.get("answer") == "wrong":
+            item["review_label"] = "Wrong species"
+        else:
+            item["review_label"] = item["common_name"]
+    return result
+
+
+def build_station_review_events(groups: list[dict]) -> list[dict]:
+    colours = assign_species_colours(
+        [group["species"] for group in groups if group["species"]]
+    )
+    events = []
+    for group in groups:
+        detections = build_station_views(group["rows"])
+        members = []
+        for det in detections:
+            det["ordinary_review"] = True
+            members.append(
+                {
+                    **det,
+                    "best_detection_id": det["detection_id"],
+                    "filename": det["image_filename"],
+                    "context_only": False,
+                    "candidate_species": det.get("proposed_species"),
+                    "candidate_species_common": det["proposal_common_name"],
+                    "thumb_url": det["display_path"],
+                    "full_url": det["full_path"],
+                    "optimized_url": det["optimized_path"] or det["full_path"],
+                    "species_colour": colours.get(group["species"]),
+                    "modal_detection": det,
+                }
+            )
+        events.append(
+            {
+                **group,
+                "members": members,
+                "ordinary_review": True,
+                "candidate_species": group["species"],
+                "selected_species": group["species"],
+                "candidate_species_common": get_common_name(
+                    group["species"] or "Unknown_species"
+                ),
+                "species_colour": colours.get(group["species"]),
+                "photo_count": len(members),
+                "window_date": group["day"],
+                "window_time": f"{group['start'][9:11]}:{group['start'][11:13]} - {group['end'][9:11]}:{group['end'][11:13]}",
+            }
+        )
+    return events

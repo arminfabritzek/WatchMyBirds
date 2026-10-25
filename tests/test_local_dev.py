@@ -175,16 +175,19 @@ assert client.get('/healthz').status_code == 200
 assert client.get('/local-dev/status').json['camera_enabled'] is False
 assert client.get('/', headers={'Host': 'evil.example'}).status_code == 403
 for path in ['/api/v1/cameras', '/api/v1/onvif/discover', '/video_feed', '/api/v1/system/restart', '/api/v1/settings', '/api/v1/telegram/send-report']:
-    response = client.get(path) if path != '/api/v1/system/restart' else client.post(path)
+    response = client.post(path) if path == '/api/v1/system/restart' else client.get(path)
     assert response.status_code == 503, (path, response.status_code)
+assert client.get('/api/v1/storage/status').status_code == 302
+assert client.post('/api/v1/storage/scan').status_code == 403
 assert client.post('/api/labels/answer', json={}).status_code == 403
+assert client.post('/api/review/event-approve', json={}).status_code == 404
 login = client.get('/login')
 assert login.status_code == 200
 with client.session_transaction() as session:
     token = session['_csrf_token']
 password = json.loads((work.parent.parent / 'local-credentials.json').read_text())['edit_password']
 assert client.post('/login', data={'password': password, '_csrf_token': token}).status_code == 302
-for path in ['/', '/gallery', '/gallery/2026-10-03', '/species']:
+for path in ['/', '/gallery', '/gallery/2026-10-03', '/species', '/admin/review', '/admin/review?day=all&sort=priority', '/storage']:
     response = client.get(path)
     assert response.status_code == 200, (path, response.status_code)
     assert b'Local development' in response.data
@@ -194,14 +197,34 @@ for path in ['/', '/gallery', '/gallery/2026-10-03', '/species']:
         assert b'id="video-feed-fallback"' not in response.data
     assert "connect-src 'self';" in response.headers['Content-Security-Policy']
     assert "frame-src 'none';" in response.headers['Content-Security-Policy']
+    assert "script-src 'self' 'unsafe-inline';" in response.headers['Content-Security-Policy']
+    assert "style-src 'self' 'unsafe-inline';" in response.headers['Content-Security-Policy']
+    assert "font-src 'self';" in response.headers['Content-Security-Policy']
+for path, method in [('/api/review/analyze/test.jpg', 'POST'), ('/api/moderation/bulk/rescan', 'POST'), ('/api/moderation/rescan-jobs/test/status', 'GET'), ('/api/moderation/rescan-proposals/1/apply', 'POST')]:
+    assert client.open(path, method=method).status_code == 404
+assert client.get('/unknown-route').status_code == 404
+assert client.get('/admin/review?layout=legacy').status_code == 404
+assert client.get('/admin/review?diagnostic=1').status_code == 404
+assert client.get('/api/review/modal/bird-event-012345abcdef/999999').status_code == 404
 response = client.post('/api/labels/answer', json={'filename': '20261003_080000_000001.jpg', 'detection_id': 1, 'bbox_quality': 'suitable'}, headers={'X-CSRF-Token': token})
 assert response.status_code == 200, response.text
 with sqlite3.connect(work / 'output/images.db') as conn:
     assert conn.execute("SELECT count(*) FROM human_label_facts WHERE fact_type='bbox_quality' AND answer_value='suitable'").fetchone()[0] == 1
 assert {t.name for t in threading.enumerate()} == before
+headers = {'X-CSRF-Token': token}
+assert client.post('/api/v1/storage/scan', json={'path': '/outside'}, headers=headers).status_code == 400
+assert client.post('/api/v1/storage/scan?path=/outside', headers=headers).status_code == 400
+assert client.get('/api/v1/storage/status').json['status'] == 'idle'
+assert client.post('/api/v1/storage/scan', headers=headers).status_code == 202
+app.extensions['storage_accounting'].wait(10)
+measured = client.get('/api/v1/storage/status').json
+assert measured['status'] == 'complete', measured
+assert measured['result']['database']['records']['images'] == 1
+assert len(measured['history']) == 1
+assert {t.name for t in threading.enumerate()} == before
 from config import get_config
 cfg = get_config()
-assert not cfg['TELEGRAM_ENABLED'] and not cfg['MQTT_ENABLED'] and not cfg['telemetry_enabled'] and not cfg['COMPANION_ENABLED']
+assert not cfg['TELEGRAM_ENABLED'] and not cfg['MQTT_ENABLED'] and not cfg['telemetry_enabled']
 print('isolated-local-app-pass')
 """
     environment = dict(

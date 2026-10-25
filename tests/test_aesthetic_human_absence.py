@@ -94,7 +94,7 @@ def test_auto_picks_respect_human_absence_and_preserve_manual_favorites(
     assert apply_auto_favorites(connection, "2026-01-01", False)["total_tagged"] == 0
 
 
-def test_superseded_image_absence_no_longer_blocks_scoring(
+def test_image_statement_alone_does_not_restore_object_absences(
     connection: sqlite3.Connection,
 ) -> None:
     record_human_answer(
@@ -103,4 +103,4 @@ def test_superseded_image_absence_no_longer_blocks_scoring(
         LabelProvenance("test", "test", "normal_correction", "watchmybirds_ui"),
     )
     rows = fetch_unscored_detections(connection, "2026-01-01")
-    assert {row["detection_id"] for row in rows} == {1, 2, 4, 5}
+    assert {row["detection_id"] for row in rows} == {4, 5}

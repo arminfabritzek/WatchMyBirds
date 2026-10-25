@@ -4,9 +4,12 @@ import secrets
 import time
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 
 from flask import (
     Flask,
+    Response,
+    g,
     request,
     session,
 )
@@ -34,6 +37,7 @@ def invalidate_best_species_cache() -> None:
 
     _best_species_cache["timestamp"] = 0.0
     _best_species_cache["payload"] = None
+    _best_species_cache["generation"] = object()
 
 
 _TICKER_STATS_CACHE_TTL_SECONDS = 60
@@ -43,14 +47,18 @@ _ticker_stats_cache: dict = {"key": None, "timestamp": 0.0, "payload": None}
 _module_logger = logging.getLogger(__name__)
 
 
-def _compute_ticker_dashboard_stats() -> dict:
-
+def _ticker_cache_key() -> tuple[str, float]:
     today_iso = datetime.now().strftime("%Y-%m-%d")
     try:
         threshold = float(get_config()["GALLERY_DISPLAY_THRESHOLD"])
     except Exception:
         threshold = 0.0
-    cache_key = (today_iso, threshold)
+    return today_iso, threshold
+
+
+def _compute_ticker_dashboard_stats() -> dict:
+    cache_key = _ticker_cache_key()
+    today_iso = cache_key[0]
 
     now_ts = time.time()
     if (
@@ -85,7 +93,7 @@ def _compute_ticker_dashboard_stats() -> dict:
                         conn, today_iso, order_by="time"
                     )
                 ]
-                summary = _gc.summarize_observations(today_rows, min_score=threshold)
+                summary = _gc.summarize_observations(today_rows)
                 s = summary["summary"]
                 stats["today_visits"] = int(s.get("total_observations", 0) or 0)
                 stats["today_species_count"] = len(s.get("species_counts", {}) or {})
@@ -151,6 +159,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     project_root = os.path.dirname(os.path.dirname(__file__))
     template_folder = os.path.join(project_root, "templates")
     server = Flask(__name__, template_folder=template_folder)
+    server.extensions["homepage_archive_lock"] = Lock()
 
     Compress(server)
     server.config["COMPRESS_MIMETYPES"] = ["text/html", "application/json"]
@@ -207,9 +216,20 @@ def create_web_interface(detection_manager, system_monitor=None):
     @server.context_processor
     def inject_security_context():
         from web.services import auth_service as _auth
+        from web.services import settings_service, storage_service
 
         if "_csrf_token" not in session:
             session["_csrf_token"] = secrets.token_hex(32)
+
+        if (
+            hasattr(g, "ticker_dashboard_stats")
+            and g.ticker_dashboard_stats.get("total_species") is not None
+        ):
+            _ticker_stats_cache.update(
+                key=_ticker_cache_key(),
+                timestamp=time.time(),
+                payload=g.ticker_dashboard_stats,
+            )
 
         is_authenticated = bool(session.get("authenticated"))
         warn = is_authenticated and _auth.is_default_password()
@@ -219,8 +239,22 @@ def create_web_interface(detection_manager, system_monitor=None):
             "csrf_token": session["_csrf_token"],
             "is_authenticated": is_authenticated,
             "can_moderate": is_authenticated,
+            "photo_deletion_defaults": storage_service.deletion_defaults(),
+            "photo_saving_state": storage_service.saving_state(detection_manager)
+            if is_authenticated
+            else {},
+            "retention_update_notice": (
+                is_authenticated
+                and request.path
+                in {"/", "/gallery", "/species", "/settings", "/admin/review", "/trash"}
+                and settings_service.take_retention_update_notice()
+            ),
             "station_name": str(config.get("STATION_NAME", "")),
-            "ticker_dashboard_stats": _compute_ticker_dashboard_stats(),
+            "ticker_dashboard_stats": (
+                g.ticker_dashboard_stats
+                if hasattr(g, "ticker_dashboard_stats")
+                else _compute_ticker_dashboard_stats()
+            ),
             "footer_commit": _footer_commit,
             "footer_build_date": _footer_build_date,
         }
@@ -266,9 +300,8 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(media_bp)
 
-    from web.blueprints.onvif_ingest import init_onvif_ingest_bp, onvif_ingest_bp
+    from web.blueprints.onvif_ingest import onvif_ingest_bp
 
-    init_onvif_ingest_bp(detection_manager=detection_manager)
     server.register_blueprint(onvif_ingest_bp)
 
     from web.blueprints.cameras import cameras_bp, init_cameras_bp
@@ -307,11 +340,6 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(review_bp)
 
-    from web.blueprints.inbox import inbox_bp, init_inbox_bp
-
-    init_inbox_bp(detection_manager)
-    server.register_blueprint(inbox_bp)
-
     from web.blueprints.analytics import analytics_bp
 
     server.register_blueprint(analytics_bp)
@@ -328,17 +356,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     from utils.deploy_info import read_build_metadata
 
     _build_meta = read_build_metadata()
-
-    from web.blueprints.user_groundtruth_export import (
-        init_user_groundtruth_export_bp,
-        user_groundtruth_export_bp,
-    )
-
-    init_user_groundtruth_export_bp(
-        output_dir=output_dir,
-        app_version=str(_build_meta.get("app_version") or ""),
-    )
-    server.register_blueprint(user_groundtruth_export_bp)
 
     from web.blueprints.canonical_dataset import (
         canonical_dataset_bp,
@@ -363,44 +380,9 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(retention_bp)
 
-    try:
-        from web.blueprints.companion import (
-            companion_bp,
-            init_companion_bp,
-        )
-        from web.services.companion.factory import build_inference_client
-        from web.services.companion.recorder import CompanionRecorder
-        from web.services.companion.service import CompanionService
-        from web.services.compute_lease_service import init_compute_lease_service
+    from web.blueprints.storage import storage_bp
 
-        lease_service = init_compute_lease_service(detection_manager)
-        companion_client = build_inference_client(
-            config,
-            model_base_path=str(config.get("MODEL_BASE_PATH", "./data/models")),
-        )
-        companion_recorder = CompanionRecorder(base_dir=output_dir)
-        companion_service = CompanionService(
-            client=companion_client,
-            recorder=companion_recorder,
-            lease=lease_service,
-            enabled=bool(config.get("COMPANION_ENABLED", False)),
-            pause_detection=bool(
-                config.get("COMPANION_PAUSE_DETECTION_DURING_INFERENCE", True)
-            ),
-            timeout_s=float(config.get("COMPANION_INFERENCE_TIMEOUT_S", 60)),
-        )
-        init_companion_bp(companion_service)
-        server.register_blueprint(companion_bp)
-        backend = str(config.get("COMPANION_INFERENCE_BACKEND", "llama_cpp"))
-        model_id = getattr(companion_client, "model_id", "<unconfigured>")
-        logger.info(
-            "Companion v1 backend registered (enabled=%s, backend=%s, model=%s)",
-            companion_service.enabled,
-            backend,
-            model_id,
-        )
-    except Exception as exc:
-        logger.error("Companion v1 backend registration failed: %s", exc, exc_info=True)
+    server.register_blueprint(storage_bp)
 
     from web.blueprints.index import index_bp, init_index_bp
 
@@ -423,7 +405,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         "/api/v1/cameras",
         "/healthz",
         "/logs",
-        "/api/inbox/status",
         "/api/v1/system/backup/status",
         "/api/v1/system/backup/format/status",
         "/api/v1/system/backup/format/devices",
@@ -432,6 +413,16 @@ def create_web_interface(detection_manager, system_monitor=None):
         "/api/v1/models/detector",
         "/api/v1/models/classifier",
     )
+
+    @server.after_request
+    def record_usage(response: "Response") -> "Response":
+        from web.services.telemetry_service import record_web_response
+
+        record_web_response(
+            request.endpoint, request.method, response.status_code,
+            bool(session.get("authenticated")),
+        )
+        return response
 
     @server.after_request
     def log_request(response):
@@ -464,9 +455,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         go2rtc_origin = f"http://{host}:1984"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self'; "
             "img-src 'self' data: blob:; "
             f"connect-src 'self' {go2rtc_origin}; "
             f"frame-src 'self' {go2rtc_origin}; "

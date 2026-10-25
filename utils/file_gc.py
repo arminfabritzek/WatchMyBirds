@@ -261,6 +261,27 @@ def hard_delete_detections(
             total_orig_refs[op] = count
             total_opt_refs[opp] = count
 
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_objects'"
+        ).fetchone():
+            manual_refs = conn.execute(
+                f"""
+                SELECT image_filename, COUNT(*) AS cnt FROM manual_objects
+                WHERE status = 'active' AND image_filename IN ({placeholders})
+                GROUP BY image_filename
+                """,
+                list(unique_orig_names),
+            )
+            for ref in manual_refs:
+                original = pm.get_original_path(ref["image_filename"])
+                optimized = pm.get_derivative_path(ref["image_filename"], "optimized")
+                total_orig_refs[original] = (
+                    total_orig_refs.get(original, 0) + ref["cnt"]
+                )
+                total_opt_refs[optimized] = (
+                    total_opt_refs.get(optimized, 0) + ref["cnt"]
+                )
+
     # Thumbnail global refs (basename-keyed in DB → resolve via map)
     if thumb_name_to_path:
         thumb_names = list(thumb_name_to_path.keys())
@@ -363,143 +384,6 @@ def hard_delete_detections(
         "count": len(affected_ids),
         "detection_ids": affected_ids,
         "rows_deleted": len(affected_ids),
-        "files_deleted": files_deleted,
-        "files_missing": files_missing,
-        "files_failed": files_failed,
-    }
-
-
-def hard_delete_images(
-    conn,
-    filenames: Iterable[str] | None = None,
-    delete_all: bool = False,
-    dry_run: bool = False,
-) -> dict[str, Any]:
-    """
-    Permanently deletes no_bird images and associated files.
-    Order: resolve paths -> delete files -> delete DB rows.
-
-    Safeguard: Only operates on images where review_status = 'no_bird'.
-
-    Args:
-        conn: Database connection
-        filenames: Specific filenames to delete (None for delete_all)
-        delete_all: If True and filenames is None, deletes ALL no_bird images
-        dry_run: If True, returns what would be deleted without actually deleting
-
-    Returns:
-        dict with keys: purged, rows_deleted, files_deleted, files_missing, files_failed
-    """
-    if not filenames and not delete_all:
-        return {
-            "purged": False,
-            "rows_deleted": 0,
-            "files_deleted": 0,
-            "files_missing": 0,
-            "files_failed": 0,
-        }
-
-    # 1. Fetch candidate images from DB (only no_bird status)
-    if filenames:
-        names = list(filenames)
-        placeholders = ",".join("?" for _ in names)
-        cur = conn.execute(
-            f"""
-            SELECT filename, timestamp
-            FROM images
-            WHERE filename IN ({placeholders}) AND review_status = 'no_bird'
-            """,
-            names,
-        )
-    else:
-        cur = conn.execute(
-            "SELECT filename, timestamp FROM images WHERE review_status = 'no_bird'"
-        )
-
-    rows = cur.fetchall()
-    affected_filenames = [row["filename"] for row in rows]
-
-    if dry_run:
-        return {
-            "purged": False,
-            "would_purge": len(affected_filenames),
-            "filenames": affected_filenames,
-        }
-
-    if not affected_filenames:
-        return {
-            "purged": True,
-            "rows_deleted": 0,
-            "files_deleted": 0,
-            "files_missing": 0,
-            "files_failed": 0,
-        }
-
-    cfg = get_config()
-    output_dir = Path(cfg["OUTPUT_DIR"]).resolve()
-    pm = get_path_manager(output_dir)
-
-    # 2. Identify files to delete for each image
-    files_to_delete: set[Path] = set()
-
-    for filename in affected_filenames:
-        # Original image
-        files_to_delete.add(pm.get_original_path(filename))
-
-        # Optimized derivative
-        files_to_delete.add(pm.get_derivative_path(filename, "optimized"))
-
-        # Preview thumbnail (used in Review Queue)
-        files_to_delete.add(pm.get_preview_thumb_path(filename))
-
-    # 3. Check for any detection thumbnails tied to these images
-    # (In case a no_bird image had detections that were later removed/rejected)
-    if affected_filenames:
-        placeholders = ",".join("?" for _ in affected_filenames)
-        det_cur = conn.execute(
-            f"""
-            SELECT thumbnail_path
-            FROM detections
-            WHERE image_filename IN ({placeholders}) AND thumbnail_path IS NOT NULL
-            """,
-            affected_filenames,
-        )
-        for det_row in det_cur:
-            thumb_name = det_row["thumbnail_path"]
-            if thumb_name:
-                thumb_path = pm.get_derivative_path(thumb_name, "thumb")
-                files_to_delete.add(thumb_path)
-
-    # 4. Execute file deletions
-    files_deleted = 0
-    files_missing = 0
-    files_failed = 0
-
-    for abs_path in sorted(list(files_to_delete)):
-        result = _safe_delete(abs_path, output_dir)
-        if result == "deleted":
-            files_deleted += 1
-        elif result == "missing":
-            files_missing += 1
-        elif result == "error":
-            files_failed += 1
-
-    # 5. Delete database records
-    # Note: CASCADE from images -> detections -> classifications should handle related records
-    placeholders = ",".join("?" for _ in affected_filenames)
-    conn.execute(
-        f"DELETE FROM images WHERE filename IN ({placeholders})", affected_filenames
-    )
-    conn.commit()
-
-    logger.info(
-        f"hard_delete_images: {len(affected_filenames)} images deleted, "
-        f"{files_deleted} files removed, {files_missing} missing, {files_failed} failed"
-    )
-
-    return {
-        "purged": True,
-        "rows_deleted": len(affected_filenames),
         "files_deleted": files_deleted,
         "files_missing": files_missing,
         "files_failed": files_failed,

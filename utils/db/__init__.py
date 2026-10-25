@@ -11,15 +11,6 @@ Usage:
     from utils.db.detections import insert_detection
 """
 
-# Analytics Operations
-from utils.db.analytics import (
-    fetch_all_detection_times,
-    fetch_all_time_daily_counts,
-    fetch_analytics_summary,
-    fetch_simulation_data,
-    fetch_species_timestamps,
-)
-
 # Connection and Schema
 from utils.db.connection import (
     DB_FILENAME,
@@ -30,15 +21,11 @@ from utils.db.connection import (
     closing_connection,
     get_connection,
     get_or_create_default_source,
-    get_or_create_user_import_source,
 )
 
 # Detection Operations
 from utils.db.detections import (
-    apply_species_override,
-    apply_species_override_many,
     fetch_active_detection_ids_in_date_range,
-    fetch_active_detection_selection_by_source_type,
     fetch_active_detection_selection_in_date_range,
     fetch_bbox_centers,
     fetch_count_last_24h,
@@ -52,7 +39,6 @@ from utils.db.detections import (
     fetch_random_favorites,
     fetch_sibling_detections,
     fetch_species_story_board_candidates,
-    fetch_trash_candidate_selection_by_source_type,
     fetch_trash_candidate_selection_in_date_range,
     insert_classification,
     insert_detection,
@@ -60,27 +46,17 @@ from utils.db.detections import (
     purge_detections,
     reject_detections,
     restore_detections,
-    set_manual_bbox_review,
 )
 
 # Image Operations
 from utils.db.images import (
-    check_image_exists_by_hash,
     insert_image,
     update_downloaded_timestamp,
 )
 
-# Inbox ingest audit log
-from utils.db.inbox_ingest_events import insert_inbox_ingest_event
-
 # Reject-audit log (metadata-only, no image/crop/detection row)
-from utils.db.reject_audit import (
-    insert_reject_audit,
-)
-
 # Review Queue Operations
 from utils.db.review_queue import (
-    delete_no_bird_images,
     delete_orphan_images,
     fetch_orphan_count,
     fetch_orphan_images,
@@ -90,8 +66,6 @@ from utils.db.review_queue import (
     fetch_review_queue_image,
     fetch_review_queue_images,
     fetch_review_queue_item_by_identity,
-    restore_no_bird_images,
-    update_review_status,
 )
 
 # Trash Operations
@@ -108,24 +82,18 @@ __all__ = [
     "get_connection",
     "_init_schema",
     "get_or_create_default_source",
-    "get_or_create_user_import_source",
     "_ensure_column",
     "_ensure_column_on_table",
     # Images
     "insert_image",
-    "check_image_exists_by_hash",
     "update_downloaded_timestamp",
     # Detections
     "insert_detection",
     "insert_classification",
     "is_detection_visible_in_gallery",
-    "apply_species_override",
-    "apply_species_override_many",
     "fetch_active_detection_ids_in_date_range",
     "fetch_active_detection_selection_in_date_range",
-    "fetch_active_detection_selection_by_source_type",
     "fetch_trash_candidate_selection_in_date_range",
-    "fetch_trash_candidate_selection_by_source_type",
     "fetch_bbox_centers",
     "fetch_detections_for_gallery",
     "fetch_gallery_total_species_count",
@@ -141,18 +109,10 @@ __all__ = [
     "reject_detections",
     "restore_detections",
     "purge_detections",
-    "set_manual_bbox_review",
     # Trash
     "fetch_trash_items",
     "fetch_trash_count",
     # Reject-audit log
-    "insert_reject_audit",
-    # Analytics
-    "fetch_all_time_daily_counts",
-    "fetch_all_detection_times",
-    "fetch_species_timestamps",
-    "fetch_analytics_summary",
-    "fetch_simulation_data",
     # Review Queue
     "fetch_orphan_images",
     "delete_orphan_images",
@@ -163,9 +123,4 @@ __all__ = [
     "fetch_review_queue_item_by_identity",
     "fetch_recent_review_species",
     "fetch_review_queue_count",
-    "restore_no_bird_images",
-    "delete_no_bird_images",
-    "update_review_status",
-    # Inbox ingest audit log
-    "insert_inbox_ingest_event",
 ]

@@ -10,24 +10,24 @@ def _read_text(rel_path: str) -> str:
 
 
 def test_stream_tiles_link_to_species_overview():
-    content = _read_text("templates/stream.html")
+    content = _read_text("templates/components/homepage_species_board.html")
 
     assert "/species/overview?species_key=" in content
     assert 'data-bs-target="#modal-summary-' not in content
 
 
 def test_stream_today_visitors_title_links_to_today_subgallery():
-    content = _read_text("templates/stream.html")
+    content = _read_text("templates/components/homepage_species_board.html")
 
     assert "href=\"{{ url_for('gallery.subgallery', date=today_iso) }}\"" in content
     assert '<a class="quiet-preview__all" href="/gallery">Gallery</a>' in content
 
 
 def test_stream_today_visitors_tiles_focus_matching_detection_on_subgallery():
-    content = _read_text("templates/stream.html")
+    content = _read_text("templates/components/homepage_species_board.html")
 
     assert (
-        "href=\"{{ url_for('gallery.subgallery', date=today_iso, focus=det.detection_id) }}\""
+        "href=\"{{ url_for('gallery.subgallery', date=today_iso, focus=frame.detection_id) }}\""
         in content
     )
 

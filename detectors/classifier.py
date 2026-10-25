@@ -2,7 +2,6 @@ import os
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 from PIL import Image
 
 from config import get_config
@@ -13,6 +12,7 @@ from detectors.cls_config import (
 )
 from logging_config import get_logger
 from utils.model_downloader import ensure_model_files, load_latest_identifier
+from utils.onnx_runtime import onnxruntime as ort
 
 logger = get_logger(__name__)
 

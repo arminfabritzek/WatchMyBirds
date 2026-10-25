@@ -17,6 +17,7 @@ from typing import Any
 
 import psutil
 
+from core.technical_storage import LOG_FILE_BYTES
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -306,6 +307,10 @@ class SystemMonitor:
 
     def _append_csv_row(self, sample: dict[str, Any]) -> None:
         """Append one sample row and fsync it."""
+        if self.csv_path.exists() and self.csv_path.stat().st_size >= LOG_FILE_BYTES:
+            self.csv_path.replace(self.csv_path.with_suffix(".csv.1"))
+            with self.csv_path.open("w", newline="", encoding="utf-8") as stream:
+                csv.writer(stream).writerow(CSV_HEADERS)
         with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(
@@ -344,9 +349,12 @@ class SystemMonitor:
                 for fd in fds:
                     try:
                         path = os.readlink(f"/proc/self/fd/{fd}")
-                        f.write(f"{fd} -> {path}\n")
+                        entry = f"{fd} -> {path}\n"
                     except Exception:
-                        f.write(f"{fd} -> (unknown)\n")
+                        entry = f"{fd} -> (unknown)\n"
+                    if f.tell() + len(entry.encode("utf-8")) > 1024**2:
+                        break
+                    f.write(entry)
             logger.warning(f"Dumped {count} FDs to {dump_file}")
         except Exception as e:
             logger.error(f"Failed to dump FDs: {e}")

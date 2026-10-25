@@ -3,7 +3,7 @@
 Nightly aesthetic auto-tagger for WatchMyBirds.
 
 Computes a CLIP facing-camera score and selects automatic gallery candidates.
-Human bird-absence answers exclude their image or object from both steps.
+Object bird-absence answers exclude the object from both steps.
 The score measures composition, not bird presence or species correctness.
 
 In production this runs in-process via the app's daemon-thread scheduler
@@ -32,7 +32,10 @@ import sqlite3
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from core.technical_storage import LOG_BACKUPS, LOG_FILE_BYTES
 
 # Redirect HF cache to a writable location BEFORE huggingface_hub gets
 # imported transitively via open_clip. huggingface_hub.constants reads
@@ -105,7 +108,7 @@ TAG_UNKNOWN_SPECIES = False
 # - 0.10 is calibrated against the current live CLIP-rescore
 #   distribution: every manual-favorited pick scores at or above it,
 #   so the floor doesn't lose preferred picks while still cutting the
-#   candidate pool roughly in half. Should track TELEGRAM_MIN_AESTHETIC_SCORE.
+#   candidate pool roughly in half.
 MIN_SCORE_FOR_TAG = 0.10
 
 # Detections must have passed all upstream Pipeline-Stages before the
@@ -129,9 +132,8 @@ TOP_N_PER_SPECIES_PER_DAY = 3
 # differently (eye-visible side view = good, eye-hidden rear view = bad).
 # Both prompts retain a sharpness term so a sharp 3/4 view ranks above
 # a blurry frontal one. Existing per-species AUCs from earlier validation
-# runs are no longer directly applicable; expect MIN_SCORE_FOR_TAG and
-# TELEGRAM_MIN_AESTHETIC_SCORE to need re-calibration once a few days
-# of fresh picks are in.
+# runs are no longer directly applicable; expect MIN_SCORE_FOR_TAG to need
+# re-calibration once a few days of fresh picks are in.
 CLIP_MODEL_NAME = "ViT-B-32"
 CLIP_PRETRAINED = "laion2b_s34b_b79k"
 CLIP_PROMPT_POSITIVE = "a sharp, well-focused close-up portrait of a bird with its eye visible and its head turned toward the camera"
@@ -159,7 +161,9 @@ def setup_logging(verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
-            logging.FileHandler(LOG_PATH),
+            RotatingFileHandler(
+                LOG_PATH, maxBytes=LOG_FILE_BYTES, backupCount=LOG_BACKUPS
+            ),
             logging.StreamHandler(sys.stdout),
         ],
     )
@@ -172,8 +176,7 @@ _NO_HUMAN_BIRD_ABSENCE = """
 AND NOT EXISTS (
     SELECT 1 FROM current_human_label_facts human
     WHERE human.fact_type = 'bird_presence' AND human.answer_value = 'absent'
-      AND ((human.scope = 'image' AND human.image_filename = d.image_filename)
-        OR (human.scope = 'object' AND human.detection_id = d.detection_id))
+      AND human.scope = 'object' AND human.detection_id = d.detection_id
 )
 """
 
@@ -481,7 +484,7 @@ def pick_device() -> str:
         if torch.cuda.is_available():
             return "cuda"
     except ImportError:
-        # torch is an optional extra; nightly script can still log on CPU.
+        # Leave missing-dependency reporting to the worker's startup check.
         pass
     return "cpu"
 
@@ -600,7 +603,7 @@ def main_with_args(argv: list[str] | None = None) -> int:
         torch_threads = 2
     if torch_threads > 0:
         try:
-            import torch  # noqa: WPS433 — local so the slim-image fallback path stays import-safe
+            import torch
 
             torch.set_num_threads(torch_threads)
             log.info(

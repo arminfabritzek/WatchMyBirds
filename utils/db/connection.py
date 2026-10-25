@@ -28,6 +28,7 @@ def _get_db_path() -> Path:
 def get_connection() -> sqlite3.Connection:
     global _schema_initialized_paths
     db_path = _get_db_path()
+    existed_before_setup = db_path.exists()
     conn = sqlite3.connect(db_path, check_same_thread=False)
     # busy_timeout MUST be the very first PRAGMA on every new connection.
     # Every subsequent statement (`journal_mode=WAL`, `synchronous=NORMAL`,
@@ -62,7 +63,7 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA cache_size=100000;")
     conn.execute("PRAGMA optimize=0x10002;")
     if db_path not in _schema_initialized_paths:
-        _init_schema(conn)
+        _init_schema(conn, existing_installation=existed_before_setup)
         _schema_initialized_paths.add(db_path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -99,7 +100,9 @@ def closing_connection():
         conn.close()
 
 
-def _init_schema(conn: sqlite3.Connection) -> None:
+def _init_schema(
+    conn: sqlite3.Connection, *, existing_installation: bool = False
+) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS images (
             filename TEXT PRIMARY KEY,
@@ -255,14 +258,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     #   Companion metric so consumers can tell "blur" from "underexposed".
     _ensure_column_on_table(conn, "detections", "sharpness_score", "REAL")
     _ensure_column_on_table(conn, "detections", "crop_brightness", "REAL")
-    # quality_gallery_ok: station-adaptive gallery quality floor. 1 = show
-    # in gallery thumbnails, 0 = quality-floored out (bottom-percentile by
-    # sharpness for THIS station). Written by the nightly sharpness job's
-    # eligibility step. Orthogonal to is_gallery_eligible (the aesthetic
-    # tagger's AI-pick whitelist): a crop can be a non-AI-pick yet visible,
-    # or an AI-pick yet quality-floored. NULL = unscored → treated as
-    # "show" via COALESCE in the gallery visibility clause, so a station
-    # mid-backfill never goes dark. Never deletes, never touches export.
+    # The nightly sharpness percentile ranks photos; it never changes admission.
     _ensure_column_on_table(conn, "detections", "quality_gallery_ok", "INTEGER")
     conn.execute(
         """
@@ -429,73 +425,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
     )
 
-    # User-groundtruth export batches — book-keeping for the consolidated
-    # user-groundtruth export table.
-    # Each row records one export run: which time window it covered,
-    # how many rows per bucket, when it was built. ``until_at`` becomes
-    # the next batch's natural ``since_at`` so consecutive batches
-    # don't double-count user actions.
-    #
-    # Each row is per-batch state: a manifest of what was shipped.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS export_batches (
-            batch_id TEXT PRIMARY KEY,
-            built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            since_at TEXT,
-            until_at TEXT NOT NULL,
-            hard_negatives_count INTEGER NOT NULL DEFAULT 0,
-            confirmed_positives_count INTEGER NOT NULL DEFAULT 0,
-            species_relabels_count INTEGER NOT NULL DEFAULT 0,
-            favorites_count INTEGER NOT NULL DEFAULT 0,
-            frame_integrity_dropped_count INTEGER NOT NULL DEFAULT 0,
-            exporter_version TEXT NOT NULL,
-            wmb_app_version TEXT,
-            notes TEXT
-        );
-    """)
-    # Additive migrations for pre-existing DBs (the CREATE TABLE above
-    # is no-op once the table exists; ALTER adds the new columns).
-    _ensure_column_on_table(
-        conn,
-        "export_batches",
-        "favorites_count",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
-    _ensure_column_on_table(
-        conn,
-        "export_batches",
-        "frame_integrity_dropped_count",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_export_batches_built_at ON export_batches(built_at DESC);"
-    )
-
-    # Operator-reviewed export quarantine. This is deliberately
-    # non-destructive: it does not delete images or detections, it only
-    # prevents known-unsafe frames/detections from entering the
-    # user-groundtruth export.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS groundtruth_export_exclusions (
-            exclusion_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scope TEXT NOT NULL CHECK(scope IN ('image', 'detection')),
-            image_filename TEXT NOT NULL,
-            detection_id INTEGER,
-            reason TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            created_by TEXT NOT NULL DEFAULT 'dry_run',
-            released_at TEXT
-        );
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_image "
-        "ON groundtruth_export_exclusions(image_filename, released_at);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_detection "
-        "ON groundtruth_export_exclusions(detection_id, released_at);"
-    )
-
     # Seen-species log for the "new species only" Telegram mode. One row per
     # species the operator has ever been notified about (by species_key, the
     # same Latin / OD-class identifier the rest of the stack uses). The mode
@@ -512,19 +441,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         );
     """)
 
-    # Reject-audit log: metadata-only record of detections the classifier
-    # routed to ``decision_level='reject'`` (top-1 below review threshold,
-    # no genus rescue). The detection itself is not persisted — no image,
-    # no crop, no detections row, no images row when the frame had only
-    # rejects. This keeps the FP-cluster signal
-    # (bbox position + raw_species_name + counts) auditable without
-    # filling disk and the Unclear-tab with non-bird crops from static
-    # background objects (e.g. tree-branch FPs).
-    #
-    # No FK to images/detections: by design, the parent rows don't exist
-    # for reject-only frames. The frame is identified by its filename
-    # stamp (``frame_timestamp`` = ``YYYYMMDD_HHMMSS_ffffff``) so the
-    # operator can cross-reference logs even though no file was written.
+    # Kept only so older databases remain schema-compatible.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS reject_audit (
             audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -552,17 +469,123 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_reject_audit_raw_species ON reject_audit(raw_species_name);"
     )
-    # Composite bbox index supports the static-FP cluster detection
-    # query ("which bbox positions cluster across reject rows?").
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_reject_audit_bbox ON reject_audit(bbox_x, bbox_y);"
     )
 
+    _ensure_column_on_table(conn, "detections", "trashed_at", "TEXT")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS _migration_state (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_detections_thumbnail_filename "
+        "ON detections(thumbnail_path, image_filename)"
+    )
     _init_human_label_schema(conn)
+    _init_training_export_schema(conn)
     _init_station_event_review_schema(conn)
     _init_station_runtime_schema(conn)
 
+    from utils.db.observations import recreate_observations_view
+
+    recreate_observations_view(conn)
+
     conn.commit()
+    _retire_reject_audit(conn)
+    from core.technical_storage import prune_samples
+
+    for table in ("station_runtime_samples", "weather_logs"):
+        prune_samples(conn, table)
+    conn.commit()
+    try:
+        migrate_human_answers(conn, existing_installation=existing_installation)
+        _initialize_automatic_deletion(
+            conn, existing_installation=existing_installation
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Human-answer migration failed; deletion remains disabled"
+        )
+
+
+def _retire_reject_audit(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        marker = "retire_reject_audit_v1"
+        if not conn.execute(
+            "SELECT 1 FROM _migration_state WHERE key=?", (marker,)
+        ).fetchone():
+            conn.execute("DELETE FROM reject_audit")
+            conn.execute(
+                "INSERT INTO _migration_state VALUES (?,datetime('now'))", (marker,)
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _initialize_automatic_deletion(
+    conn: sqlite3.Connection, *, existing_installation: bool
+) -> None:
+    from datetime import UTC, datetime
+
+    from utils.settings import load_settings_yaml, save_settings_yaml
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        marker = "automatic_deletion_defaults_v1"
+        if conn.execute(
+            "SELECT 1 FROM _migration_state WHERE key=?", (marker,)
+        ).fetchone():
+            conn.rollback()
+            return
+        cfg = get_config()
+        stamp = datetime.now(UTC).isoformat()
+        settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
+        defaults = {
+            "AUTOMATIC_DELETION_ENABLED": not existing_installation,
+            "AUTOMATIC_DELETION_ENABLED_AT": None if existing_installation else stamp,
+            "OLD_BIRD_PHOTOS": "keep_previews",
+        }
+        save_settings_yaml({**settings, **defaults}, str(cfg["OUTPUT_DIR"]))
+        cfg.update(defaults)
+        conn.execute("INSERT INTO _migration_state VALUES (?,?)", (marker, stamp))
+        if existing_installation:
+            conn.execute(
+                "INSERT OR IGNORE INTO _migration_state VALUES ('human_answers_retention_notice',?)",
+                (stamp,),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _init_training_export_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS labeling_exports (
+            export_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            received_at TEXT,
+            bundle_json TEXT NOT NULL,
+            media_map_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS labeling_export_members (
+            export_id TEXT NOT NULL REFERENCES labeling_exports(export_id),
+            image_filename TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('subject', 'manual')),
+            object_id INTEGER NOT NULL,
+            revision_json TEXT NOT NULL,
+            PRIMARY KEY(export_id, kind, object_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_labeling_export_member_revision
+        ON labeling_export_members(kind, object_id, revision_json);
+        CREATE INDEX IF NOT EXISTS idx_labeling_export_member_image
+        ON labeling_export_members(image_filename);
+    """)
 
 
 def _init_human_label_schema(conn: sqlite3.Connection) -> None:
@@ -631,6 +654,16 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS bird_add_requests (
+            request_id TEXT PRIMARY KEY,
+            image_filename TEXT NOT NULL REFERENCES images(filename) ON DELETE CASCADE,
+            payload_json TEXT NOT NULL,
+            result_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS manual_object_requests (
             request_id TEXT PRIMARY KEY,
             manual_object_id INTEGER NOT NULL,
@@ -684,6 +717,11 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
                 ON DELETE CASCADE
         );
         """
+    )
+    # Object-scope subjects also need image lookup for bounded storage batches.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_label_subjects_filename "
+        "ON label_subjects(image_filename)"
     )
     conn.execute(
         """
@@ -890,9 +928,10 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
         END;
         """
     )
+    conn.execute("DROP VIEW IF EXISTS current_human_label_facts")
     conn.execute(
         """
-        CREATE VIEW IF NOT EXISTS current_human_label_facts AS
+        CREATE VIEW current_human_label_facts AS
         SELECT
             f.fact_id,
             f.schema_version,
@@ -937,13 +976,7 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
 
 
 def _init_station_event_review_schema(conn: sqlite3.Connection) -> None:
-    """Install append-only biological event assessments.
-
-    Human-label facts remain the authority for object presence and species
-    identity.  This table records the additional event-level statement that
-    cannot be projected from those independent axes: whether the reviewed
-    evidence is diagnostically usable for the station report.
-    """
+    """Retain the unused event-assessment schema for existing databases."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS station_event_reviews (
@@ -1046,23 +1079,6 @@ def get_or_create_default_source(conn: sqlite3.Connection) -> int:
     return cur.lastrowid
 
 
-def get_or_create_user_import_source(conn: sqlite3.Connection) -> int:
-    """Gets the ID of the 'User Import' source, or creates it if missing."""
-    row = conn.execute(
-        "SELECT source_id FROM sources WHERE name='User Import'"
-    ).fetchone()
-    if row:
-        return row[0]
-
-    # Create if not exists
-    cur = conn.execute(
-        "INSERT INTO sources (name, type) VALUES (?, ?)",
-        ("User Import", "folder_upload"),
-    )
-    conn.commit()
-    return cur.lastrowid
-
-
 def _ensure_column(conn: sqlite3.Connection, column: str, coltype: str) -> None:
     _ensure_column_on_table(conn, "images", column, coltype)
 
@@ -1141,3 +1157,348 @@ def _ensure_column_on_table(
             "CREATE INDEX IF NOT EXISTS idx_images_content_hash ON images(content_hash);"
         )
         conn.commit()
+
+
+HUMAN_ANSWERS_MIGRATION = "human_answer_facts_v1"
+
+
+def human_answers_migrated(conn: sqlite3.Connection) -> bool:
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_migration_state'"
+    ).fetchone():
+        return False
+    return (
+        conn.execute(
+            "SELECT 1 FROM _migration_state WHERE key=?", (HUMAN_ANSWERS_MIGRATION,)
+        ).fetchone()
+        is not None
+    )
+
+
+def migrate_human_answers(
+    conn: sqlite3.Connection, *, existing_installation: bool = False
+) -> dict[str, int]:
+    """Carry historical answers over atomically; never resurrect a withdrawn axis."""
+    import json
+    from collections import Counter
+    from dataclasses import replace
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from core.human_label_core import (
+        LabelProvenance,
+        _derived_source_ref,
+        append_fact,
+        ensure_image_subject,
+        ensure_object_subject,
+        species_review_state,
+    )
+    from detectors.services.decision_policy_service import DecisionPolicyService
+
+    if human_answers_migrated(conn):
+        return {}
+    previous_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    counts: Counter[str] = Counter()
+    stamp = datetime.now(UTC).isoformat()
+    provenance = LabelProvenance(
+        installation_id="legacy",
+        app_version="unknown",
+        context="normal_correction",
+        source_kind="watchmybirds_migration",
+        source_ref="migration:human-answers",
+        created_at=stamp,
+    )
+    policy = DecisionPolicyService()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if human_answers_migrated(conn):
+            conn.rollback()
+            return {}
+
+        def history(subject: int, axis: str) -> bool:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM human_label_facts WHERE subject_id=? AND fact_type=? LIMIT 1",
+                    (subject, axis),
+                ).fetchone()
+                is not None
+            )
+
+        def retract(fact: sqlite3.Row) -> None:
+            append_fact(
+                conn,
+                subject_id=fact["subject_id"],
+                fact_type=fact["fact_type"],
+                answer_value=None,
+                assertion_state="retracted",
+                provenance=provenance,
+            )
+            counts["withdrawn_facts"] += 1
+
+        detections = conn.execute(
+            """SELECT d.*,
+            (SELECT cls_class_name FROM classifications c WHERE c.detection_id=d.detection_id AND c.rank=1) AS model_species
+            FROM detections d JOIN images i ON i.filename=d.image_filename ORDER BY d.detection_id"""
+        ).fetchall()
+        # A withdrawn contradictory absence still explains an old rejection.
+        absent_ids = {
+            row[0]
+            for row in conn.execute(
+                "SELECT detection_id FROM current_human_label_facts WHERE scope='object' AND fact_type='bird_presence' AND answer_value='absent'"
+            )
+        }
+        conflict_objects: set[int] = set()
+        blocked_species: set[int] = set()
+        blocked_images: set[str] = set()
+        # Resolve every image contradiction before importing either legacy axis.
+        image_absences = conn.execute(
+            """SELECT i.filename, f.* FROM images i
+            LEFT JOIN current_human_label_facts f ON f.image_filename=i.filename
+                AND f.scope='image' AND f.fact_type='bird_presence'
+            WHERE f.answer_value='absent' OR (i.review_status='no_bird' AND NOT EXISTS (
+                SELECT 1 FROM human_label_facts h JOIN label_subjects s USING(subject_id)
+                WHERE s.scope='image' AND s.image_filename=i.filename AND h.fact_type='bird_presence'
+            ))"""
+        ).fetchall()
+        for image_fact in image_absences:
+            filename = image_fact["filename"]
+            positive_ids = {
+                fact[0]
+                for fact in conn.execute(
+                    """SELECT DISTINCT detection_id FROM current_human_label_facts
+                    WHERE image_filename=? AND scope='object' AND (
+                        (fact_type='bird_presence' AND answer_value='present') OR
+                        (fact_type='species_identity' AND answer_value IN ('confirmed','corrected','unknown'))
+                    )""",
+                    (filename,),
+                )
+            }
+            legacy_ids = {
+                row[0]
+                for row in conn.execute(
+                    """SELECT d.detection_id FROM detections d WHERE d.image_filename=?
+                    AND ((d.species_source='manual' AND COALESCE(d.manual_species_override,'')!='')
+                        OR d.species_source='manual_unknown')
+                    AND NOT EXISTS (SELECT 1 FROM human_label_facts f JOIN label_subjects s USING(subject_id)
+                        WHERE s.detection_id=d.detection_id AND f.fact_type='species_identity')""",
+                    (filename,),
+                )
+            }
+            manual_count = conn.execute(
+                "SELECT COUNT(*) FROM manual_objects WHERE image_filename=? AND status='active'",
+                (filename,),
+            ).fetchone()[0]
+            if not (positive_ids or legacy_ids or manual_count):
+                continue
+            blocked_images.add(filename)
+            blocked_species.update(legacy_ids)
+            if image_fact["fact_id"] is not None:
+                retract(image_fact)
+                counts["image_object_conflicts"] += len(positive_ids | legacy_ids)
+                counts["image_manual_conflicts"] += manual_count
+                for did in positive_ids | legacy_ids:
+                    conflict_objects.add(did)
+                    for fact in conn.execute(
+                        """SELECT * FROM current_human_label_facts WHERE detection_id=?
+                        AND fact_type IN ('bird_presence','species_identity')""",
+                        (did,),
+                    ).fetchall():
+                        retract(fact)
+            else:
+                counts["legacy_conflicts"] += len(legacy_ids)
+                counts["legacy_object_conflicts"] += len(positive_ids)
+                counts["legacy_manual_conflicts"] += manual_count
+                conflict_objects.update(legacy_ids)
+            conflict_objects.update(
+                row[0]
+                for row in conn.execute(
+                    """SELECT d.detection_id FROM detections d WHERE d.image_filename=?
+                    AND NOT EXISTS (SELECT 1 FROM current_human_label_facts f
+                        WHERE f.detection_id=d.detection_id AND f.fact_type='bird_presence')""",
+                    (filename,),
+                )
+            )
+        for row in detections:
+            did = row["detection_id"]
+            species_history = (
+                conn.execute(
+                    """SELECT 1 FROM human_label_facts f JOIN label_subjects s USING(subject_id)
+                WHERE s.detection_id=? AND f.fact_type='species_identity' LIMIT 1""",
+                    (did,),
+                ).fetchone()
+                is not None
+            )
+            source = row["species_source"]
+            old_species = row["manual_species_override"]
+            legacy_species = bool(old_species) or source in {
+                "manual",
+                "manual_unknown",
+                "manual_wrong",
+            }
+            needs_subject = legacy_species or row["manual_bbox_review"] in {
+                "correct",
+                "wrong",
+            }
+            subject = ensure_object_subject(conn, did) if needs_subject else None
+            if subject is not None:
+                if did not in blocked_species and not history(
+                    subject, "species_identity"
+                ):
+                    value = {"manual_unknown": "unknown", "manual_wrong": "wrong"}.get(
+                        source
+                    )
+                    if source == "manual" and old_species:
+                        proposal = conn.execute(
+                            "SELECT proposal_species_key FROM label_subjects WHERE subject_id=?",
+                            (subject,),
+                        ).fetchone()[0]
+                        value = species_review_state("corrected", old_species, proposal)
+                    if value:
+                        answer_provenance = replace(
+                            provenance, source_ref="answer:" + uuid4().hex
+                        )
+                        if value != "wrong" and not history(subject, "bird_presence"):
+                            append_fact(
+                                conn,
+                                subject_id=subject,
+                                fact_type="bird_presence",
+                                answer_value="present",
+                                provenance=replace(
+                                    answer_provenance,
+                                    source_ref=_derived_source_ref(
+                                        answer_provenance.source_ref
+                                    ),
+                                ),
+                            )
+                        append_fact(
+                            conn,
+                            subject_id=subject,
+                            fact_type="species_identity",
+                            answer_value=value,
+                            species_key=old_species
+                            if value in {"confirmed", "corrected"}
+                            else None,
+                            provenance=answer_provenance,
+                        )
+                        counts["imported_species"] += 1
+                if row["manual_bbox_review"] in {"correct", "wrong"} and not history(
+                    subject, "bbox_quality"
+                ):
+                    append_fact(
+                        conn,
+                        subject_id=subject,
+                        fact_type="bbox_quality",
+                        answer_value="suitable"
+                        if row["manual_bbox_review"] == "correct"
+                        else "unsuitable",
+                        provenance=provenance,
+                    )
+                    counts["imported_box_quality"] += 1
+            reset_reason = (
+                "conflict"
+                if did in conflict_objects
+                else "species_history"
+                if species_history
+                else "legacy_species"
+                if legacy_species
+                else None
+            )
+            reasons = []
+            if reset_reason:
+                reasons = ["replaced by a human answer before the update"]
+                counts["reset_" + reset_reason] += 1
+            elif row["decision_state"] == "confirmed":
+                reasons = policy.admission_reasons(
+                    score=row["score"],
+                    species_key=row["model_species"] or row["od_class_name"],
+                    geography_json=row["geography_json"],
+                    allow_missing=True,
+                )
+                for reason in reasons:
+                    counts["policy_" + reason] += 1
+            if reasons:
+                try:
+                    prior = json.loads(row["decision_reasons"] or "[]")
+                except (ValueError, TypeError):
+                    prior = []
+                prior = prior if isinstance(prior, list) else []
+                conn.execute(
+                    "UPDATE detections SET decision_state='uncertain', decision_reasons=? WHERE detection_id=?",
+                    (json.dumps(list(dict.fromkeys([*prior, *reasons]))), did),
+                )
+                counts["changed_decisions"] += row["decision_state"] != "uncertain"
+        for row in conn.execute(
+            "SELECT filename FROM images WHERE review_status='no_bird' OR filename IN (SELECT image_filename FROM current_human_label_facts WHERE scope='image' AND fact_type='bird_presence' AND answer_value='absent')"
+        ).fetchall():
+            filename = row[0]
+            if filename in blocked_images:
+                continue
+            subject = ensure_image_subject(conn, filename)
+            current = conn.execute(
+                "SELECT * FROM current_human_label_facts WHERE subject_id=? AND fact_type='bird_presence'",
+                (subject,),
+            ).fetchone()
+            if not history(subject, "bird_presence"):
+                image_fact_id = append_fact(
+                    conn,
+                    subject_id=subject,
+                    fact_type="bird_presence",
+                    answer_value="absent",
+                    provenance=provenance,
+                )
+                counts["imported_image_absence"] += 1
+                current = {"answer_value": "absent", "fact_id": image_fact_id}
+            if current is not None and current["answer_value"] == "absent":
+                for det in conn.execute(
+                    "SELECT detection_id FROM detections WHERE image_filename=?",
+                    (filename,),
+                ).fetchall():
+                    obj = ensure_object_subject(conn, det[0])
+                    if not history(obj, "bird_presence"):
+                        append_fact(
+                            conn,
+                            subject_id=obj,
+                            fact_type="bird_presence",
+                            answer_value="absent",
+                            provenance=replace(
+                                provenance,
+                                source_ref=f"migration:image-absence:{current['fact_id']}",
+                            ),
+                        )
+                        counts["imported_object_absence"] += 1
+        absent_ids.update(
+            r[0]
+            for r in conn.execute(
+                "SELECT detection_id FROM current_human_label_facts WHERE scope='object' AND fact_type='bird_presence' AND answer_value='absent'"
+            )
+        )
+        for did in absent_ids:
+            counts["restored_absence_objects"] += conn.execute(
+                "UPDATE detections SET status='active' WHERE detection_id=? AND status='rejected'",
+                (did,),
+            ).rowcount
+            conn.execute(
+                "UPDATE classifications SET status='active' WHERE detection_id=? AND status='rejected'",
+                (did,),
+            )
+        counts["dated_trash_objects"] = conn.execute(
+            "UPDATE detections SET trashed_at=? WHERE status='rejected' AND trashed_at IS NULL",
+            (stamp,),
+        ).rowcount
+        if existing_installation:
+            conn.execute(
+                "INSERT OR IGNORE INTO _migration_state(key,applied_at) VALUES ('human_answers_retention_notice',?)",
+                (stamp,),
+            )
+        conn.execute(
+            "INSERT INTO _migration_state(key,applied_at) VALUES (?,?)",
+            (HUMAN_ANSWERS_MIGRATION, stamp),
+        )
+        conn.commit()
+        return dict(counts)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.row_factory = previous_factory

@@ -31,7 +31,11 @@ SAVED_VIEWS = {
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
 
 
 def _safe_extract(archive_path: Path, workspace: Path) -> Path:
@@ -110,9 +114,7 @@ def build_sample_specs(bundle_dir: Path) -> tuple[dict[str, Any], list[dict[str,
             continue
         rows = manifest_by_file[filename]
         included_views = {
-            str(row["view"])
-            for row in rows
-            if row.get("decision") == "included"
+            str(row["view"]) for row in rows if row.get("decision") == "included"
         }
         tags = ["qa"]
         if "od_positive" in included_views or "od_negative" in included_views:
@@ -126,7 +128,11 @@ def build_sample_specs(bundle_dir: Path) -> tuple[dict[str, Any], list[dict[str,
 
         file_facts = facts_by_file.get(filename, [])
         installation_ids = sorted(
-            {str(row["installation_id"]) for row in file_facts if row.get("installation_id")}
+            {
+                str(row["installation_id"])
+                for row in file_facts
+                if row.get("installation_id")
+            }
         )
         app_versions = sorted(
             {str(row["app_version"]) for row in file_facts if row.get("app_version")}
@@ -157,14 +163,31 @@ def build_sample_specs(bundle_dir: Path) -> tuple[dict[str, Any], list[dict[str,
                 "wmb_app_versions": app_versions,
                 "wmb_detector_versions": detector_versions,
                 "wmb_classifier_versions": classifier_versions,
-                "wmb_facts_json": json.dumps(file_facts, sort_keys=True, separators=(",", ":")),
-                "wmb_manifest_json": json.dumps(rows, sort_keys=True, separators=(",", ":")),
+                "wmb_facts_json": json.dumps(
+                    file_facts, sort_keys=True, separators=(",", ":")
+                ),
+                "wmb_manifest_json": json.dumps(
+                    rows, sort_keys=True, separators=(",", ":")
+                ),
                 "od_detections": od_by_file.get(filename, []),
                 "cls_detections": cls_by_file.get(filename, []),
                 "hard_negative": "od_negative" in included_views,
             }
         )
     return metadata, specs
+
+
+def _object_identity_fields(item: dict[str, Any]) -> dict[str, Any]:
+    detection_id = item.get("detection_id")
+    manual_id = item.get("manual_object_id")
+    fields = {
+        "wmb_detection_id": int(detection_id) if detection_id is not None else None,
+        "wmb_manual_object_id": int(manual_id) if manual_id is not None else None,
+        "wmb_object_key": item.get("object_key"),
+    }
+    if not fields["wmb_object_key"] and detection_id is not None:
+        fields["wmb_object_key"] = f"detection:{detection_id}"
+    return fields
 
 
 def import_into_fiftyone(
@@ -208,8 +231,10 @@ def import_into_fiftyone(
             detections=[
                 fo_module.Detection(
                     label="bird",
-                    bounding_box=[float(value) for value in annotation["bbox_normalized"]],
-                    wmb_detection_id=int(annotation["detection_id"]),
+                    bounding_box=[
+                        float(value) for value in annotation["bbox_normalized"]
+                    ],
+                    **_object_identity_fields(annotation),
                 )
                 for annotation in spec["od_detections"]
             ]
@@ -218,8 +243,10 @@ def import_into_fiftyone(
             detections=[
                 fo_module.Detection(
                     label=str(item["species_key"]),
-                    bounding_box=[float(value) for value in item["bbox_xywh_normalized"]],
-                    wmb_detection_id=int(item["detection_id"]),
+                    bounding_box=[
+                        float(value) for value in item["bbox_xywh_normalized"]
+                    ],
+                    **_object_identity_fields(item),
                 )
                 for item in spec["cls_detections"]
             ]
@@ -252,15 +279,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Import a canonical WatchMyBirds bundle into reproducible FiftyOne QA views."
     )
-    parser.add_argument("bundle", type=Path, help="Canonical ZIP or extracted directory")
-    parser.add_argument("--workspace", type=Path, help="Persistent extraction directory for ZIP input")
+    parser.add_argument(
+        "bundle", type=Path, help="Canonical ZIP or extracted directory"
+    )
+    parser.add_argument(
+        "--workspace", type=Path, help="Persistent extraction directory for ZIP input"
+    )
     parser.add_argument("--dataset-name", default=None)
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate and count samples without importing FiftyOne",
     )
-    parser.add_argument("--launch", action="store_true", help="Launch the FiftyOne App after import")
+    parser.add_argument(
+        "--launch", action="store_true", help="Launch the FiftyOne App after import"
+    )
     args = parser.parse_args()
 
     bundle_dir = prepare_bundle(args.bundle, args.workspace)

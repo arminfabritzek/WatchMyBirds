@@ -136,7 +136,7 @@ class LocalGeoModel:
         ):
             if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
                 raise ValueError("BirdNET artifact checksum mismatch")
-        import onnxruntime as ort
+        from utils.onnx_runtime import onnxruntime as ort
 
         options = ort.SessionOptions()
         options.intra_op_num_threads = 1

@@ -115,6 +115,7 @@ docker-compose up -d
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-aesthetic.txt
 python main.py
 ```
 
@@ -299,6 +300,18 @@ The system is designed to run locally on affordable hardware to make wildlife ob
 
 - **[Label Studio](https://labelstud.io)** — Annotation tool by HumanSignal, Inc. Used through the Label Studio Academic Program (free access to Enterprise Cloud for non-commercial teaching and research).
 - **[go2rtc](https://github.com/AlexxIT/go2rtc)** — WebRTC/RTSP relay for low-latency camera streaming. Licensed under MIT.
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=arminfabritzek%2Fwatchmybirds&amp;type=date&amp;legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=arminfabritzek/watchmybirds&amp;type=date&amp;theme=dark&amp;legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=arminfabritzek/watchmybirds&amp;type=date&amp;legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=arminfabritzek/watchmybirds&amp;type=date&amp;legend=bottom-right" />
+ </picture>
+</a>
 
 ---
 

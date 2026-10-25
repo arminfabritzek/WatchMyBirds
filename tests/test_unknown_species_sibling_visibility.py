@@ -22,46 +22,9 @@ UNKNOWN_IMAGE = "20260920_094825_673647.jpg"
 def _build_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            source_id INTEGER,
-            review_status TEXT DEFAULT 'untagged'
-        );
+    from utils.db.connection import _init_schema
 
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY,
-            image_filename TEXT NOT NULL,
-            status TEXT DEFAULT 'active',
-            created_at TEXT,
-            bbox_x REAL,
-            bbox_y REAL,
-            bbox_w REAL,
-            bbox_h REAL,
-            od_class_name TEXT,
-            od_confidence REAL,
-            score REAL,
-            thumbnail_path TEXT,
-            manual_species_override TEXT,
-            species_source TEXT,
-            is_favorite INTEGER DEFAULT 0,
-            decision_state TEXT,
-            decision_level TEXT,
-            quality_gallery_ok INTEGER
-        );
-
-        CREATE TABLE classifications (
-            classification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            detection_id INTEGER NOT NULL,
-            cls_class_name TEXT,
-            cls_confidence REAL,
-            rank INTEGER DEFAULT 1,
-            status TEXT DEFAULT 'active'
-        );
-        """
-    )
+    _init_schema(conn)
     return conn
 
 
@@ -165,14 +128,19 @@ def test_human_unknown_box_is_returned_as_sibling():
     assert 74760 in ids, "ordinary confirmed companion must stay visible"
 
 
-def test_model_uncertain_box_stays_hidden():
-    """The exception is for human answers only, not for model uncertainty."""
+def test_model_uncertain_box_is_visible_as_pending_companion():
+    """Pending companions do not change gallery card admission."""
     conn = _build_conn()
     _seed(conn)
 
     ids = {row["detection_id"] for row in fetch_sibling_detections(conn, UNKNOWN_IMAGE)}
 
-    assert 74761 not in ids, "model-uncertain rows must not leak into the gallery"
+    assert 74761 in ids
+    assert next(
+        row
+        for row in fetch_sibling_detections(conn, UNKNOWN_IMAGE)
+        if row["detection_id"] == 74761
+    )["needs_review"]
 
 
 def test_human_unknown_box_survives_the_batch_variant():
@@ -184,7 +152,7 @@ def test_human_unknown_box_survives_the_batch_variant():
 
     assert 74759 in ids
     assert 74760 in ids
-    assert 74761 not in ids
+    assert 74761 in ids
 
 
 @pytest.mark.parametrize("source", ["manual_unknown", "manual_wrong"])
@@ -219,7 +187,7 @@ def test_a_trashed_frame_hides_the_human_unknown_box_too():
     conn = _build_conn()
     _seed(conn)
     conn.execute(
-        "UPDATE images SET review_status = 'no_bird' WHERE filename = ?",
+        "UPDATE detections SET status = 'rejected' WHERE image_filename = ?",
         (UNKNOWN_IMAGE,),
     )
     conn.commit()
@@ -229,8 +197,7 @@ def test_a_trashed_frame_hides_the_human_unknown_box_too():
     assert ids == set(), "a frame marked 'no bird' shows no companion boxes"
 
 
-def test_a_quality_vetoed_human_unknown_box_stays_hidden():
-    """The nightly sharpness veto still applies to a human-answered box."""
+def test_quality_veto_does_not_hide_companions_in_an_admitted_image():
     conn = _build_conn()
     _seed(conn)
     conn.execute(
@@ -240,7 +207,7 @@ def test_a_quality_vetoed_human_unknown_box_stays_hidden():
 
     ids = {row["detection_id"] for row in fetch_sibling_detections(conn, UNKNOWN_IMAGE)}
 
-    assert 74759 not in ids
+    assert 74759 in ids
 
 
 def test_a_frame_with_no_rows_at_all_returns_empty():

@@ -19,15 +19,7 @@ WatchMyBirds uses a **two-layer configuration model**:
 - Runtime editability controls persistence; when a value takes effect depends
   on its consumer and must be checked per setting. For example,
   `STREAM_WIDTH_OUTPUT_RESIZE` is captured by
-  `web/blueprints/stream.py` at import, and Companion backend/model/context
-  settings are read when the inference adapter is constructed. The current
-  Companion service also captures enable, pause-detection, and timeout at
-  construction; saving their YAML values does not reconfigure that instance.
-  These settings require a restart in the current implementation.
-- Companion language/tone on `/chat` and `/event` come from each request
-  (defaults: `de` / `kid_friendly`), not from the persisted
-  `COMPANION_LANGUAGE` / `COMPANION_TONE` keys. Those keys currently do not
-  establish API defaults; this is an implementation gap.
+  `web/blueprints/stream.py` at import and requires a restart.
 - `config.RUNTIME_KEYS` controls generic editability. Telemetry uses a
   dedicated settings endpoint and explicit YAML loading. The generic
   `restart_required` flag currently derives from `BOOT_KEYS` and does not
@@ -55,7 +47,6 @@ Set these in your `.env` file, `docker-compose.yml`, or system environment.
 |----------|---------|-------------|
 | `DEBUG_MODE` | `False` | Enable verbose logging and debug behavior |
 | `OUTPUT_DIR` | `/output` | Base directory for images and `images.db` |
-| `INGEST_DIR` | `/ingest` | Directory for bulk image ingestion |
 | `MODEL_BASE_PATH` | `/models` | Base directory for AI model files |
 
 ### Camera Source Resolution
@@ -156,11 +147,8 @@ the synonym-reference hash, name matches and whether weighting was applied;
 `raw_species_name` retains the original top choice. Human answers remain
 authoritative. Existing detections are not rewritten automatically.
 
-Live capture uses the capture time and configured camera location. Imports use
-their own EXIF capture date **and** GPS, and skip weighting if either is absent.
-Deep scans use the stored image's origin: camera captures need a configured
-location; imports need their own complete EXIF. Rescans of existing detections
-remain proposals, including geographic evidence, rather than overwriting them.
+Live capture uses the capture time and configured camera location.
+Existing detections retain their stored predictions and geographic evidence.
 
 The first eligible prediction downloads the fixed BirdNET Geomodel v3.0.4 FP16
 model and labels (about 8.6 MB total) into
@@ -275,52 +263,79 @@ are outside this release.
 |----------|---------|-------------|
 | `CPU_LIMIT` | `0` | CPU affinity cap (`0` disables affinity; `1+` pins to first N available CPUs) |
 
-### Deep Scan Stability
+### Photo deletion
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `DEEP_SCAN_GATE_ENABLED` | `True` | When `True`, live detection and classification loops pause while a Deep Scan job runs (prevents resource contention on RPi). Set `False` to allow concurrent Deep Scan + live detection. Runtime-changeable via Settings UI. |
+| `AUTOMATIC_DELETION_ENABLED` | On for new databases; off for existing databases | One runtime switch for all photo deadlines, including expired trash and manual cleanup requests. |
+| `OLD_BIRD_PHOTOS` | `keep_previews` | Keep bird previews and thumbnails, or `delete_all` to expire them too. |
 
-### Storage Retention
+The database's existence is checked before schema initialization. Startup saves
+these defaults once; old retention keys in YAML are ignored. On every off-to-on
+transition, the app writes `AUTOMATIC_DELETION_ENABLED_AT` alongside the switch.
+This timestamp is internal, not an editable runtime key. Saving an already-on
+switch preserves its date. Open cases and model non-birds expire no earlier than
+14 days after the latest activation, even when their capture is much older.
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `RETENTION_POSTURE` | `off` | `off`, `conservative`, or `reclaim`; controls which old originals are eligible. |
-| `RETENTION_AUTO_ENABLED` | `False` | Explicit opt-in for one automatic run per UTC day, independent of whether detection pauses at night. |
-| `RETENTION_DAYS` | `90` | Originals at or below this age are retained. |
-| `RETENTION_PROTECT_FAVORITES` | `True` | Keep favourites even when their originals are otherwise eligible. |
+`core/deletion_plan.py` supplies both the preview and the deletion job. Its ordered
+rules cover trash, favorites, pending training, answers, admitted birds and other
+photos. Trash expires 30 days after moving it; favorites and pending training
+stay. Answer rows and admitted bird rows stay after their files expire. The
+constants in `DeletionSettings` are 30 days for bird originals, 180 days for bird
+previews with `delete_all`, 14 days for other photos, and a 256 MiB reserve.
+These are age ceilings, not guaranteed availability: low free space triggers
+earlier removal through the same planner, in the order open/model non-bird files
+and rows, answered/admitted originals, then previews only with `delete_all`.
+Favorites and pending training files stay protected. The normal activation grace
+can be shortened by low free space. Off prevents every automatic photo deletion.
 
-Retention removes full-resolution originals only. Derivatives, database rows,
-statistics, favourites, and export-relevant images continue to use storage, so
-this feature does not impose a fixed upper bound on total storage growth.
+Saving requires the reserve plus twice the estimated frame budget (three times
+raw frame bytes plus 1 MiB). Free space is checked at most once per two seconds,
+and each admitted frame subtracts its budget from the cache. Recovery runs outside
+capture, targets four frame budgets above the reserve, and retries at most once a
+minute. Saving waits for an active recovery pass to finish, so incomplete new photos
+cannot be mistaken for objectless photos by early deletion. Insufficient space
+pauses new photo and detection persistence; live view and inference continue. Unsaved frames produce
+no ticker, Telegram detection alert or MQTT event. Pending alerts and reports about
+existing observations can still send. Saving resumes when space is available.
+Authenticated pages show the saving stop and early-cleanup status without scanning.
+
+The age choices were sized from measured snapshot media for a nominal 16 GiB card
+at 130 captures/day (about 12 GiB for 30 days of originals and 180 days of previews),
+then exercised under pressure on a bounded 512 MiB APFS image. Keep previews can
+eventually exhaust a card; saving then pauses without deleting retained bird
+previews. Very busy stations retain observation rows permanently; database growth
+still needs capacity planning. These local measurements do not establish physical
+SD-card throughput or endurance.
+The reserve covers 17.6 MB of technical samples at their row caps, 51 MiB of
+diagnostic file caps, two measured 32.6 MiB frame budgets and a normal 4 MiB WAL
+allowance. Adding 50% margin and rounding to the next power of two gives 256 MiB.
+
+Technical storage limits apply even with automatic photo deletion off:
+
+- Runtime samples: 90 days and at most 129,600 rows; weather: 90 days and 4,320 rows.
+  Enforced at startup and by each writer. Freed SQLite pages are reused; no VACUUM.
+- App and aesthetic logs: 5 MiB per file, three rotated backups each.
+  Vital-sign CSV: 5 MiB plus one backup; FD dumps: 1 MiB.
+- Disposable restore uploads, temporary database snapshots, report images and
+  atomic-write remnants: 48 hours; stale log and visual-PTZ debug files: 14 days.
+  The effort monitor checks files at startup/first sample and hourly thereafter.
+  Media, retained backup snapshots, recovery checkpoints and settings are excluded.
+
+The daily job uses bounded photo batches and rechecks a photo under a write
+transaction before removing files, then rows. It requires the completed human
+answer migration. Missing retained previews are regenerated before an original
+is removed. Settings and Storage usage show upcoming counts and bytes for the
+next 14 days and the last cleanup result. Storage measurements are dated
+snapshots and should be refreshed after settings or data change.
 
 ---
 
 ## Important Notes
 
-### Inbox Import Requirements (EXIF Date/Time + GPS)
-
-Inbox imports (files uploaded/copied into the Inbox) can be configured to require
-EXIF metadata before a file is ingested into the main database.
-
-If enabled, the app will **skip** inbox files unless they contain:
-- EXIF capture timestamp: `DateTimeOriginal` (preferred) or `DateTimeDigitized`
-- EXIF GPS coordinates: `GPSLatitude` and `GPSLongitude`
-
-Runtime settings:
-- `INBOX_REQUIRE_EXIF_DATETIME` (default: `True`)
-- `INBOX_REQUIRE_EXIF_GPS` (default: `True`)
-
-Skipped files are moved to `inbox/skipped/YYYYMMDD/`.
-
-### Ingest vs. Live Operation
-
-| Mode | Behavior |
-|------|----------|
-| **Live Mode** | Only saves images with valid detections (filtered by `SAVE_THRESHOLD`) |
-| **Ingest Tool** | Saves **every** image to ensure hash idempotency and reproducibility |
-
-The Ingest behavior is intentionally different to prevent re-ingest loops.
+Image import is no longer available. Existing imported photos remain in the
+archive. Legacy `INGEST_DIR` values, `/ingest` Docker mounts, and removed Inbox
+settings are ignored; existing Docker configurations need no changes.
 
 ### Threshold Interaction
 
@@ -361,7 +376,6 @@ The Ingest behavior is intentionally different to prevent re-ingest loops.
 ```bash
 # Core
 OUTPUT_DIR=/data/watchmybirds/output
-INGEST_DIR=/data/watchmybirds/ingest
 MODEL_BASE_PATH=/data/watchmybirds/models
 
 # Camera
@@ -392,38 +406,6 @@ TELEGRAM_CHAT_ID=987654321
 
 Set `TELEGRAM_ENABLED=True` only after `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` are configured.
-
----
-
-## Inbox (Web Upload)
-
-The Inbox feature allows uploading images through the web UI for later processing.
-
-### Directory Structure
-
-```
-OUTPUT_DIR/
-└── inbox/
-    ├── pending/           # Uploaded files waiting for processing
-    ├── processed/YYYYMMDD/  # Successfully ingested files
-    ├── skipped/YYYYMMDD/    # Duplicate files (by SHA-256 hash)
-    └── error/               # Files that failed to process
-```
-
-### Upload Limits
-
-| Limit | Value |
-|-------|-------|
-| Max files per upload | 20 |
-| Max file size | 50 MB |
-| Allowed formats | `.jpg`, `.jpeg`, `.png` |
-
-### Processing Policy
-
-- **Detection must be stopped** before processing inbox files
-- Processing is manual (button click required)
-- A snapshot of `pending/` is taken at start; new uploads during processing remain for next run
-- Duplicates are detected by SHA-256 hash and moved to `skipped/`
 
 ---
 
@@ -475,3 +457,15 @@ are likewise preserved from the destination or left unset on a fresh device.
 - [Architecture](ARCHITECTURE.md) — System design overview
 - [Invariants](INVARIANTS.md) — Core rules
 - [Security Policy](../SECURITY.md) — Hardening measures
+
+## Telemetry consent
+
+`telemetry_enabled` remains false by default. `telemetry_consent_version` is 0
+(no recorded choice), 1 (basic reports), or 2 (usage/diagnostics explicitly accepted).
+Only literal true plus integer version 2 enables diagnostic instrumentation.
+`telemetry_consent_at` records the latest choice locally. Old enabled settings without
+a consent version continue basic reports only. Settings and initial password setup
+explain both choices; declining never restricts functionality.
+`telemetry_endpoint` accepts HTTPS or HTTP loopback for local testing; redirects are
+refused. `telemetry_metrics.json` holds a bounded retry queue beside settings.yaml.
+See [Privacy](PRIVACY.md) for fields, cadence, expiry and backup considerations.

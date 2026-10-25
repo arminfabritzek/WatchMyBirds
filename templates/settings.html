@@ -1017,46 +1017,25 @@
         return `${v.toFixed(1)} ${u[i]}`;
     }
 
-    const _retentionReasonLabels = {
-        too_recent: 'inside the retention window',
-        missing_derivative: 'missing a required display derivative',
-        favorite: 'favourites',
-        unreviewed: 'unreviewed',
-        export_relevant: 'needed for training export',
-        already_deleted: 'original already absent',
-        disabled: 'retention is off',
-    };
-
-    function _retentionProtectionText(protectedCounts) {
-        const entries = Object.entries(protectedCounts || {})
-            .filter(([, count]) => count > 0)
-            .map(([reason, count]) => `${_retentionReasonLabels[reason] || reason}: ${count}`);
-        return entries.join(', ') || 'none';
-    }
-
     function retentionPreview() {
         const out = document.getElementById('retentionResult');
-        out.textContent = 'Calculating…';
+        out.textContent = 'Calculating the next 14 days…';
         fetch('/api/v1/retention/preview')
-            .then(res => res.json())
+            .then(res => { if (!res.ok) throw new Error('Preview unavailable'); return res.json(); })
             .then(data => {
-                if (!data.enabled) {
-                    out.innerHTML = '⚠️ Posture is <strong>Off</strong>. Choose Conservative or Reclaim and Apply Settings, then preview again.';
-                    return;
-                }
-                const prot = data.protected || {};
-                const protLine = _retentionProtectionText(prot);
-                out.innerHTML =
-                    `Posture: <strong>${data.posture}</strong>. ` +
-                    `Would retire <strong>${data.deletable.count}</strong> original(s), ` +
-                    `reclaiming <strong>${_fmtBytes(data.deletable.estimated_bytes)}</strong>.<br>` +
-                    `Protected: ${protLine}.`;
+                const next = data.next_14_days;
+                const state = data.enabled ? 'Automatic deletion is on.' : 'Automatic deletion is off. Nothing is deleted while it is off.';
+                const grace = data.enabled ? ` Last enabled ${new Date(data.enabled_at).toLocaleString()}.` : ' This preview assumes activation today.';
+                out.textContent = `${state}${grace} Due within the next 14 days, including overdue files: ${next.photos} photo${next.photos === 1 ? '' : 's'}, ${next.files} file${next.files === 1 ? '' : 's'} (${_fmtBytes(next.bytes)}). Open cases and model non-birds have at least 14 days after enabling deletion. This includes the existing Review backlog. Apply Settings after changing a choice, then refresh the preview.`;
+                if (!data.migration_ready) out.textContent += ' Deletion is blocked until the answer migration finishes.';
+                if (data.errors || data.unknown_deadlines) out.textContent += ' Some paths or deadline dates could not be checked; see Storage usage.';
+                _updateRetentionLastRun(data.last_run);
             })
             .catch(err => { out.textContent = `Error: ${err.message || 'request failed'}`; });
     }
 
     function retentionRun() {
-        if (!confirm('Delete the full-resolution originals selected by the retention policy? This cannot be undone (previews and metadata are kept).')) return;
+        if (!confirm('Delete all files and rows currently due under your saved photo rules, including expired trash? This cannot be undone.')) return;
         const out = document.getElementById('retentionResult');
         out.textContent = 'Starting cleanup…';
         fetch('/api/v1/retention/run', { method: 'POST' })
@@ -1065,6 +1044,7 @@
                 return data;
             }))
             .then(data => {
+                if (data.status === 'disabled') { out.textContent = 'Automatic deletion is off. No files or rows were deleted.'; return; }
                 out.textContent = data.status === 'already_running'
                     ? 'Cleanup is already running. Status updates appear below.'
                     : 'Cleanup started. Status updates appear below.';
@@ -1073,33 +1053,6 @@
             .catch(err => { out.textContent = `Error: ${err.message || 'request failed'}`; });
     }
 
-    // Replaces the former nested <form action=...> for the /ingest
-    // trigger. Nesting a form inside settingsForm auto-closed the
-    // outer form in every browser, which silently killed the Apply
-    // Settings submit. Sending the POST as fetch + X-CSRF-Token
-    // header keeps the outer form intact and is behaviour-equivalent
-    // to the old submit (same endpoint, same auth, same side effect).
-    function triggerIngestStart(btn, url, csrfToken) {
-        const originalText = btn.textContent;
-        btn.textContent = 'Starting…';
-        btn.disabled = true;
-        fetch(url, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'X-CSRF-Token': csrfToken },
-        })
-            .then(res => { if (!res.ok) { return res.json().then(err => { throw new Error(err.message || 'API Error'); }); } return res.json(); })
-            .then(data => {
-                alert(data.message || 'Ingest started.');
-                btn.textContent = originalText;
-                btn.disabled = false;
-            })
-            .catch(err => {
-                alert('Ingest failed: ' + (err.message || err));
-                btn.textContent = originalText;
-                btn.disabled = false;
-            });
-    }
 </script>
 {% endblock %}
 
@@ -1967,7 +1920,7 @@
                             <option value="true" {% if payload['EXPORT_BURN_IN_METADATA'].value %}selected{% endif %}>Yes</option>
                             <option value="false" {% if not payload['EXPORT_BURN_IN_METADATA'].value %}selected{% endif %}>No</option>
                         </select>
-                        <div class="settings-field__help">Embed species, location, favorite and rating into downloaded copies (for iNaturalist re-import). The stored original is never changed; Off downloads the raw original.</div>
+                        <div class="settings-field__help">Embed species, location and favorite into downloaded copies (for iNaturalist re-import). The stored original is never changed; Off downloads the raw original.</div>
                     </div>
                 </div>
                 <div class="col-md-6">
@@ -2038,14 +1991,14 @@
     <div class="settings-panel" id="panelPrivacy">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelPrivacy')">
             Data Sharing
-            <span class="settings-panel__trigger-info">Local-only by default — optional anonymous heartbeat</span>
+            <span class="settings-panel__trigger-info">Optional installation reports and diagnostics</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
             <div class="settings-field mb-3">
                 <p class="mb-2">
-                    WatchMyBirds runs entirely on your Pi. Nothing about your bird
-                    activity, images, or detections ever leaves the device.
+                    WatchMyBirds processes bird images locally. Outbound integrations
+                    such as Telegram and MQTT run only when you enable them.
                 </p>
                 <p class="mb-2">
                     Optionally, you can let this installation send <strong>one
@@ -2056,8 +2009,8 @@
                     no location, no email in the heartbeat.</strong>
                 </p>
                 <p class="mb-3">
-                    The maintainer keeps a local history of these reports without
-                    automatic expiry. See the <a href="/privacy" target="_blank"
+                    Installation reports are kept for 90 days in Cloudflare and the
+                    reporting cache. Counts without installation IDs are retained for trends. See the <a href="/privacy" target="_blank"
                     rel="noopener">Privacy page</a> for the data collected,
                     its purpose, and storage details.
                 </p>
@@ -2083,8 +2036,20 @@
             </div>
 
             <div class="settings-field mb-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="telemetry_diagnostics">
+                    <label class="form-check-label" for="telemetry_diagnostics"><strong>Also share usage and diagnostic summaries</strong></label>
+                </div>
+                <p class="form-text">Enable installation reports above to share diagnostics. Daily flags cover setup, camera and model outcomes,
+                    Review, corrections and export use, web errors, plus uptime and slowest inference-time ranges.
+                    Includes deployment type. No images, species, camera URLs, raw logs, names or location.
+                    Daily summaries refresh at most hourly; failed deliveries retry. Older consent does not enable this.</p>
+                <button type="button" class="btn btn--secondary btn--sm" id="telemetry_save_consent">Save sharing choice</button>
+                <p id="telemetry_delivery" class="form-text" role="status"></p>
+            </div>
+            <div class="settings-field mb-3">
                 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <button type="button" class="btn btn-outline-primary btn-sm" id="telemetry_preview_btn">
+                    <button type="button" class="btn btn--secondary btn--sm" id="telemetry_preview_btn">
                         Show what would be sent
                     </button>
                     <small class="text-muted">
@@ -2099,9 +2064,9 @@
                     <div class="settings-field__label">Payload (POST body, JSON)</div>
                     <pre class="p-2 bg-body-secondary rounded" style="font-size: 0.85em; margin-bottom: .5rem;"><code id="telemetry_preview_payload"></code></pre>
                     <small class="text-muted d-block">
-                        These eight fields are <strong>everything</strong> we send. The
-                        Worker rejects any extra field with HTTP 400 — verifiable in
-                        <code>infra/telemetry-worker/src/worker.js</code>.
+                        Basic reports contain eight fields. The diagnostics preview shows the
+                        additional allowed fields with example values; actual flags reflect observed activity.
+                        No free-text logs or content are sent.
                     </small>
                 </div>
             </div>
@@ -2124,8 +2089,7 @@
                 </div>
                 <div class="settings-field__help mt-2">
                     Rotating wipes your current ID and generates a new one. The next
-                    heartbeat (if telemetry is on) will use the new ID. Rotation does not delete previously received reports or the
-                    maintainer’s local history.
+                    heartbeat (if telemetry is on) will use the new ID. Rotation does not delete previously received reports; they expire within the 90-day retention window.
                 </div>
             </div>
 
@@ -2141,6 +2105,9 @@
         const PREVIEW_URL = "/api/v1/settings/telemetry/preview";
 
         const toggle = document.getElementById("telemetry_enabled_toggle");
+        const diagnostics = document.getElementById("telemetry_diagnostics");
+        const consentButton = document.getElementById("telemetry_save_consent");
+        const delivery = document.getElementById("telemetry_delivery");
         const badge = document.getElementById("telemetry_status_badge");
         const idDisplay = document.getElementById("telemetry_installation_id_display");
         const lastSentDisplay = document.getElementById("telemetry_last_sent_display");
@@ -2162,6 +2129,12 @@
 
         function renderStatus(s) {
             toggle.checked = !!s.enabled;
+            diagnostics.checked = s.consent_version === 2;
+            const state = s.delivery || {};
+            delivery.textContent = "Collection: " + (s.enabled ? (s.consent_version === 2 ? "usage and diagnostics" : "basic installation report") : "off")
+                + ". Delivery: " + (state.status || "not attempted").replaceAll("_", " ")
+                + (state.last_success ? ". Last acknowledged: " + state.last_success : "")
+                + (state.retry_at > Date.now() / 1000 ? ". Retry after " + new Date(state.retry_at * 1000).toLocaleString() : "");
             if (s.enabled) {
                 badge.textContent = "on";
                 badge.classList.remove("bg-secondary");
@@ -2214,22 +2187,22 @@
             const data = await r.json();
             previewEndpoint.textContent = data.method + " " + data.endpoint;
             previewUa.textContent = "User-Agent: " + data.user_agent;
-            previewPayload.textContent = JSON.stringify(data.payload, null, 2);
+            previewPayload.textContent = JSON.stringify(diagnostics.checked ? data.diagnostics_example : data.payload, null, 2);
         }
 
-        toggle.addEventListener("change", async () => {
+        async function saveConsent() {
             const enabled = toggle.checked;
             try {
                 const r = await fetch(TOGGLE_URL, {
                     method: "POST",
                     credentials: "same-origin",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ enabled: enabled })
+                    body: JSON.stringify({ enabled: enabled, consent_version: diagnostics.checked ? 2 : 1 })
                 });
                 if (!r.ok) throw new Error("HTTP " + r.status);
                 showMessage(
                     enabled
-                        ? "Telemetry on. First heartbeat will send within ~5 minutes."
+                        ? "Sharing choice saved. A report will be attempted shortly."
                         : "Telemetry off. No further heartbeats will be sent.",
                     "success"
                 );
@@ -2239,6 +2212,11 @@
                 toggle.checked = !enabled;
                 showMessage("Could not change telemetry: " + e.message, "danger");
             }
+        }
+        toggle.addEventListener("change", saveConsent);
+        consentButton.addEventListener("click", saveConsent);
+        diagnostics.addEventListener("change", () => {
+            if (!previewBox.classList.contains("d-none")) loadPreview().catch(() => {});
         });
 
         rotateBtn.addEventListener("click", async () => {
@@ -2293,8 +2271,7 @@
         <div class="settings-panel__body">
             <p class="settings-field__help mb-3">
                 Jobs run at most once per day. Resource-heavy jobs wait until OD is
-                paused at night; Storage Retention runs independently after its own
-                explicit opt-in. You can also trigger jobs manually here. Each job has
+                paused at night; automatic deletion follows the switch in Storage Retention. You can also trigger jobs manually here. Each job has
                 its own lock; two clicks while a job is running skip the second.
             </p>
             <div id="nightlyJobsContainer" class="d-flex flex-column gap-2">
@@ -2306,74 +2283,35 @@
 
     <div class="settings-panel" id="panelRetention">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelRetention')"
-                title="Reclaim disk by deleting old full-resolution originals while keeping previews, thumbnails, crops, stats and favourites.">
+                title="Choose automatic photo deletion and preview upcoming deadlines.">
             Storage Retention
-            <span class="settings-panel__trigger-info">Delete old full-resolution originals; keep everything else</span>
+            <span class="settings-panel__trigger-info">Photo rules, upcoming deletion and last cleanup</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
-            <p class="settings-field__help mb-3">
-                Retention reclaims disk by deleting old full-resolution
-                originals only — metadata, statistics, previews, thumbnails,
-                crops and detection boxes always remain. Anything still needed
-                for the training export, and favourites, are never removed. Use
-                <strong>Preview</strong> first to see exactly what would be freed.
-                Retained derivatives and protected data can continue growing, so
-                retention is not a fixed total-storage limit.
-            </p>
-
-            {% set _posture = payload['RETENTION_POSTURE'].value if 'RETENTION_POSTURE' in payload else 'off' %}
+            <p>Automatic deletion follows one order: expired trash, favorites, training protection, answered photos, admitted birds, then open cases and model non-birds. A shared photo stays while any object protects it.</p>
             <div class="settings-field">
-                <label class="settings-field__label" for="RETENTION_POSTURE">Retention posture</label>
-                <select name="RETENTION_POSTURE" id="RETENTION_POSTURE" class="form-control">
-                    <option value="off" {% if _posture == 'off' %}selected{% endif %}>Off — keep everything</option>
-                    <option value="conservative" {% if _posture == 'conservative' %}selected{% endif %}>Conservative — also keep unreviewed images</option>
-                    <option value="reclaim" {% if _posture == 'reclaim' %}selected{% endif %}>Reclaim — retire old originals once a preview, crop and boxes exist</option>
+                <label class="settings-field__label" for="AUTOMATIC_DELETION_ENABLED">Automatic deletion</label>
+                <select name="AUTOMATIC_DELETION_ENABLED" id="AUTOMATIC_DELETION_ENABLED" class="form-control">
+                    <option value="false" {% if not payload['AUTOMATIC_DELETION_ENABLED'].value %}selected{% endif %}>Off</option>
+                    <option value="true" {% if payload['AUTOMATIC_DELETION_ENABLED'].value %}selected{% endif %}>On</option>
                 </select>
-                <div class="settings-field__help">
-                    <strong>Reclaim</strong> retires full-resolution originals
-                    only; metadata, stats, previews, crops and boxes remain.
-                    Export-relevant frames and favourites stay protected in
-                    every posture.
-                </div>
+                <p class="settings-field__help">Controls all automatic photo deletion, including emptying trash after 30 days. Off also prevents Clean up now. Existing stations start off; new stations start on.</p>
             </div>
-
-            <div class="settings-field mt-3">
-                <label class="settings-field__label" for="RETENTION_AUTO_ENABLED">Automatic daily cleanup</label>
-                <select name="RETENTION_AUTO_ENABLED" id="RETENTION_AUTO_ENABLED" class="form-control">
-                    <option value="false" {% if not payload['RETENTION_AUTO_ENABLED'].value %}selected{% endif %}>Off — manual cleanup only</option>
-                    <option value="true" {% if payload['RETENTION_AUTO_ENABLED'].value %}selected{% endif %}>On — run once per day</option>
+            <div class="settings-field">
+                <label class="settings-field__label" for="OLD_BIRD_PHOTOS">Old bird photos</label>
+                <select name="OLD_BIRD_PHOTOS" id="OLD_BIRD_PHOTOS" class="form-control">
+                    <option value="keep_previews" {% if payload['OLD_BIRD_PHOTOS'].value == 'keep_previews' %}selected{% endif %}>Keep previews</option>
+                    <option value="delete_all" {% if payload['OLD_BIRD_PHOTOS'].value == 'delete_all' %}selected{% endif %}>Delete everything</option>
                 </select>
-                <div class="settings-field__help">
-                    This is a separate opt-in. Automatic runs start once per day,
-                    independent of detection pauses, when this switch is On and
-                    the retention posture is not Off.
-                </div>
+                <p class="settings-field__help">Originals expire after {{ photo_deletion_defaults.original_days }} days. Keep previews preserves bird previews and thumbnails; Delete everything removes them after {{ photo_deletion_defaults.preview_days }} days. Bird records and answers stay. Answered non-bird files expire 14 days after training protection ends. With automatic deletion on, low free space can remove unprotected photos earlier, including during the Review grace period. Favorites and pending training files stay protected. If space remains low, saving pauses while live view continues and resumes automatically when space is available.</p>
             </div>
-
-            <div class="settings-field mt-3">
-                <label class="settings-field__label" for="RETENTION_DAYS">Retention window (days)</label>
-                <input type="number" min="1" max="3650" step="1"
-                    name="RETENTION_DAYS" id="RETENTION_DAYS" class="form-control"
-                    value="{{ payload['RETENTION_DAYS'].value }}">
-                <div class="settings-field__help">Originals younger than this are always kept (1–3650).</div>
+            <div id="retentionResult" class="alert alert-info" role="status">Open cases and model non-birds get a fresh 14-day grace period when automatic deletion is enabled. Calculating the upcoming count…</div>
+            <div class="flex flex--gap-sm flex--wrap">
+                <button type="button" class="btn btn--secondary" onclick="retentionPreview()">Refresh deletion preview</button>
+                <button type="button" class="btn btn--danger" onclick="retentionRun()">Clean up now</button>
+                <a class="btn btn--secondary" href="/storage">Storage usage</a>
             </div>
-
-            <div class="settings-field mt-3">
-                <label class="settings-field__label" for="RETENTION_PROTECT_FAVORITES">Protect favourites</label>
-                <select name="RETENTION_PROTECT_FAVORITES" id="RETENTION_PROTECT_FAVORITES" class="form-control">
-                    <option value="true" {% if payload['RETENTION_PROTECT_FAVORITES'].value %}selected{% endif %}>Protected</option>
-                    <option value="false" {% if not payload['RETENTION_PROTECT_FAVORITES'].value %}selected{% endif %}>Not protected</option>
-                </select>
-            </div>
-
-            <div class="d-flex gap-2 mt-4">
-                <button type="button" class="btn btn--secondary" onclick="retentionPreview()"
-                        title="Calculate what retention would remove" aria-label="Preview storage retention">Preview</button>
-                <button type="button" class="btn btn--danger" onclick="retentionRun()"
-                        title="Start cleanup of eligible originals" aria-label="Run storage retention now">Clean up now</button>
-            </div>
-            <div id="retentionResult" class="settings-field__help mt-3" role="status"></div>
             <div id="retentionLastRun" class="settings-field__help mt-2" role="status">No cleanup run recorded.</div>
         </div>
     </div>
@@ -2385,7 +2323,7 @@
     <div class="settings-panel" id="panelTools">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelTools')">
             Data & Backups
-            <span class="settings-panel__trigger-info">Automatic backups, recovery, migration, Ingest, System Info</span>
+            <span class="settings-panel__trigger-info">Automatic backups, recovery, migration, System Info</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
@@ -3640,23 +3578,6 @@
                 </div>
             </div>
 
-            <hr>
-
-            <!-- Ingest -->
-            {# Nested forms are HTML-illegal: the browser auto-closes
-               the outer settingsForm at this tag, which then drops
-               the Apply button out of the form. Using a plain button
-               with a click handler keeps the outer form intact.
-               #}
-            <div class="mb-4">
-                <strong class="d-block mb-2">Image Ingest</strong>
-                <p class="settings-field__help mb-2">Docker: Import images from mounted <code>/ingest</code> folder. For normal uploads use the <a href="/inbox">Inbox</a>.</p>
-                <button type="button" class="btn btn--secondary btn--sm"
-                    onclick="triggerIngestStart(this, '{{ url_for('onvif_ingest.start_ingest_endpoint') }}', '{{ csrf_token }}')">
-                    Start Ingest from /ingest
-                </button>
-            </div>
-
             <!-- System Info -->
             <hr>
             <strong class="d-block mb-2">System Information</strong>
@@ -3819,6 +3740,7 @@
 
         // Open clicked if it was closed
         if (!wasOpen) panel.classList.add('is-open');
+        if (id === 'panelRetention' && !wasOpen) retentionPreview();
 
         // One accordion action can close either scheduled-job panel while
         // opening another. Recompute both visibility states together so the
@@ -5124,9 +5046,9 @@
         if (job.last_error) return `Error: ${job.last_error}`;
         if (typeof progress.deleted !== 'number') return 'No result details available.';
         const stopped = progress.stopped === true ? ' Stopped before completion.' : '';
-        return `Removed ${progress.deleted} original(s), freed ${_fmtBytes(progress.freed_bytes)}, `
+        return `Removed ${progress.deleted} files and ${progress.deleted_rows || 0} rows, freed ${_fmtBytes(progress.freed_bytes)}, `
             + `missing ${progress.missing || 0}, errors ${progress.errors || 0}. `
-            + `Protected: ${_retentionProtectionText(progress.protected)}.${stopped}`;
+            + (progress.disabled ? 'Automatic deletion is off. ' : '') + stopped;
     }
 
     function _updateRetentionLastRun(job) {

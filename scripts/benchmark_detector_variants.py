@@ -76,7 +76,8 @@ os.environ.setdefault("MODEL_BASE_PATH", str(default_model_base))
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
-import onnxruntime as ort  # noqa: E402
+
+from utils.onnx_runtime import onnxruntime as ort  # noqa: E402
 
 try:
     import yaml  # noqa: E402

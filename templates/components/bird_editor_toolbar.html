@@ -10,6 +10,18 @@
             but cannot currently be exported as training data.</p>
     </div>
     {% endif %}
+    <div class="station-intro" data-image-absence hidden>
+        <p>No birds in full image is recorded. Withdraw this answer before adding a bird.</p>
+        <button type="button" class="btn btn--secondary" data-editor-action="withdraw-image-absence">Withdraw full-image answer</button>
+    </div>
+    {% if det.ordinary_review %}
+    <div class="station-filters" aria-label="Answer for selected object">
+            <button type="button" class="btn btn--primary btn--sm" data-editor-action="confirm-species">Confirm species</button>
+            <button type="button" class="btn btn--secondary btn--sm" data-editor-action="choose-species">Change species</button>
+            <button type="button" class="btn btn--secondary btn--sm" data-editor-action="unknown-species">Bird · species unknown</button>
+            <button type="button" class="btn btn--secondary btn--sm" data-editor-action="no-bird">No bird</button>
+    </div>
+    {% endif %}
     <div class="wm-bird-editor__toolbar" role="toolbar" aria-label="Bird editor">
         <div class="wm-view-mode-toggle wm-view-mode-toggle--editor smart-zoom-toggle"
             role="group" aria-label="Image view" data-view-mode="focus">
@@ -36,6 +48,11 @@
         </span>
 
         <div class="wm-bird-editor__actions">
+            <button type="button" class="btn btn--primary btn--sm"
+                data-editor-action="restore" aria-label="Restore bird" hidden
+                title="Restore this dismissed bird; species and box assessments stay unchanged">
+                Restore bird
+            </button>
             {% if box_walkthrough %}
             <button type="button" class="btn btn--primary btn--sm"
                 data-editor-action="bbox-verdict" data-bbox-verdict="suitable"
@@ -149,6 +166,12 @@
                         ↶ <span>Retract added bird</span>
                     </button>
                     <button type="button" class="wm-toolbox__item wm-toolbox__item--danger"
+                        data-editor-action="no-bird" role="menuitem"
+                        aria-label="Not a bird in this box"
+                        {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                        ✗ <span>Not a bird in this box</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item wm-toolbox__item--danger"
                         data-action="review-no-bird" data-filename="{{ image_filename }}"
                         role="menuitem" aria-label="No birds in full image"
                         title="Review the full image before recording no birds"
@@ -159,6 +182,10 @@
             </div>
         </div>
     </div>
+    <label class="wm-bird-editor__match" data-editor-match hidden>
+        <span>A saved box overlaps this bird. Correct it or keep a different bird.</span>
+        <select data-editor-match-select aria-label="Match existing bird"></select>
+    </label>
     <div class="wm-bird-editor__status" data-editor-status role="status" aria-live="polite"></div>
 </div>
 {% endmacro %}

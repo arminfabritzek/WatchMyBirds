@@ -54,7 +54,7 @@
     /* =========================================
        No-Bird Frame — surface-agnostic fallback
        Used on Gallery / Subgallery / Species / Detection-Modal surfaces
-       where review_workspace.js (and its singleAction) is not loaded.
+       that use the shared image toolbox.
        ========================================= */
 
     /**
@@ -68,7 +68,7 @@
      * `false` (cancelled). The confirmation is deliberately never
      * remembered: every whole-image assertion must show its full frame.
      */
-    function confirmFrameNoBird(filename, triggerEl, fullSrcOverride, progressLabel) {
+    async function confirmFrameNoBird(filename, triggerEl, fullSrcOverride, progressLabel) {
 
         // Resolve the full-image URL from the nearest tile's <img>.
         // data-full-src is set by every wm-tile in subgallery / species /
@@ -107,21 +107,6 @@
             return Promise.resolve(false);
         }
 
-        // Count siblings on the same frame so the warning can be honest:
-        // "you are about to flag N detections, not 1". We approximate
-        // via tiles whose data-full-src ends with the same filename stem.
-        let detectionCount = 1;
-        if (filename) {
-            const stem = filename.replace(/\.(jpg|jpeg|png|webp)$/i, '');
-            const allTiles = document.querySelectorAll('.wm-tile__image[data-full-src]');
-            let n = 0;
-            for (let i = 0; i < allTiles.length; i++) {
-                const src = allTiles[i].getAttribute('data-full-src') || '';
-                if (src.indexOf(stem) !== -1) n++;
-            }
-            if (n > 0) detectionCount = n;
-        }
-
         const dlg = document.getElementById('wm-no-bird-confirm');
         const title = dlg && dlg.querySelector('[data-no-bird-confirm-title]');
         const summary = dlg && dlg.querySelector('[data-no-bird-confirm-summary]');
@@ -138,16 +123,25 @@
 
         title.textContent = 'No birds in this full image?'
             + (progressLabel ? ' · ' + progressLabel : '');
-        summary.textContent = detectionCount > 1
-            ? ('This frame carries ' + detectionCount
-                + ' detections — ALL will be flagged as false-positives.')
-            : 'All detections on this frame will be flagged as false-positives.';
-
-        // Sanitise fullSrc through the same same-origin path validator used
-        // for navigation. Co-located at the sink so the guard is visible next
-        // to the .src assignment.
-        preview.src = safeFullSrc;
+        confirmBtn.disabled = true;
+        summary.textContent = 'Every detected object will be answered No bird.';
         preview.alt = 'Full image: ' + filename;
+        const loaded = new Promise(function (resolve) {
+            preview.onload = function () { resolve(true); };
+            preview.onerror = function () { resolve(false); };
+            preview.src = safeFullSrc;
+        });
+        try {
+            const response = await fetch('/api/labels/state?filename=' + encodeURIComponent(filename));
+            if (!response.ok) return false;
+            const state = await response.json();
+            if (!await loaded) return false;
+            const blocker = state.full_image_absence_blocker;
+            if (blocker) summary.textContent = blocker;
+            confirmBtn.disabled = Boolean(blocker);
+        } catch (error) {
+            return false;
+        }
 
         return new Promise(function (resolve) {
             let settled = false;
@@ -167,7 +161,7 @@
             }
 
             function confirm() {
-                dlg.close('confirm');
+                if (!confirmBtn.disabled) dlg.close('confirm');
             }
 
             function cancelOnBackdrop(event) {
@@ -227,24 +221,29 @@
         if (!confirmed) return;
 
         try {
-            const response = await fetch('/api/review/decision', {
+            const response = await fetch('/api/labels/answer', {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filenames: [filename], action: 'no_bird' })
+                body: JSON.stringify({ filename: filename, image_bird_presence: 'absent' })
             });
             const data = await response.json().catch(function () { return {}; });
             if (!response.ok || data.status !== 'success') {
                 throw new Error(data.message || ('HTTP ' + response.status));
             }
 
-            // Fade out the nearest tile in-place
-            const tile = triggerEl && triggerEl.closest('.wm-tile');
-            if (tile) {
-                tile.style.transition = 'opacity 0.3s, transform 0.3s';
-                tile.style.opacity = '0';
-                tile.style.transform = 'scale(0.95)';
-                setTimeout(function () { tile.remove(); }, 320);
+            if (document.querySelector('[data-report-state]')) {
+                document.dispatchEvent(new CustomEvent('wmb:bird-objects-updated', {
+                    detail: { filename: filename, imageAbsent: true }
+                }));
+            } else {
+                const tile = triggerEl && triggerEl.closest('.wm-tile');
+                if (tile) {
+                    tile.style.transition = 'opacity 0.3s, transform 0.3s';
+                    tile.style.opacity = '0';
+                    tile.style.transform = 'scale(0.95)';
+                    setTimeout(function () { tile.remove(); }, 320);
+                }
             }
 
             if (window.wmToast) {
@@ -320,6 +319,16 @@
                 + ' boxes on this image have recorded answers. Other boxes are unchanged.')
             : 'Answers here apply only to the offered box. Full-image answers are listed separately.';
         panel.appendChild(scope);
+
+        const proposal = data.model_proposal || {};
+        if (proposal.raw_species_key) {
+            const original = document.createElement('p');
+            original.className = 'wm-correction-details__scope';
+            original.textContent = 'Raw model species: ' + String(proposal.raw_species_key).replace(/_/g, ' ')
+                + (proposal.classifier_species_key ? ' · Classifier selection: ' + String(proposal.classifier_species_key).replace(/_/g, ' ') : '')
+                + '. These are model proposals, not the current human answer.';
+            panel.appendChild(original);
+        }
 
         const readiness = document.createElement('div');
         readiness.className = 'wm-correction-details__readiness';
@@ -431,6 +440,10 @@
 
             case 'details':
             case 'view-details':
+                if (window.WmReviewModal && window.WmReviewModal.tileFor(actionEl)) {
+                    window.WmReviewModal.open(actionEl);
+                    return;
+                }
                 var modalTarget = actionEl.getAttribute('data-modal-target');
                 var detailsHref = actionEl.getAttribute('data-details-href');
                 if (modalTarget && typeof bootstrap !== 'undefined') {
@@ -489,26 +502,6 @@
             case 'move-trash':
                 if (typeof deleteDetection === 'function' && detectionId) {
                     deleteDetection(null, parseInt(detectionId, 10));
-                }
-                break;
-
-            case 'deep-scan':
-                if (typeof analyzeAction === 'function' && filename) {
-                    analyzeAction(null, filename);
-                } else if (filename) {
-                    // Fallback: direct API call
-                    fetch('/api/review/analyze/' + encodeURIComponent(filename), { method: 'POST' })
-                        .then(function (r) { return r.json(); })
-                        .then(function (data) {
-                            if (data.status === 'success') {
-                                if (window.wmToast) window.wmToast('Deep Scan queued', 'success', 2000);
-                            } else {
-                                if (window.wmToast) window.wmToast('Error: ' + data.message, 'error', 4000);
-                            }
-                        })
-                        .catch(function (e) {
-                            console.error('Deep scan error:', e);
-                        });
                 }
                 break;
 

@@ -7,12 +7,15 @@ import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from PIL import Image
 
 from core.human_label_core import object_training_readiness
 
-MANIFEST_SCHEMA_VERSION = "watchmybirds.canonical-label-bundle.v1"
-RULE_VERSION = "training-readiness-v1"
+MANIFEST_SCHEMA_VERSION = "watchmybirds.canonical-label-bundle.v3"
+RULE_VERSION = "training-readiness-v3"
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,9 @@ class CanonicalDataset:
     unresolved_detection_ids: list[int]
     media_filenames: list[str]
     snapshot: dict[str, object]
+    objects: list[dict[str, object]] = field(default_factory=list)
+    manual_objects: list[dict[str, object]] = field(default_factory=list)
+    manual_revisions: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -125,10 +131,21 @@ def _object_resolved_for_od(facts: list[Mapping[str, object]]) -> bool:
     return presence == "present" and _fact_value(facts, "bbox_quality") == "suitable"
 
 
+def read_media_size(path: Path) -> tuple[int, int] | None:
+    try:
+        with Image.open(path) as image:
+            return image.size
+    except (OSError, ValueError):
+        return None
+
+
 def build_canonical_dataset(
     conn: sqlite3.Connection,
     *,
+    labeling_installation_id: str,
+    filenames: set[str] | None = None,
     media_exists: Callable[[str], bool],
+    media_size: Callable[[str], tuple[int, int] | None] | None = None,
 ) -> CanonicalDataset:
     """Derive all views from explicit facts without mutating the database."""
     subjects = _rows(
@@ -166,6 +183,12 @@ def build_canonical_dataset(
         conn,
         "SELECT * FROM current_human_label_facts ORDER BY subject_id, fact_type",
     )
+    if filenames is not None:
+        subjects = [row for row in subjects if row["image_filename"] in filenames]
+        facts = [row for row in facts if row["image_filename"] in filenames]
+        current_facts = [
+            row for row in current_facts if row["image_filename"] in filenames
+        ]
     current_by_subject = _current_by_subject(current_facts)
     subject_by_detection = {
         int(subject["detection_id"]): subject
@@ -177,252 +200,296 @@ def build_canonical_dataset(
         for subject in subjects
         if subject["scope"] == "image"
     }
-    # Manual birds are not represented by detector-backed COCO annotations.
-    # Such frames must not be exported as complete or as empty negatives.
-    manual_frames = {
-        str(row["image_filename"])
-        for row in _rows(
-            conn,
-            "SELECT DISTINCT image_filename FROM manual_objects WHERE status = 'active'",
-        )
-    }
+    manual_objects = _rows(
+        conn, "SELECT * FROM manual_objects ORDER BY manual_object_id"
+    )
+    manual_revisions = _rows(
+        conn, "SELECT * FROM manual_object_revisions ORDER BY manual_revision_id"
+    )
+    if filenames is not None:
+        manual_objects = [
+            row for row in manual_objects if row["image_filename"] in filenames
+        ]
+        manual_ids = {row["manual_object_id"] for row in manual_objects}
+        manual_revisions = [
+            row for row in manual_revisions if row["manual_object_id"] in manual_ids
+        ]
     candidate_filenames = sorted(
         {str(subject["image_filename"]) for subject in subjects}
+        | {
+            str(obj["image_filename"])
+            for obj in manual_objects
+            if obj["status"] == "active"
+        }
     )
-    detections: list[dict[str, object]] = []
-    if candidate_filenames:
-        placeholders = ",".join("?" for _ in candidate_filenames)
-        detections = _rows(
-            conn,
-            f"""
-            SELECT detection_id, image_filename, frame_width, frame_height
-            FROM detections
-            WHERE image_filename IN ({placeholders})
-            ORDER BY image_filename, detection_id
-            """,
-            tuple(candidate_filenames),
-        )
-    detections_by_image: dict[str, list[dict[str, object]]] = defaultdict(list)
+    detections = _rows(
+        conn,
+        """
+        SELECT detection_id, image_filename, frame_width, frame_height, status, bbox_x, bbox_y, bbox_w, bbox_h, raw_species_name, decision_state, decision_level FROM detections WHERE image_filename IN (
+            SELECT image_filename FROM label_subjects
+            UNION SELECT image_filename FROM manual_objects WHERE status = 'active'
+        ) ORDER BY image_filename, detection_id
+    """,
+    )
+    candidate_names = set(candidate_filenames)
+    detections = [row for row in detections if row["image_filename"] in candidate_names]
+    image_facts = {
+        name: current_by_subject.get(int(subject["subject_id"]), [])
+        for name, subject in image_subjects.items()
+    }
+    objects: list[dict[str, object]] = []
+    dimensions: dict[str, tuple[int, int]] = {}
     for detection in detections:
-        detections_by_image[str(detection["image_filename"])].append(detection)
-
-    image_facts: dict[str, list[dict[str, object]]] = {}
-    object_facts: dict[int, list[dict[str, object]]] = {}
-    for filename, subject in image_subjects.items():
-        image_facts[filename] = current_by_subject.get(int(subject["subject_id"]), [])
-    for detection_id, subject in subject_by_detection.items():
-        object_facts[detection_id] = current_by_subject.get(
-            int(subject["subject_id"]), []
+        detection_id = int(detection["detection_id"])
+        filename = str(detection["image_filename"])
+        subject = subject_by_detection.get(detection_id)
+        current = (
+            current_by_subject.get(int(subject["subject_id"]), []) if subject else []
         )
+        readiness = object_training_readiness(current)
+        species = next(
+            (
+                fact.get("species_key")
+                for fact in current
+                if fact["fact_type"] == "species_identity"
+            ),
+            None,
+        )
+        width, height = (
+            int(detection.get("frame_width") or 0),
+            int(detection.get("frame_height") or 0),
+        )
+        if width > 0 and height > 0:
+            dimensions[filename] = (width, height)
+        objects.append(
+            {
+                "object_key": f"detection:{detection_id}",
+                "detection_id": detection_id,
+                "manual_object_id": None,
+                "image_filename": filename,
+                "bbox": _effective_bbox(subject, current)
+                if subject
+                else tuple(detection[f"bbox_{axis}"] for axis in ("x", "y", "w", "h")),
+                "proposal_species_key": detection["raw_species_name"],
+                "decision_state": detection["decision_state"],
+                "decision_level": detection["decision_level"],
+                "species_key": None
+                if _fact_value(current, "bird_presence") == "absent"
+                else species,
+                "presence": _fact_value(current, "bird_presence"),
+                "active": detection.get("status", "active") == "active",
+                "resolved_od": _object_resolved_for_od(current),
+                "od_reasons": list(readiness["od"]["reasons"]),
+                "cls_reasons": list(readiness["cls"]["reasons"]),
+            }
+        )
+    for manual in manual_objects:
+        if manual["status"] != "active":
+            continue
+        manual_id = int(manual["manual_object_id"])
+        objects.append(
+            {
+                "object_key": f"manual:{manual_id}",
+                "detection_id": None,
+                "manual_object_id": manual_id,
+                "image_filename": manual["image_filename"],
+                "bbox": tuple(
+                    float(manual[f"bbox_{axis}"]) for axis in ("x", "y", "w", "h")
+                ),
+                "species_key": manual["species_key"],
+                "presence": "present",
+                "active": True,
+                "resolved_od": True,
+                "od_reasons": [],
+                "cls_reasons": []
+                if manual["species_state"] == "identified"
+                else ["species_unknown"],
+            }
+        )
+    by_image: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for obj in objects:
+        by_image[str(obj["image_filename"])].append(obj)
 
     manifest: list[dict[str, object]] = []
     media_filenames: set[str] = set()
-    complete_positive_frames: set[str] = set()
-    included_negative_frames: set[str] = set()
-    od_included_ids: set[int] = set()
-    cls_included_ids: set[int] = set()
+    coco_images: list[dict[str, object]] = []
+    annotations: list[dict[str, object]] = []
+    classifier_ready: list[dict[str, object]] = []
     unresolved_ids: set[int] = set()
-
     for filename in candidate_filenames:
         present_media = media_exists(filename)
         if present_media:
             media_filenames.add(filename)
+        if filename not in dimensions and present_media and media_size:
+            size = media_size(filename)
+            if size:
+                dimensions[filename] = size
+        width, height = dimensions.get(filename, (0, 0))
         frame_facts = image_facts.get(filename, [])
         image_presence = _fact_value(frame_facts, "bird_presence")
-        negative_reasons: list[str] = []
-        if filename in manual_frames:
-            negative_reasons.append("manual_birds_not_exported")
+        frame_objects = by_image[filename]
+        positive_objects = [
+            obj
+            for obj in frame_objects
+            if obj["active"] and obj["presence"] == "present"
+        ]
+        negative_reasons = []
         if not present_media:
             negative_reasons.append("media_missing")
-        if image_presence == "absent":
-            if not negative_reasons:
-                included_negative_frames.add(filename)
-                media_filenames.add(filename)
-                negative_reasons = ["explicit_full_image_no_bird"]
-        elif image_presence == "present":
-            negative_reasons.append("image_bird_present")
-        else:
-            negative_reasons.append("image_bird_absence_unknown")
+        if positive_objects:
+            negative_reasons.append("image_has_positive_objects")
+        if image_presence != "absent":
+            negative_reasons.append(
+                "image_bird_present"
+                if image_presence == "present"
+                else "image_bird_absence_unknown"
+            )
+        negative_ready = not negative_reasons
         manifest.append(
             _reasoned_decision(
                 view="od_negative",
                 filename=filename,
                 detection_id=None,
-                included=filename in included_negative_frames,
-                reasons=negative_reasons,
+                included=negative_ready,
+                reasons=negative_reasons or ["explicit_full_image_no_bird"],
             )
         )
-
-        frame_detection_rows = detections_by_image.get(filename, [])
         detector_miss = _fact_value(frame_facts, "detector_miss") == "reported"
         frame_complete = (
-            bool(frame_detection_rows)
-            and filename not in manual_frames
+            bool(frame_objects)
             and not detector_miss
+            and image_presence != "absent"
             and all(
-                _object_resolved_for_od(object_facts.get(int(row["detection_id"]), []))
-                for row in frame_detection_rows
+                obj["presence"] == "absent"
+                or (obj["active"] and obj["resolved_od"] and obj["bbox"] is not None)
+                for obj in frame_objects
             )
         )
-        frame_has_od_positive = any(
-            object_training_readiness(object_facts.get(int(row["detection_id"]), []))[
-                "od"
-            ]["ready"]
-            for row in frame_detection_rows
+        frame_od_ready = (
+            frame_complete
+            and bool(positive_objects)
+            and present_media
+            and width > 0
+            and height > 0
         )
-        if frame_complete and frame_has_od_positive and present_media:
-            complete_positive_frames.add(filename)
-
-        for detection in frame_detection_rows:
-            detection_id = int(detection["detection_id"])
-            subject = subject_by_detection.get(detection_id)
-            active_facts = object_facts.get(detection_id, [])
-            readiness = object_training_readiness(active_facts)
-            bbox = _effective_bbox(subject, active_facts)
-
-            od_reasons = list(readiness["od"]["reasons"])
-            if filename in manual_frames:
-                od_reasons.append("manual_birds_not_exported")
+        image_id = len(coco_images) + 1
+        if frame_od_ready or negative_ready:
+            coco_images.append(
+                {
+                    "id": image_id,
+                    "file_name": f"media/{filename[:4]}-{filename[4:6]}-{filename[6:8]}/{filename}",
+                    "width": width or None,
+                    "height": height or None,
+                }
+            )
+        for obj in frame_objects:
+            detection_id = obj["detection_id"]
+            key = obj["object_key"]
+            sample_id = (
+                _stable_sample_id("object", filename, detection_id)
+                if detection_id is not None
+                else hashlib.sha256(f"object:{filename}:{key}".encode()).hexdigest()[
+                    :24
+                ]
+            )
+            identity = {
+                "sample_id": sample_id,
+                "object_key": key,
+                "detection_id": detection_id,
+                "manual_object_id": obj["manual_object_id"],
+            }
+            shared_reasons = []
+            if not present_media:
+                shared_reasons.append("media_missing")
+            if obj["bbox"] is None:
+                shared_reasons.append("bbox_geometry_missing")
+            if not obj["active"] and obj["presence"] != "absent":
+                shared_reasons.append("object_inactive")
+            if image_presence == "absent":
+                shared_reasons.append("image_bird_absent")
+            od_reasons = list(obj["od_reasons"]) + shared_reasons
             if detector_miss:
                 od_reasons.append("detector_miss_reported")
             if not frame_complete:
                 od_reasons.append("frame_has_unresolved_objects")
-            if not present_media:
-                od_reasons.append("media_missing")
-            if bbox is None:
-                od_reasons.append("bbox_geometry_missing")
-            od_ready = not od_reasons
-            if od_ready:
-                od_included_ids.add(detection_id)
-                media_filenames.add(filename)
-                od_reasons = ["explicit_object_bird_and_suitable_bbox"]
-            manifest.append(
-                _reasoned_decision(
-                    view="od_positive",
-                    filename=filename,
-                    detection_id=detection_id,
-                    included=od_ready,
-                    reasons=list(dict.fromkeys(od_reasons)),
+            if width <= 0 or height <= 0:
+                od_reasons.append("frame_dimensions_missing")
+            cls_reasons = list(obj["cls_reasons"]) + shared_reasons
+            for view, reasons, success in (
+                ("od_positive", od_reasons, "explicit_object_bird_and_suitable_bbox"),
+                ("cls_positive", cls_reasons, "explicit_object_bird_and_species"),
+            ):
+                manifest.append(
+                    {
+                        **_reasoned_decision(
+                            view=view,
+                            filename=filename,
+                            detection_id=detection_id,
+                            included=not reasons,
+                            reasons=list(dict.fromkeys(reasons)) or [success],
+                        ),
+                        **identity,
+                    }
                 )
+            if not od_reasons:
+                x, y, w, h = obj["bbox"]
+                annotations.append(
+                    {
+                        "id": len(annotations) + 1,
+                        "image_id": image_id,
+                        "category_id": 1,
+                        "bbox": [x * width, y * height, w * width, h * height],
+                        "bbox_normalized": [x, y, w, h],
+                        "area": w * width * h * height,
+                        "iscrowd": 0,
+                        **identity,
+                    }
+                )
+            if not cls_reasons:
+                classifier_ready.append(
+                    {
+                        **identity,
+                        "image_filename": filename,
+                        "media_path": f"media/{filename[:4]}-{filename[4:6]}-{filename[6:8]}/{filename}",
+                        "species_key": obj["species_key"],
+                        "bbox_xywh_normalized": list(obj["bbox"]),
+                        "rule_version": RULE_VERSION,
+                    }
+                )
+            unresolved = list(dict.fromkeys(od_reasons + cls_reasons))
+            if unresolved and detection_id is not None:
+                unresolved_ids.add(int(detection_id))
+            manifest.append(
+                {
+                    **_reasoned_decision(
+                        view="unresolved",
+                        filename=filename,
+                        detection_id=detection_id,
+                        included=bool(unresolved),
+                        reasons=unresolved or ["all_requested_training_views_resolved"],
+                    ),
+                    **identity,
+                }
             )
 
-            cls_reasons = list(readiness["cls"]["reasons"])
-            if not present_media:
-                cls_reasons.append("media_missing")
-            if bbox is None:
-                cls_reasons.append("bbox_geometry_missing")
-            cls_ready = not cls_reasons
-            if cls_ready:
-                cls_included_ids.add(detection_id)
-                media_filenames.add(filename)
-                cls_reasons = ["explicit_object_bird_and_species"]
-            manifest.append(
-                _reasoned_decision(
-                    view="cls_positive",
-                    filename=filename,
-                    detection_id=detection_id,
-                    included=cls_ready,
-                    reasons=list(dict.fromkeys(cls_reasons)),
-                )
-            )
+    def station_sample_id(local_id: str) -> str:
+        return f"{labeling_installation_id}:{local_id}"
 
-            unresolved_reasons = list(
-                dict.fromkeys(
-                    list(readiness["od"]["reasons"])
-                    + list(readiness["cls"]["reasons"])
-                    + (["frame_has_unresolved_objects"] if not frame_complete else [])
-                )
-            )
-            unresolved = bool(unresolved_reasons)
-            if unresolved:
-                unresolved_ids.add(detection_id)
-            manifest.append(
-                _reasoned_decision(
-                    view="unresolved",
-                    filename=filename,
-                    detection_id=detection_id,
-                    included=unresolved,
-                    reasons=unresolved_reasons
-                    or ["all_requested_training_views_resolved"],
-                )
-            )
-
+    for rows in (manifest, annotations, classifier_ready):
+        for row in rows:
+            row["sample_id"] = station_sample_id(str(row["sample_id"]))
+    sample_ids = {
+        row["object_key"]: row["sample_id"] for row in manifest if "object_key" in row
+    }
+    for obj in objects:
+        obj["sample_id"] = sample_ids[obj["object_key"]]
     manifest.sort(
         key=lambda row: (
             str(row["image_filename"]),
             str(row["view"]),
-            int(row["detection_id"] or 0),
+            str(row.get("object_key", "")),
         )
     )
-
-    coco_images: list[dict[str, object]] = []
-    coco_annotations: list[dict[str, object]] = []
-    annotation_id = 1
-    coco_filenames = sorted(complete_positive_frames | included_negative_frames)
-    image_id_by_name = {
-        filename: index + 1 for index, filename in enumerate(coco_filenames)
-    }
-    for filename in coco_filenames:
-        media_filenames.add(filename)
-        first_detection = next(iter(detections_by_image.get(filename, [])), {})
-        coco_images.append(
-            {
-                "id": image_id_by_name[filename],
-                "file_name": f"media/{filename[:4]}-{filename[4:6]}-{filename[6:8]}/{filename}",
-                "width": first_detection.get("frame_width"),
-                "height": first_detection.get("frame_height"),
-            }
-        )
-        if filename in included_negative_frames:
-            continue
-        for detection in detections_by_image.get(filename, []):
-            detection_id = int(detection["detection_id"])
-            if detection_id not in od_included_ids:
-                continue
-            bbox = _effective_bbox(
-                subject_by_detection.get(detection_id),
-                object_facts.get(detection_id, []),
-            )
-            width = int(detection.get("frame_width") or 0)
-            height = int(detection.get("frame_height") or 0)
-            if bbox is None or width <= 0 or height <= 0:
-                continue
-            x, y, w, h = bbox
-            coco_annotations.append(
-                {
-                    "id": annotation_id,
-                    "image_id": image_id_by_name[filename],
-                    "category_id": 1,
-                    "bbox": [x * width, y * height, w * width, h * height],
-                    "bbox_normalized": [x, y, w, h],
-                    "area": w * width * h * height,
-                    "iscrowd": 0,
-                    "detection_id": detection_id,
-                }
-            )
-            annotation_id += 1
-
-    classifier_ready: list[dict[str, object]] = []
-    for detection_id in sorted(cls_included_ids):
-        subject = subject_by_detection[detection_id]
-        filename = str(subject["image_filename"])
-        active_facts = object_facts[detection_id]
-        species_fact = next(
-            fact for fact in active_facts if fact["fact_type"] == "species_identity"
-        )
-        bbox = _effective_bbox(subject, active_facts)
-        classifier_ready.append(
-            {
-                "sample_id": _stable_sample_id("object", filename, detection_id),
-                "image_filename": filename,
-                "media_path": f"media/{filename[:4]}-{filename[4:6]}-{filename[6:8]}/{filename}",
-                "detection_id": detection_id,
-                "species_key": species_fact["species_key"],
-                "bbox_xywh_normalized": list(bbox) if bbox else None,
-                "rule_version": RULE_VERSION,
-            }
-        )
-
     coco = {
         "info": {
             "schema_version": MANIFEST_SCHEMA_VERSION,
@@ -431,11 +498,14 @@ def build_canonical_dataset(
         "licenses": [],
         "categories": [{"id": 1, "name": "bird", "supercategory": "animal"}],
         "images": coco_images,
-        "annotations": coco_annotations,
+        "annotations": annotations,
     }
     snapshot = {
         "max_subject_id": max((int(row["subject_id"]) for row in subjects), default=0),
         "max_fact_id": max((int(row["fact_id"]) for row in facts), default=0),
+        "max_manual_revision_id": max(
+            (int(row["manual_revision_id"]) for row in manual_revisions), default=0
+        ),
         "latest_fact_created_at": max(
             (str(row["created_at"]) for row in facts), default=""
         ),
@@ -446,14 +516,15 @@ def build_canonical_dataset(
             RULE_VERSION.encode(),
             _canonical_line_bytes(subjects),
             _canonical_line_bytes(facts),
+            _canonical_line_bytes(manual_objects),
+            _canonical_line_bytes(manual_revisions),
             _canonical_line_bytes(manifest),
             json.dumps(coco, sort_keys=True, separators=(",", ":")).encode(),
             _canonical_line_bytes(classifier_ready),
         )
     )
-    bundle_id = hashlib.sha256(identity_payload).hexdigest()
     return CanonicalDataset(
-        bundle_id=bundle_id,
+        bundle_id=hashlib.sha256(identity_payload).hexdigest(),
         subjects=subjects,
         facts=facts,
         manifest=manifest,
@@ -462,4 +533,7 @@ def build_canonical_dataset(
         unresolved_detection_ids=sorted(unresolved_ids),
         media_filenames=sorted(media_filenames),
         snapshot=snapshot,
+        objects=objects,
+        manual_objects=manual_objects,
+        manual_revisions=manual_revisions,
     )

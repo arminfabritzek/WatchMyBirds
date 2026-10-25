@@ -54,16 +54,6 @@ def insert_image(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     conn.commit()
 
 
-def check_image_exists_by_hash(conn: sqlite3.Connection, content_hash: str) -> bool:
-    """Checks if an image with the given SHA-256 hash already exists."""
-    if not content_hash:
-        return False
-    row = conn.execute(
-        "SELECT 1 FROM images WHERE content_hash = ?", (content_hash,)
-    ).fetchone()
-    return row is not None
-
-
 def update_downloaded_timestamp(
     conn: sqlite3.Connection, filenames: list[str], download_ts: str
 ) -> None:

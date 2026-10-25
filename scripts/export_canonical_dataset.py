@@ -15,14 +15,16 @@ from config import get_config  # noqa: E402
 from utils.db import connection as db_connection  # noqa: E402
 from utils.path_manager import PathManager  # noqa: E402
 from web.services.canonical_dataset_service import (  # noqa: E402
-    build_bundle,
+    create_export,
+    get_or_create_labeling_installation_id,
+    original_resolver,
     write_canonical_bundle,
 )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Build and write the read-only canonical label bundle."
+        description="Record waiting training photos and write their canonical ZIP."
     )
     parser.add_argument(
         "--destination",
@@ -34,13 +36,19 @@ def main() -> int:
 
     path_manager = PathManager(str(get_config()["OUTPUT_DIR"]))
     with db_connection.closing_connection() as conn:
-        bundle = build_bundle(conn, path_resolver=path_manager.get_original_path)
+        export_id, bundle = create_export(
+            conn,
+            paths=path_manager,
+            labeling_installation_id=get_or_create_labeling_installation_id(
+                str(path_manager.base_dir)
+            ),
+        )
     destination = write_canonical_bundle(
         bundle,
-        path_resolver=path_manager.get_original_path,
+        path_resolver=original_resolver(path_manager),
         destination=args.destination,
     )
-    print(f"{bundle.bundle_id} {destination}")
+    print(f"{export_id} {bundle.bundle_id} {destination}")
     return 0
 
 

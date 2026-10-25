@@ -5,7 +5,7 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 
 ## 2. Core Architectural Invariants
 *   **Originals are Immutable:** After initial capture/import finalization (including initial EXIF), stored originals must not be overwritten or edited for review corrections. Initial ingestion may encode the incoming image; this is not a promise of byte identity with an uploaded source. Retention and explicit hard deletion are separate removal workflows.
-*   **Derivatives and Retention:** Optimized images and thumbnails can be regenerated only while their source remains available. `core/retention_core.py` can retire originals while preserving derivatives and metadata. Do not treat those surviving derivatives as disposable caches.
+*   **Derivatives and Retention:** Optimized images and thumbnails can be regenerated only while their source remains available. `core/deletion_plan.py` decides which files and rows expire. Bird previews survive with Keep previews; Delete everything expires them later. Answers and admitted bird rows survive file expiry. Do not treat retained derivatives as disposable caches.
 *   **Database as Metadata Authority:** The SQLite database is the sole authority for metadata. It contains *NO* absolute filesystem paths, only filenames and relative references resolved dynamically.
 *   **PathManager as the storage-path API:** New storage-path construction SHOULD go through `utils.path_manager.PathManager`. This is specified as a SOFT invariant (`S-05` in `INVARIANTS.md`), not as a fact about the current codebase — some legacy call sites still build paths manually. New code must not add to that pile; refactors that remove a manual path are welcome.
 *   **`utils.image_ops` as the image-op API:** Shared image transformations (crop, pad) live in `utils.image_ops`. Same status as PathManager: required for new code, partial in legacy (`O-04` in `INVARIANTS.md` retired the "already-enforced" claim).
@@ -30,7 +30,8 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
         Geographic scoring never consumes or writes human label facts.
     *   `label_subjects` / `human_label_facts`: Explicit human assertions, separate from model outputs.
     *   `manual_objects` / `manual_object_revisions`: Manually added birds and their revision history.
-    *   `station_event_reviews`: Explicit biological-event review decisions.
+    *   `bird_add_requests`: Idempotent add-or-correct receipts; geometric matches require an explicit identity choice before writing.
+    *   `station_event_reviews` / `station_event_review_members`: Unused legacy event assessments, retained without readers or writers.
 
 ## 4. Key Modules and Responsibilities
 ### `utils/path_manager.py`
@@ -111,15 +112,15 @@ must not be used as evidence that legacy route logic has been removed.
 
 - Gallery data: `web.services.gallery_service.get_detections_for_date` →
   `core.gallery_core.get_detections_for_date` → SQLite queries.
-- Trash: `web.blueprints.trash.reject_detection` currently calls
-  `db_service.reject_detections` → `utils.db.detections.reject_detections`.
+- Trash: `web.blueprints.trash.move_to_trash` calls
+  `detections_service.move_to_trash` → `core.detections_core.move_to_trash`.
   This changes detection/classification status; it does not move image files
-  or assert a training label. The service pass-through is S-02 debt.
+  or assert a training label. It stamps `detections.trashed_at` in the same transaction.
 - Hard deletion: core/service wrappers → `utils.file_gc`. Referenced files
   are attempted first, then DB rows; missing files do not stop DB cleanup.
 - Corrections: `web.blueprints.human_labels` → `human_label_service` →
   core human-label/manual-object logic. Model proposals, manual objects,
-  image-wide facts, and biological event review are distinct evidence.
+  and image-wide facts remain distinct evidence.
 
 ### Validation and limits
 
@@ -134,13 +135,9 @@ imports; none establish full UI, persistence, or architectural correctness.
 
 ### Persistence gap
 
-`utils.ingest.ingest_file` derives detection-bearing image filenames from
-EXIF time with one-second precision, then writes to that original path.
-Hash deduplication prevents identical inputs but does not prevent different
-images with the same timestamp from sharing a destination. The immutability
-contract remains in force; collision-safe publication is an implementation
-gap, not permission to overwrite. Live capture uses microsecond filenames,
-but its writer also does not enforce exclusive creation.
+Live capture uses microsecond filenames, but its writer does not enforce
+exclusive creation. Collision-safe publication remains an implementation gap,
+not permission to overwrite an existing original.
 
 ## 8. UI Architecture Contract
 
@@ -164,3 +161,81 @@ surface-specific compositions and exceptions are part of the contract;
 migration checkmarks and substring searches for class names are not UI
 acceptance tests. Validate affected flows in a browser as well as with their
 relevant template/JS tests.
+
+## Training export
+
+`core/canonical_dataset.py` derives the sole training bundle from current human
+facts and active manual objects. Stable `detection:<id>` and `manual:<id>` keys
+identify birds once per training view. Species crops are independent of unresolved
+neighbors; COCO contains only frames whose objects are all resolved, including
+manually drawn boxes. Historical facts and manual revisions remain audit evidence.
+Manual records never acquire synthetic model predictions. Bundle/rule version 3
+uses sample IDs `<labeling_installation_id>:<24-hex local sample hash>` for both
+object and image samples. Object absence suppresses an older species answer in
+the training object; raw historical facts remain audit evidence. Unknown manual
+species can supply a box but cannot supply a species label. Missing originals
+exclude training use.
+
+`core/training_export.py` records each export's immutable bundle metadata, creation
+time and exact answer revisions in `labeling_exports` / `labeling_export_members`.
+The incompatible legacy `training_exports` table stays untouched and unused;
+its rows never count as current exports or receipts. Backups preserve it as data,
+while merge imports export evidence only from the new tables.
+The builder can select detection, manual-object or image-statement keys; selected
+photos include all their objects and statements. Current asserted revisions with
+an original wait until included in an export. Changed answers wait again.
+`core/training_retention.py` protects waiting photos and photos in any unconfirmed
+export, including unchanged context siblings. Historical facts and legacy flags
+alone grant no training protection. Favorites remain a separate retention rule.
+An idempotent receipt stores `received_at` for that export only; it is the reference
+time for deletion deadlines. `core/retention_core.py` executes due planner actions,
+rechecking each photo under `BEGIN IMMEDIATE` before files and then rows.
+Setting changes serialize with that transaction. Export records have no foreign
+keys to images, detections or label subjects and survive their deletion. The
+unused legacy `training_exports` table is never explicitly written or altered;
+its existing detection cascade can remove rows when a detection is fully deleted.
+
+ZIP responses stream media in 64 KiB chunks without a temporary archive. Saved
+metadata rebuilds the same bytes after later edits; originals remain immutable.
+Metadata memory scales with the selected photo context, not media byte volume.
+Missing originals make a repeat download fail explicitly. SQLite backup includes
+both tables; USB merge maps membership IDs and media locations while preserving
+the original snapshot and sample IDs.
+
+## Storage diagnostics
+
+`core/storage_scan.py` owns one manually started scan per Flask application and
+persists the latest report plus at most 32 measurements via PathManager. Status
+requests read that bounded state; they never enumerate media or rebuild analytics.
+`core/storage_accounting.py` streams known application storage roots and reports
+logical file sizes separately from allocated blocks and filesystem capacity.
+Missing optional scopes, access failures and live changes remain visible. Inactive
+Linux automounts are detected from the kernel mount table and left unmounted.
+
+SQLite diagnostics use a read-only transaction. Connection-local TEMP views limit
+the unchanged canonical exporter to batches of 200 complete images; they never
+modify source tables. Protection attribution reuses the existing training predicate
+and retention decision, with overlapping reasons and a distinct protected union.
+Readiness does not release training protection. The filesystem scan is not atomic;
+concurrent files/DB changes make reclaim estimates provisional. Training export receipts are recorded separately from temporary-file diagnostics.
+
+`core/storage_pressure.py` gates image persistence using a two-second filesystem
+cache and subtracts a conservative per-frame budget between checks. Recovery runs
+outside capture through that same planner and executor: open/model non-bird files
+and rows first, then unprotected answered/admitted originals, then bird previews
+only with Delete everything. Every pass rechecks all objects and current settings
+under the write lock. Favorites and pending training files stay protected; normal
+trash deadlines still apply. Low space can shorten the normal Review grace period.
+The photo switch gates early deletion too. While off, or when reclamation cannot
+restore the reserve and frame headroom, new image/detection persistence pauses.
+Live frames and inference continue, but these unsaved frames produce no ticker,
+Telegram detection alert, MQTT event or history row. Already queued alerts and
+reports about stored observations can still send. Saving resumes automatically
+after free space recovers. Authenticated pages show the cached saving/cleanup status.
+
+Classifier rejects persist neither photos nor notes. The unused `reject_audit`
+table remains for schema compatibility; a transactional one-time migration clears
+its former rows. `core/technical_storage.py` bounds runtime/weather samples and
+disposable files independently of the photo switch. Application and aesthetic logs
+rotate; vital-sign CSV files rotate separately. Human answers, export records and
+admitted observations have no technical-data expiry.

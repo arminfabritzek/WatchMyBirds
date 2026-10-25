@@ -80,6 +80,12 @@ def test_export_selection_keeps_declared_bird_fps_and_human_positives() -> None:
         (1, "bird_presence", "present"),
     )
 
+    conn.execute(
+        "INSERT INTO label_subjects VALUES (2, 'object', '20260822_180000_000003.jpg')"
+    )
+    conn.execute(
+        "INSERT INTO current_human_label_facts VALUES (2, 'bbox_quality', 'suitable')"
+    )
     negatives, positives = exporter._fetch_names(
         conn,
         negative_from="20260822_000000_000000.jpg",
@@ -102,7 +108,9 @@ def test_copy_group_refuses_to_mix_with_an_existing_snapshot(tmp_path: Path) -> 
         exporter._copy_group(tmp_path, destination, [])
 
 
-def test_score_variant_rejects_unreadable_image_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_score_variant_rejects_unreadable_image_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _load_script("benchmark_detector_variants")
     gate = _load_script("benchmark_field_fp_gate")
 
@@ -148,6 +156,4 @@ def test_end_to_end_yolo_decoder_returns_top_animal_score() -> None:
         dtype=np.float32,
     )
 
-    assert onnx_benchmark._animal_score(output, animal_class_id=0) == pytest.approx(
-        0.7
-    )
+    assert onnx_benchmark._animal_score(output, animal_class_id=0) == pytest.approx(0.7)

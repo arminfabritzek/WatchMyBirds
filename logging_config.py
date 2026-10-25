@@ -3,6 +3,7 @@ import os
 from logging.handlers import RotatingFileHandler
 
 from config import get_config
+from core.technical_storage import LOG_BACKUPS, LOG_FILE_BYTES
 
 config = get_config()
 DEBUG_MODE = config["DEBUG_MODE"]
@@ -25,8 +26,8 @@ try:
     # Max 5 MB per file, keep 3 backups = max ~20 MB total
     file_handler = RotatingFileHandler(
         log_dir / "app.log",
-        maxBytes=5 * 1024 * 1024,  # 5 MB
-        backupCount=3,
+        maxBytes=LOG_FILE_BYTES,
+        backupCount=LOG_BACKUPS,
         encoding="utf-8",
     )
     handlers.append(file_handler)

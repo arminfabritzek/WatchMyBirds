@@ -14,6 +14,8 @@ Human contributors: [CONTRIBUTING.md](CONTRIBUTING.md).
 - Ask when a missing decision materially changes scope. Deployment, live
   camera or production-data changes, pushing, and publishing need action-specific
   authorization; existing authorization in the conversation counts.
+- This repository is public. Never put agent session links (for example
+  `claude.ai/code/session_…`) in commits, pull requests, or GitHub comments.
 - When contributors work concurrently, agree file ownership and re-read shared
   files before editing. Integrate their changes instead of reverting them.
 - Keep fixes focused. Do not bundle unsolicited refactors.
@@ -75,8 +77,7 @@ for shared transformations. Legacy deviations are not permission to add more.
 - Runtime dependencies: `requirements.txt` plus `requirements-aesthetic.txt`.
   The latter isolates the torch/open_clip CPU index, is included in standard
   builds, and is default-ON. Opt out with `AESTHETIC_TAG_ENABLED=False`, not by
-  omitting its dependencies. `requirements-companion.txt` is an optional extra
-  for the default-OFF Companion.
+  omitting its dependencies.
 - Python tool configuration lives in `pyproject.toml`. Run from the repo root;
   use `.venv/bin/python -m` when available. `<files>` below is a placeholder.
 
@@ -107,11 +108,9 @@ deletion, and auth changes; tests belong in `tests/`.
 
 - UI: `web/`, `templates/`, `assets/`; analytics: `web/blueprints/analytics.py`,
   `core/analytics_core.py`.
-- Pipeline/storage: `detectors/`, `core/`, `utils/`; inbox ingestion:
-  `core/ingest_core.py`, `utils/ingest.py`.
+- Pipeline/storage: `detectors/`, `core/`, `utils/`.
 - Camera/deployment: `camera/`, `rpi/`, `systemd/`, `scripts/`, `infra/`,
   `.github/workflows/`, `docker-compose.example.yml`.
-- Optional Companion: `web/services/companion/`, `web/blueprints/companion.py`.
 
 ## Completion
 

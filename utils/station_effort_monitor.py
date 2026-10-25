@@ -7,8 +7,11 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from config import get_config
+from core.technical_storage import prune_samples, prune_temporary_files
 from logging_config import get_logger
 from utils.db.connection import closing_connection
+from utils.path_manager import PathManager
 
 logger = get_logger(__name__)
 
@@ -21,6 +24,7 @@ class StationEffortMonitor:
         self.interval_seconds = max(10.0, float(interval_seconds))
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._last_file_cleanup = float("-inf")
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -69,6 +73,10 @@ class StationEffortMonitor:
                         sample["ptz_state"],
                     ),
                 )
+                prune_samples(conn, "station_runtime_samples")
+            if time.monotonic() - self._last_file_cleanup >= 3600:
+                prune_temporary_files(PathManager(str(get_config()["OUTPUT_DIR"])))
+                self._last_file_cleanup = time.monotonic()
         except Exception:
             logger.warning("Station effort sample failed", exc_info=True)
 
@@ -77,7 +85,9 @@ class StationEffortMonitor:
         now_epoch = time.time()
         latest_frame_at = float(getattr(manager, "latest_raw_timestamp", 0.0) or 0.0)
         stream_online = app_online and (now_epoch - latest_frame_at) <= 5.0
-        camera_online = app_online and getattr(manager, "video_capture", None) is not None
+        camera_online = (
+            app_online and getattr(manager, "video_capture", None) is not None
+        )
 
         detection_service = getattr(manager, "detection_service", None)
         try:

@@ -4,6 +4,7 @@
 # ------------------------------------------------------------------------------
 # video_capture.py
 from config import get_config
+from core.telemetry_metrics import metrics
 
 config = get_config()
 
@@ -76,7 +77,6 @@ class VideoCapture:
         self.backend_switch_cooldown = 15  # seconds between backend switches
         self.stream_settings_loaded = False
         self._cache_reuse_failed_once = False
-        self.runtime_resolution_lock = threading.Lock()
         self._ffmpeg_last_availability = True
         self._last_codec_switch_skip_logged = False
         self._last_frame_drop_logged = False
@@ -939,6 +939,8 @@ class VideoCapture:
 
                         self.consecutive_none_frames = 0
 
+                        metrics.record("camera_frame")
+
                         # We have a real decoded frame, enqueue it
                         self.last_enqueued_time = time.time()
 
@@ -1112,96 +1114,6 @@ class VideoCapture:
         except Exception as e:
             logger.error(f"Failed to switch to FFmpeg: {e}")
 
-    def _handle_codec_switch(self):
-        """
-        Handles RTSP codec switches gracefully without triggering full reinitialization loops.
-        Step 3: No ffprobe in hot recovery path - use cached resolution.
-        """
-        if self.stop_event.is_set() or self.stop_flag:
-            logger.debug("Skipping codec switch handling during shutdown.")
-            return
-        logger.debug("Detected potential codec switch. Attempting fast reconnection...")
-        try:
-            # Release resources
-            if self.cap:
-                self.cap.release()
-            self._terminate_ffmpeg_process(reason="codec switch")
-            self.cap = None
-
-            # Short pause to let codec change settle
-            time.sleep(1)
-
-            # Step 3: Use cached/known resolution - NO ffprobe here
-            if self.stream_width and self.stream_height:
-                logger.debug(
-                    f"Using cached resolution for codec switch recovery: "
-                    f"{self.stream_width}x{self.stream_height}"
-                )
-            else:
-                logger.warning(
-                    "No cached resolution available during codec switch. "
-                    "Failing fast and backing off."
-                )
-                return
-
-            # Reconnect quickly
-            self._setup_capture()
-            self._start_reader_thread()
-            logger.debug("Fast reconnection after codec switch successful.")
-        except Exception as e:
-            logger.error(f"Codec switch handling failed: {e}")
-            self.request_recovery(trigger="codec_switch_fallback", reason=str(e))
-
-    def _handle_runtime_resolution_change(self, new_width, new_height, reason=""):
-        """
-        Reconnects FFmpeg when runtime resolution changes to keep buffer aligned.
-        Step 3: No ffprobe in hot recovery path.
-        """
-        if self.stop_event.is_set() or self.stop_flag:
-            logger.debug("Skipping runtime resolution change handling during shutdown.")
-            return
-        if not self.runtime_resolution_lock.acquire(blocking=False):
-            logger.debug(
-                "Skipping runtime resolution change handling (already running)."
-            )
-            return
-        try:
-            # Step 3: If no explicit dimensions, fail fast - NO ffprobe here
-            if new_width is None or new_height is None:
-                logger.warning(
-                    "Runtime resolution change detected but no dimensions provided. "
-                    "Failing fast (no probe in hot path). Requesting full recovery."
-                )
-                self.request_recovery(
-                    trigger="resolution_change_no_dims",
-                    reason="Resolution changed but no cached dimensions available",
-                )
-                return
-
-            reason_suffix = f" ({reason})" if reason else ""
-            logger.debug(
-                f"Runtime resolution change detected{reason_suffix}: "
-                f"{self.stream_width}x{self.stream_height} -> {new_width}x{new_height}"
-            )
-            self.stream_width = new_width
-            self.stream_height = new_height
-            self._persist_stream_settings()
-
-            if self.stream_type == self.RTSP and self.backend == self.BACKEND_FFMPEG:
-                self._terminate_ffmpeg_process(reason="runtime resolution change")
-                try:
-                    self._setup_ffmpeg()
-                    logger.debug("FFmpeg restarted after runtime resolution change.")
-                except Exception as restart_error:
-                    logger.error(
-                        f"Failed to restart FFmpeg after runtime resolution change: {restart_error}"
-                    )
-                    self.request_recovery(
-                        trigger="resolution_restart_failed", reason=str(restart_error)
-                    )
-        finally:
-            self.runtime_resolution_lock.release()
-
     def _read_ffmpeg_frame(self, read_timeout_sec=None):
         frame_size_bytes = (
             self.stream_width * self.stream_height * 3
@@ -1352,6 +1264,7 @@ class VideoCapture:
         MUST route through here instead of calling recovery actions directly.
         Enforces: single-flight, cooldown, circuit breaker, timer coalescing.
         """
+        metrics.record("camera_error")
         attempt_id = next(self._recovery_gen)
         now = time.time()
 
