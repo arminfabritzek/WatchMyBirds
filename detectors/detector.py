@@ -8,7 +8,6 @@ from typing import Any
 
 import cv2
 import numpy as np
-import onnxruntime
 
 from config import get_config
 from logging_config import get_logger
@@ -17,6 +16,7 @@ from utils.model_downloader import (
     load_latest_identifier,
     resolve_active_precision_artefacts,
 )
+from utils.onnx_runtime import onnxruntime
 
 config = get_config()
 logger = get_logger(__name__)

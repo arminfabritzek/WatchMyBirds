@@ -5,6 +5,9 @@ stay there unless you explicitly enable an outbound integration such as
 Telegram or MQTT. MQTT sends detection metadata and an image URL to the broker
 you configure; a consumer that can reach WatchMyBirds can fetch that image.
 
+WatchMyBirds disables ONNX Runtime's upstream telemetry before loading the
+inference library. This is independent of the optional installation reports below.
+
 The separate optional traffic to the WatchMyBirds operator is a voluntary
 daily heartbeat that helps us understand installation activity and software adoption. **It is off by
 default**, and you can enable it during initial password setup or in

@@ -206,8 +206,8 @@ def _create_runtime():
 
     # Start Aesthetic Tag Scheduler (nightly CLIP-based auto-favorite tagger).
     # Runs in the same process so Pi and Docker behave identically; replaces
-    # an earlier systemd-based design. Skips itself silently when
-    # the optional torch / open_clip packages are not installed.
+    # an earlier systemd-based design. Missing standard dependencies leave
+    # the scheduler idle with a warning so the rest of the app can boot.
     try:
         from web.services.aesthetic_tag_scheduler import start_aesthetic_tag_scheduler
 

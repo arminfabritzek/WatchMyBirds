@@ -46,10 +46,8 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Install the aesthetic-tagger stack (torch CPU-only, open_clip).
-# Kept as a separate pip invocation so the index pin doesn't interfere
-# with the main resolver run. Adds ~900 MB to the image; if you want a
-# slim variant without the tagger, comment this RUN out and the
-# in-app scheduler will skip itself when the imports fail.
+# A separate invocation confines the PyTorch index configuration to this
+# stack. Both requirement files are installed in every standard image.
 RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu \
     --extra-index-url https://pypi.org/simple \

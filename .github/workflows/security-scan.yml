@@ -7,12 +7,18 @@ on:
       - requirements.txt
       - requirements-aesthetic.txt
       - scripts/requirements_ai_photos.txt
+      - infra/telemetry-worker/package.json
+      - infra/telemetry-worker/package-lock.json
+      - .github/workflows/security-scan.yml
   pull_request:
     branches: [main]
     paths:
       - requirements.txt
       - requirements-aesthetic.txt
       - scripts/requirements_ai_photos.txt
+      - infra/telemetry-worker/package.json
+      - infra/telemetry-worker/package-lock.json
+      - .github/workflows/security-scan.yml
   schedule:
     - cron: "0 8 * * 1" # Weekly on Mondays
 
@@ -20,30 +26,47 @@ permissions:
   contents: read
 
 jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/telemetry-worker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install pinned npm
+        run: npm install --global --ignore-scripts "$(node -p "require('./package.json').packageManager")"
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --include=dev --no-audit --no-fund
+
+      - name: Run npm audit (including development tools)
+        run: npm audit --package-lock-only --include=dev --audit-level=high
+
   pip-audit:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install pip-audit
         run: pip install pip-audit
 
-      - name: Run pip-audit (runtime)
-        run: pip-audit -r requirements.txt --desc
+      - name: Run pip-audit (shipped application)
+        # OSV recognizes the PyTorch +cpu versions, which are absent from PyPI.
+        run: pip-audit -r requirements.txt -r requirements-aesthetic.txt --vulnerability-service osv --strict --desc
 
-      # The optional lanes pull a much larger tree (torch/CLIP) and
-      # are not installed on every deployment, so a finding here is reported
-      # without failing the run that guards the runtime requirements.
-      - name: Run pip-audit (optional lanes)
+      - name: Run pip-audit (optional photo-generation tools)
         continue-on-error: true
-        run: |
-          for req in requirements-aesthetic.txt \
-                     scripts/requirements_ai_photos.txt; do
-            echo "::group::pip-audit $req"
-            pip-audit -r "$req" --desc || echo "::warning file=$req::pip-audit reported findings"
-            echo "::endgroup::"
-          done
+        run: pip-audit -r scripts/requirements_ai_photos.txt --desc

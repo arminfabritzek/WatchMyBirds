@@ -9,6 +9,7 @@ Thank you for your interest in contributing to WatchMyBirds! 🐦
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-aesthetic.txt
 python main.py
 ```
 The web UI starts on `http://localhost:8050`.

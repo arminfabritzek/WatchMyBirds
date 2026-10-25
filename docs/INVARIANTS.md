@@ -41,7 +41,7 @@ only for the file/module pairs below (paths relative to `web/services/`):
 
 | File | Additional allowed modules or symbols | Reason for retaining this dependency here |
 |------|---------------------------------------|------------------------------------------|
-| `aesthetic_tag_scheduler.py` | `scripts.aesthetic_tag_nightly`, `open_clip`, `torch` | The scheduler invokes the existing worker and probes optional dependencies before starting. Preserve one worker implementation; this exception does not move model inference into the scheduler. |
+| `aesthetic_tag_scheduler.py` | `scripts.aesthetic_tag_nightly`, `open_clip`, `torch` | The scheduler invokes the existing worker and checks its standard dependencies before starting. Preserve one worker implementation; this exception does not move model inference into the scheduler. |
 | `model_registry_service.py` | `yaml` | The registry service parses model metadata for its existing presentation payloads. YAML decoding belongs with that adapter, not in a separate pass-through module. |
 | `nightly_jobs/sharpness_job.py` | `cv2`, `utils.image_ops` | The existing job owns crop decoding and calls shared metrics instead of duplicating transformations. Retain this bounded job exception; shared image algorithms remain in `image_ops`. |
 | `report_scheduler.py` | `utils.daily_report` | The scheduler invokes the existing report entrypoint. Retain that composition point without duplicating report generation. |

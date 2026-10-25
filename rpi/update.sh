@@ -184,11 +184,8 @@ if [ -f "$REQUIREMENTS" ] && [ -d "$VENV" ]; then
         || { write_status "error" "pip install failed." "$TARGET"; exit 1; }
     echo "[wmb-update] Dependencies updated."
 
-    # Aesthetic tagger optional stack. Use the PyTorch CPU index so
-    # we don't drag in the CUDA wheel + cuDNN (~1.5 GB instead of
-    # ~150 MB). The Pi has no GPU; CPU-only is the right choice.
-    # Conditional on the file existing so older deployments without
-    # the aesthetic feature still self-update cleanly.
+    # Standard aesthetic dependencies use exact CPU-build pins.
+    # The file guard supports older target revisions predating the tagger.
     if [ -f "$REQUIREMENTS_AESTHETIC" ]; then
         write_status "installing" "Updating aesthetic tagger dependencies..." "$TARGET"
         "${VENV}/bin/pip" install --quiet --no-cache-dir \

@@ -115,6 +115,7 @@ docker-compose up -d
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-aesthetic.txt
 python main.py
 ```
 

@@ -484,7 +484,7 @@ def pick_device() -> str:
         if torch.cuda.is_available():
             return "cuda"
     except ImportError:
-        # torch is an optional extra; nightly script can still log on CPU.
+        # Leave missing-dependency reporting to the worker's startup check.
         pass
     return "cpu"
 
@@ -603,7 +603,7 @@ def main_with_args(argv: list[str] | None = None) -> int:
         torch_threads = 2
     if torch_threads > 0:
         try:
-            import torch  # noqa: WPS433 — local so the slim-image fallback path stays import-safe
+            import torch
 
             torch.set_num_threads(torch_threads)
             log.info(
