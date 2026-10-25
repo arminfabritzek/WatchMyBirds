@@ -1,85 +1,20 @@
 import sqlite3
-from datetime import datetime
 
-from utils.db.detections import set_manual_bbox_review
 from utils.db.review_queue import (
     fetch_recent_review_species,
     fetch_review_cluster_context,
     fetch_review_queue_count,
     fetch_review_queue_images,
-    update_review_status,
 )
 
 
 def _make_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            timestamp TEXT,
-            review_status TEXT,
-            review_updated_at TEXT
-        );
+    from utils.db.connection import _init_schema
 
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            image_filename TEXT,
-            bbox_x REAL,
-            bbox_y REAL,
-            bbox_w REAL,
-            bbox_h REAL,
-            od_class_name TEXT,
-            od_confidence REAL,
-            score REAL,
-            od_model_id TEXT,
-            status TEXT DEFAULT 'active',
-            thumbnail_path TEXT,
-            decision_state TEXT,
-            bbox_quality REAL,
-            unknown_score REAL,
-            decision_reasons TEXT,
-            species_source TEXT,
-            manual_species_override TEXT,
-            manual_bbox_review TEXT,
-            bbox_reviewed_at TEXT
-        );
-
-        CREATE TABLE classifications (
-            classification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            detection_id INTEGER NOT NULL,
-            cls_class_name TEXT,
-            cls_confidence REAL,
-            rank INTEGER DEFAULT 1,
-            status TEXT DEFAULT 'active'
-        );
-        """
-    )
+    _init_schema(conn)
     return conn
-
-
-def test_update_review_status_stamps_utc_action_time():
-    conn = _make_conn()
-    try:
-        conn.execute(
-            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
-            ("fp.jpg", "20260523_214156", "untagged"),
-        )
-
-        updated = update_review_status(conn, ["fp.jpg"], "no_bird")
-
-        assert updated == 1
-        row = conn.execute(
-            "SELECT review_status, review_updated_at FROM images WHERE filename = ?",
-            ("fp.jpg",),
-        ).fetchone()
-        assert row["review_status"] == "no_bird"
-        stamped = datetime.fromisoformat(row["review_updated_at"])
-        assert stamped.tzinfo is not None
-        assert stamped.utcoffset().total_seconds() == 0
-    finally:
-        conn.close()
 
 
 def test_review_queue_uses_score_threshold_no_dead_zone():
@@ -130,7 +65,7 @@ def test_review_queue_uses_score_threshold_no_dead_zone():
         conn.close()
 
 
-def test_review_queue_can_exclude_deep_scanned_items():
+def test_review_queue_keeps_previous_scan_detections():
     conn = _make_conn()
     try:
         conn.execute(
@@ -146,10 +81,8 @@ def test_review_queue_can_exclude_deep_scanned_items():
         )
         conn.commit()
 
-        rows = fetch_review_queue_images(
-            conn, gallery_threshold=0.7, exclude_deep_scanned=True
-        )
-        assert [row["filename"] for row in rows] == []
+        rows = fetch_review_queue_images(conn, gallery_threshold=0.7)
+        assert [row["filename"] for row in rows] == ["ds.jpg"]
     finally:
         conn.close()
 
@@ -228,7 +161,25 @@ def test_review_queue_exposes_detection_context_and_bbox_review_state():
             """,
             (detection_id, "Parus_major", 0.84, 1, "active"),
         )
-        set_manual_bbox_review(conn, detection_id, "wrong")
+        from core.human_label_core import (
+            LabelProvenance,
+            append_fact,
+            ensure_object_subject,
+        )
+
+        conn.execute(
+            "UPDATE detections SET bbox_x=0.1,bbox_y=0.1,bbox_w=0.3,bbox_h=0.3 WHERE detection_id=?",
+            (detection_id,),
+        )
+        append_fact(
+            conn,
+            subject_id=ensure_object_subject(conn, detection_id),
+            fact_type="bbox_quality",
+            answer_value="unsuitable",
+            provenance=LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui", "test"
+            ),
+        )
         conn.commit()
 
         rows = fetch_review_queue_images(conn, gallery_threshold=0.7)
@@ -236,7 +187,7 @@ def test_review_queue_exposes_detection_context_and_bbox_review_state():
 
         assert target["best_detection_id"] == detection_id
         assert target["species_key"] == "Parus_major"
-        assert target["manual_bbox_review"] == "wrong"
+        assert target["human_bbox_verdict"] == "unsuitable"
         assert target["cls_confidence"] == 0.84
         assert target["od_confidence"] == 0.75
     finally:
@@ -281,7 +232,7 @@ def test_review_queue_returns_detection_items_per_unresolved_sibling():
         conn.close()
 
 
-def test_review_queue_excludes_images_marked_no_bird():
+def test_review_queue_ignores_retired_image_status():
     conn = _make_conn()
     try:
         conn.execute(
@@ -301,10 +252,10 @@ def test_review_queue_excludes_images_marked_no_bird():
 
         rows = fetch_review_queue_images(conn, gallery_threshold=0.7)
         filenames = [row["filename"] for row in rows]
-        assert "trashed_import.jpg" not in filenames
+        assert "trashed_import.jpg" in filenames
 
         count = fetch_review_queue_count(conn, gallery_threshold=0.7)
-        assert count == 0
+        assert count == 1
     finally:
         conn.close()
 
@@ -336,13 +287,16 @@ def _insert_confirmed_detection(
         (cur.lastrowid, species, 0.9, 1, "active"),
     )
 
+    conn.execute(
+        "UPDATE detections SET decision_state='confirmed',decision_level='species' WHERE detection_id=?",
+        (cur.lastrowid,),
+    )
+
 
 def test_review_cluster_context_returns_empty_for_empty_range():
     conn = _make_conn()
     try:
-        rows, truncated = fetch_review_cluster_context(
-            conn, untagged_time_range=None
-        )
+        rows, truncated = fetch_review_cluster_context(conn, untagged_time_range=None)
         assert rows == []
         assert truncated is False
     finally:
@@ -493,7 +447,6 @@ def _make_conn_with_decision_level() -> sqlite3.Connection:
     Smoother=confirmed but Classifier=reject) need it present.
     """
     conn = _make_conn()
-    conn.execute("ALTER TABLE detections ADD COLUMN decision_level TEXT")
     conn.commit()
     return conn
 

@@ -1,0 +1,347 @@
+{
+  "source_commit": "f39d9dd5",
+  "cases": {
+    "confirmed": {
+      "filename": "20260101_120000_confirmed.jpg",
+      "detection_ids": [
+        1
+      ],
+      "original_present": true
+    },
+    "withdrawn": {
+      "filename": "20260101_120000_withdrawn.jpg",
+      "detection_ids": [
+        2
+      ],
+      "original_present": true
+    },
+    "box_only": {
+      "filename": "20260101_120000_box_only.jpg",
+      "detection_ids": [
+        3
+      ],
+      "original_present": true
+    },
+    "box_withdrawn": {
+      "filename": "20260101_120000_box_withdrawn.jpg",
+      "detection_ids": [
+        4
+      ],
+      "original_present": true
+    },
+    "box_corrected": {
+      "filename": "20260101_120000_box_corrected.jpg",
+      "detection_ids": [
+        5
+      ],
+      "original_present": true
+    },
+    "unknown": {
+      "filename": "20260101_120000_unknown.jpg",
+      "detection_ids": [
+        6
+      ],
+      "original_present": true
+    },
+    "wrong": {
+      "filename": "20260101_120000_wrong.jpg",
+      "detection_ids": [
+        7
+      ],
+      "original_present": true
+    },
+    "object_absent": {
+      "filename": "20260101_120000_object_absent.jpg",
+      "detection_ids": [
+        8
+      ],
+      "original_present": true
+    },
+    "contradiction": {
+      "filename": "20260101_120000_contradiction.jpg",
+      "detection_ids": [
+        9
+      ],
+      "original_present": true
+    },
+    "trash": {
+      "filename": "20260101_120000_trash.jpg",
+      "detection_ids": [
+        10
+      ],
+      "original_present": true
+    },
+    "missing_original": {
+      "filename": "20260101_120000_missing_original.jpg",
+      "detection_ids": [
+        11
+      ],
+      "original_present": false
+    },
+    "full_image": {
+      "filename": "20260101_120000_full_image.jpg",
+      "detection_ids": [
+        12,
+        13
+      ],
+      "original_present": true
+    },
+    "empty_full_image": {
+      "filename": "20260101_120000_empty_full_image.jpg",
+      "detection_ids": [],
+      "original_present": true
+    },
+    "manual": {
+      "filename": "20260101_120000_manual.jpg",
+      "detection_ids": [],
+      "original_present": true,
+      "manual_object_id": 1
+    },
+    "manual_full_image": {
+      "filename": "20260101_120000_manual_full_image.jpg",
+      "detection_ids": [],
+      "original_present": true,
+      "manual_object_id": 2
+    },
+    "automatic": {
+      "filename": "20260101_120000_automatic.jpg",
+      "detection_ids": [
+        14
+      ],
+      "original_present": true
+    },
+    "below_floor": {
+      "filename": "20260101_120000_below_floor.jpg",
+      "detection_ids": [
+        15
+      ],
+      "original_present": true
+    },
+    "zero_occurrence": {
+      "filename": "20260101_120000_zero_occurrence.jpg",
+      "detection_ids": [
+        16
+      ],
+      "original_present": true
+    },
+    "genus": {
+      "filename": "20260101_120000_genus.jpg",
+      "detection_ids": [
+        17
+      ],
+      "original_present": true
+    },
+    "non_bird": {
+      "filename": "20260101_120000_non_bird.jpg",
+      "detection_ids": [
+        18
+      ],
+      "original_present": true
+    }
+  },
+  "requests": [
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_confirmed.jpg",
+        "detection_id": 1,
+        "species_identity": "corrected",
+        "species_key": "Cyanistes_caeruleus"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_withdrawn.jpg",
+        "detection_id": 2,
+        "species_identity": "corrected",
+        "species_key": "Cyanistes_caeruleus"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_missing_original.jpg",
+        "detection_id": 11,
+        "species_identity": "corrected",
+        "species_key": "Cyanistes_caeruleus"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_contradiction.jpg",
+        "detection_id": 9,
+        "species_identity": "corrected",
+        "species_key": "Cyanistes_caeruleus"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/species/retract",
+      "payload": {
+        "filename": "20260101_120000_withdrawn.jpg",
+        "detection_id": 2
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_box_only.jpg",
+        "detection_id": 3,
+        "bbox_quality": "suitable"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_box_withdrawn.jpg",
+        "detection_id": 4,
+        "bbox_quality": "unsuitable"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/bbox-quality/retract",
+      "payload": {
+        "filename": "20260101_120000_box_withdrawn.jpg",
+        "detection_id": 4
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_box_corrected.jpg",
+        "detection_id": 5,
+        "bbox_correction": {
+          "x": 0.1,
+          "y": 0.1,
+          "w": 0.4,
+          "h": 0.4
+        },
+        "bbox_quality": "suitable"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_unknown.jpg",
+        "detection_id": 6,
+        "species_identity": "unknown"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_wrong.jpg",
+        "detection_id": 7,
+        "species_identity": "wrong"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_object_absent.jpg",
+        "detection_id": 8,
+        "object_bird_presence": "absent"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/manual-objects",
+      "payload": {
+        "filename": "20260101_120000_manual.jpg",
+        "bbox": {
+          "x": 0.1,
+          "y": 0.1,
+          "w": 0.3,
+          "h": 0.3
+        },
+        "species_key": "Parus_major",
+        "request_id": "synthetic-manual"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/manual-objects",
+      "payload": {
+        "filename": "20260101_120000_manual_full_image.jpg",
+        "bbox": {
+          "x": 0.1,
+          "y": 0.1,
+          "w": 0.3,
+          "h": 0.3
+        },
+        "species_key": "Parus_major",
+        "request_id": "synthetic-manual_full_image"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/review/decision",
+      "payload": {
+        "filenames": [
+          "20260101_120000_full_image.jpg"
+        ],
+        "action": "no_bird"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/review/decision",
+      "payload": {
+        "filenames": [
+          "20260101_120000_empty_full_image.jpg"
+        ],
+        "action": "no_bird"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/review/decision",
+      "payload": {
+        "filenames": [
+          "20260101_120000_manual_full_image.jpg"
+        ],
+        "action": "no_bird"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_contradiction.jpg",
+        "detection_id": 9,
+        "object_bird_presence": "absent"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/labels/answer",
+      "payload": {
+        "filename": "20260101_120000_contradiction.jpg",
+        "image_bird_presence": "absent"
+      },
+      "status": "success"
+    },
+    {
+      "url": "/api/detections/reject",
+      "payload": {
+        "ids": [
+          10
+        ]
+      },
+      "status": "success"
+    }
+  ],
+  "generation": "git archive f39d9dd5; synthetic captures seeded with that revision test helper; all answers, withdrawals, manual objects and trash actions written through its real Flask endpoints."
+}

@@ -9,9 +9,16 @@ Thank you for your interest in contributing to WatchMyBirds! 🐦
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-aesthetic.txt
 python main.py
 ```
 The web UI starts on `http://localhost:8050`.
+
+### UI development with copied Pi data
+
+For a local UI session without starting the camera or appliance background jobs,
+use [Local development](LOCAL_DEVELOPMENT.md). Its one-way pull creates a private
+SQLite/media snapshot and an independent editable working copy outside Git.
 
 ### Docker
 ```bash

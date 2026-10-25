@@ -279,6 +279,8 @@ def test_telemetry_keys_load_from_yaml_at_boot(tmp_path, monkeypatch):
     save_settings_yaml(
         {
             "telemetry_enabled": True,
+            "telemetry_consent_version": 2,
+            "telemetry_consent_at": "2026-10-24T12:00:00+00:00",
             "telemetry_endpoint": "https://override.example/v1/heartbeat",
             "telemetry_installation_id": "deadbeefcafebabe1234567890abcdef",
         },
@@ -298,12 +300,14 @@ def test_telemetry_keys_load_from_yaml_at_boot(tmp_path, monkeypatch):
     assert cfg["telemetry_enabled"] is True, (
         "BUG: telemetry_enabled in YAML was lost during config load"
     )
+    assert cfg["telemetry_consent_version"] == 2
+    assert cfg["telemetry_consent_at"] == "2026-10-24T12:00:00+00:00"
     assert cfg["telemetry_endpoint"] == "https://override.example/v1/heartbeat", (
         "BUG: telemetry_endpoint override in YAML was lost"
     )
-    assert (
-        cfg["telemetry_installation_id"] == "deadbeefcafebabe1234567890abcdef"
-    ), "BUG: telemetry_installation_id in YAML was lost"
+    assert cfg["telemetry_installation_id"] == "deadbeefcafebabe1234567890abcdef", (
+        "BUG: telemetry_installation_id in YAML was lost"
+    )
 
     # And is_enabled() correctly reads the boolean back.
     assert ts.is_enabled(cfg) is True
@@ -593,6 +597,9 @@ def test_send_returns_false_on_non_204():
     import requests as _requests
 
     class FakeResp:
+        def close(self) -> None:
+            pass
+
         status_code = 400
         text = "unknown field"
 
@@ -606,6 +613,9 @@ def test_send_returns_true_on_204():
     import requests as _requests
 
     class FakeResp:
+        def close(self) -> None:
+            pass
+
         status_code = 204
         text = ""
 
@@ -686,3 +696,39 @@ def test_wake_event_wait_unblocks_on_set():
     )
 
     ts._wake_event.clear()
+
+
+def test_scheduler_retries_failed_write_before_marking_day_sent(tmp_path: Path) -> None:
+    import pytest
+
+    class StopScheduler(BaseException):
+        pass
+
+    cfg = _make_test_cfg(tmp_path) | {"telemetry_enabled": True}
+    markers: list[str] = []
+
+    def wait_for_next_tick(_timeout: int) -> None:
+        markers.append(ts._read_last_sent_date(str(tmp_path)))
+        if len(markers) == 3:
+            raise StopScheduler
+
+    with (
+        patch("config.get_config", return_value=cfg),
+        patch.object(ts, "_today_utc", return_value="2026-10-24"),
+        patch.object(ts.threading, "Thread") as thread,
+        patch.object(ts, "_wake_event") as wake,
+        patch.object(ts.requests, "post") as post,
+    ):
+        from unittest.mock import Mock
+
+        post.side_effect = [
+            Mock(status_code=503, text="Temporarily unavailable"),
+            Mock(status_code=204, text=""),
+        ]
+        wake.wait.side_effect = wait_for_next_tick
+        ts.start_telemetry_scheduler()
+        with pytest.raises(StopScheduler):
+            thread.call_args.kwargs["target"]()
+
+    assert markers == ["", "2026-10-24", "2026-10-24"]
+    assert post.call_count == 2

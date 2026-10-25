@@ -9,6 +9,10 @@ from typing import Any
 from core import settings_core
 
 
+def take_retention_update_notice() -> bool:
+    return settings_core.take_retention_update_notice()
+
+
 def get_settings() -> dict[str, Any]:
     """
     Get current settings for UI.

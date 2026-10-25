@@ -114,7 +114,10 @@ def build_species_story_board(
 
 def invalidate_cache() -> None:
     """Invalidate gallery cache."""
+    from web.services import cache_service
+
     gallery_core.invalidate_cache()
+    cache_service.invalidate("analytics.")
 
 
 # --- Thumbnail Generation ---
@@ -166,3 +169,34 @@ def regenerate_derivative(
 ) -> bool:
     """Regenerate a missing derivative."""
     return gallery_core.regenerate_derivative(output_dir, filename_rel, type)
+
+
+def get_species_covers(
+    *, min_score: float, favorites_only: bool, selection: dict[str, str] | None = None
+) -> list[dict]:
+    return gallery_core.get_species_covers(
+        min_score=min_score, favorites_only=favorites_only, selection=selection
+    )
+
+
+def get_species_page(
+    species: str,
+    *,
+    min_score: float,
+    favorites_only: bool,
+    page: int,
+    per_page: int,
+    selection: dict[str, str] | None = None,
+) -> tuple[list[dict], int, int]:
+    return gallery_core.get_species_page(
+        species,
+        min_score=min_score,
+        favorites_only=favorites_only,
+        page=page,
+        per_page=per_page,
+        selection=selection,
+    )
+
+
+def get_gallery_days(*, page: int, per_page: int = 30) -> tuple[list[dict], int, int]:
+    return gallery_core.get_gallery_days(page=page, per_page=per_page)

@@ -1,30 +1,8 @@
-"""
-Anonymous opt-in usage heartbeat.
+"""Opt-in installation reports and explicitly consented daily diagnostics.
 
-Default OFF. The user must explicitly toggle telemetry on in
-Settings -> Privacy. There is no banner, no popup, no nag.
-
-What we send (only when enabled):
-    {
-      "installation_id":   <32 hex chars, generated once on first opt-in>,
-      "app_version":       "v0.X.Y",
-      "os":                "linux" | "darwin" | "windows",
-      "arch":              "aarch64" | "x86_64" | "armv7l",
-      "cpu_count":         int,
-      "total_ram_gb":      int (rounded whole GB),
-      "python_version":    "3.12.3",
-      "detector_variant":  e.g. "yolox-tiny-int8" | "fasterrcnn" | "unknown"
-    }
-
-What we never send: IP, country, locale, hostname, MAC, exact RAM
-bytes, kernel version, Pi model string, observation count, species
-names, image paths, error messages, uptime.
-
-Cadence: once per UTC date, idempotent (the Worker's PRIMARY KEY on
-(installation_id, date) absorbs duplicate pings).
-
-See docs/PRIVACY.md and the project's Settings -> Privacy page for
-the human-readable version.
+Basic clients send the legacy eight fields daily. Consent version 2 adds bounded
+usage and diagnostic summaries, refreshed hourly with seven-day retry backfill.
+Field definitions and retention policy live in docs/PRIVACY.md.
 """
 
 from __future__ import annotations
@@ -32,14 +10,20 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import random
 import secrets
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
+
+from core.telemetry_metrics import CONSENT_VERSION, consented, metrics
 
 logger = logging.getLogger(__name__)
 
@@ -216,16 +200,30 @@ def _detect_app_version() -> str:
     """
     try:
         env_ver = os.environ.get("APP_VERSION", "").strip()
-        if env_ver:
-            return env_ver
+        if env_ver and env_ver != "unknown":
+            return env_ver[:64]
         repo_root = Path(sys.argv[0]).resolve().parent
         for candidate in (repo_root / "APP_VERSION", repo_root.parent / "APP_VERSION"):
             if candidate.exists():
-                return candidate.read_text(encoding="utf-8").strip() or "unknown"
+                version = candidate.read_text(encoding="utf-8").strip()
+                if version and version != "unknown":
+                    return version[:64]
     except (OSError, AttributeError):
         # sys.argv[0] resolution can fail in odd embeddings (e.g. REPL).
         pass
-    return "unknown"
+    try:
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always", "--dirty"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        return result.stdout.strip()[:64] or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
 def _detect_python_version() -> str:
@@ -328,6 +326,20 @@ def rotate_installation_id(output_dir: str) -> str:
     return new_id
 
 
+def rotate_consent_identity(cfg: dict) -> str:
+    with _transport_lock:
+        new_id = rotate_installation_id(str(cfg.get("OUTPUT_DIR", "./data/output")))
+        cfg["telemetry_installation_id"] = new_id
+        metrics.clear(cfg)
+        _delivery.update(
+            status="pending" if is_enabled(cfg) else "disabled",
+            failures=0,
+            retry_at=0.0,
+        )
+        wake_now()
+        return new_id
+
+
 def build_payload(cfg: dict) -> dict:
     """Build the heartbeat payload from current runtime state.
 
@@ -390,37 +402,152 @@ def _today_utc() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
+_transport_lock = threading.RLock()
+_delivery = {
+    "status": "not_attempted",
+    "last_attempt": None,
+    "last_success": None,
+    "failures": 0,
+    "retry_at": 0.0,
+}
+_started_at = time.monotonic()
+
+
+def delivery_status() -> dict:
+    with _transport_lock:
+        return dict(_delivery)
+
+
 def _send_heartbeat(endpoint: str, payload: dict) -> bool:
-    """POST the heartbeat. Returns True on success (HTTP 204), False
-    otherwise. ALL exceptions and non-204 responses are swallowed —
-    we never surface telemetry failures to the user.
-    """
+    _delivery["last_attempt"] = datetime.now(UTC).isoformat()
+    try:
+        parts = urlsplit(endpoint)
+    except ValueError:
+        _delivery["status"] = "invalid_endpoint"
+        return False
+    if parts.scheme != "https" and not (
+        parts.scheme == "http" and parts.hostname in {"localhost", "127.0.0.1", "::1"}
+    ):
+        _delivery["status"] = "invalid_endpoint"
+        return False
     try:
         resp = requests.post(
             endpoint,
             json=payload,
             headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"},
             timeout=5,
+            allow_redirects=False,
+            stream=True,
         )
-    except requests.RequestException as e:
-        # Network down, DNS fail, TLS handshake fail, timeout — all
-        # silent. The day's ping is just lost; tomorrow we try again.
-        logger.debug("Telemetry send failed (network): %s", e)
-        return False
-
-    if resp.status_code == 204:
+        try:
+            code = resp.status_code
+            retry_after = resp.headers.get("Retry-After", "") if code == 429 else ""
+        finally:
+            resp.close()
+    except requests.RequestException:
+        code, retry_after = 0, ""
+    if code == 204:
+        _delivery.update(
+            status="delivered",
+            failures=0,
+            retry_at=0.0,
+            last_success=datetime.now(UTC).isoformat(),
+        )
         return True
-
-    # 400 = our payload doesn't match the Worker's allowlist. This is
-    # a bug worth knowing about in logs but not worth surfacing to the
-    # user. 404 = UA allowlist mismatch (constant we control). Anything
-    # else is server-side and equally not the user's problem.
-    logger.debug(
-        "Telemetry send returned %s (expected 204): %s",
-        resp.status_code,
-        resp.text[:200],
+    failures = min(int(_delivery["failures"]) + 1, 8)
+    delay = random.uniform(300, min(21600, 300 * 2**failures))
+    if isinstance(retry_after, str) and retry_after.isdigit():
+        delay = max(delay, min(int(retry_after), 86400))
+    _delivery.update(
+        status=f"http_{code}" if code else "network_error",
+        failures=failures,
+        retry_at=time.time() + delay,
     )
+    logger.debug("Telemetry delivery failed: %s", _delivery["status"])
     return False
+
+
+def set_consent(cfg: dict, enabled: bool, version: int = 1) -> None:
+    from utils.settings import load_settings_yaml, save_settings_yaml
+
+    if (
+        type(enabled) is not bool
+        or type(version) is not int
+        or version not in (1, CONSENT_VERSION)
+    ):
+        raise ValueError("Invalid telemetry consent")
+    with _transport_lock:
+        output_dir = str(cfg.get("OUTPUT_DIR", "./data/output"))
+        if enabled:
+            cfg["telemetry_installation_id"] = _ensure_installation_id(cfg)
+        settings = load_settings_yaml(output_dir)
+        changes = {
+            "telemetry_enabled": enabled,
+            "telemetry_consent_version": version if enabled else 0,
+            "telemetry_consent_at": (
+                cfg.get("telemetry_consent_at", "")
+                if cfg.get("telemetry_enabled") is enabled
+                and cfg.get("telemetry_consent_version") == (version if enabled else 0)
+                else datetime.now(UTC).isoformat()
+            ),
+        }
+        settings.update(changes)
+        save_settings_yaml(settings, output_dir)
+        cfg.update(changes)
+        if not consented(cfg):
+            metrics.clear(cfg)
+        _delivery.update(
+            status="pending" if enabled else "disabled", failures=0, retry_at=0.0
+        )
+        wake_now()
+
+
+def _deployment_type() -> str:
+    if Path("/.dockerenv").exists() or os.environ.get("container"):
+        return "container"
+    try:
+        if "raspberry pi" in Path("/proc/device-tree/model").read_text().lower():
+            return "raspberry_pi"
+    except OSError:
+        pass
+    return "source"
+
+
+def build_diagnostic_payload(
+    cfg: dict, day: str, values: dict, *, preview: bool = False
+) -> dict:
+    base = build_payload_preview(cfg) if preview else build_payload(cfg)
+    return base | {
+        "schema_version": 2,
+        "consent_version": CONSENT_VERSION,
+        "report_date": day,
+        "deployment": _deployment_type(),
+        "metrics": values,
+    }
+
+
+def send_pending_diagnostics(cfg: dict) -> None:
+    with _transport_lock:
+        if not consented(cfg) or time.time() < _delivery["retry_at"]:
+            return
+        uptime = time.monotonic() - _started_at
+        metrics.record(
+            "uptime_bucket",
+            sum(uptime >= n for n in (3600, 21600, 86400, 604800, 2592000)),
+        )
+        now = int(time.time())
+        endpoint = str(cfg.get("telemetry_endpoint", DEFAULT_TELEMETRY_ENDPOINT))
+        for day, values in metrics.pending(cfg, now):
+            if not consented(cfg):
+                break
+            if not _send_heartbeat(
+                endpoint, build_diagnostic_payload(cfg, day, values)
+            ):
+                break
+            metrics.acknowledge(cfg, day, values, now)
+            _write_last_sent_date(
+                str(cfg.get("OUTPUT_DIR", "./data/output")), _today_utc()
+            )
 
 
 def is_enabled(cfg: dict) -> bool:
@@ -435,25 +562,10 @@ def is_enabled(cfg: dict) -> bool:
     return val is True
 
 
-def start_telemetry_scheduler(check_interval: int = 300):
-    """Start the background telemetry scheduler thread.
+def start_telemetry_scheduler(check_interval: int = 300) -> threading.Thread:
+    """Check consent and pending delivery without blocking the application."""
 
-    Args:
-        check_interval: Seconds between toggle/cadence checks.
-                        Default 5 min — short enough that a runtime
-                        toggle-on triggers the first heartbeat within
-                        a few minutes (good UX), long enough to be
-                        invisible CPU-wise (12 polls/h, each is one
-                        filesystem read + a boolean compare). The
-                        "one heartbeat per UTC day" guarantee is
-                        enforced by the last-sent marker file, NOT
-                        by this interval — so changing it does not
-                        change cloud-side data volume.
-
-    Returns the daemon Thread for tests/inspection.
-    """
-
-    def _loop():
+    def _loop() -> None:
         logger.info("Telemetry scheduler started.")
         while True:
             # Clear the wake-event at the TOP of each iteration so a
@@ -468,7 +580,9 @@ def start_telemetry_scheduler(check_interval: int = 300):
 
                 cfg = get_config()
 
-                if not is_enabled(cfg):
+                if consented(cfg):
+                    send_pending_diagnostics(cfg)
+                elif not is_enabled(cfg):
                     # Toggle off — do nothing. We do NOT touch the
                     # last_sent marker here; if the user toggles back
                     # on later, we should NOT re-ping for a date we've
@@ -486,9 +600,16 @@ def start_telemetry_scheduler(check_interval: int = 300):
                             )
                         )
                         payload = build_payload(cfg)
-                        if _send_heartbeat(endpoint, payload):
-                            _write_last_sent_date(output_dir, today)
-                            logger.info("Telemetry: heartbeat sent (date=%s).", today)
+                        with _transport_lock:
+                            if (
+                                is_enabled(cfg)
+                                and not consented(cfg)
+                                and _send_heartbeat(endpoint, payload)
+                            ):
+                                _write_last_sent_date(output_dir, today)
+                                logger.info(
+                                    "Telemetry: heartbeat sent (date=%s).", today
+                                )
                         # On failure: do NOT mark sent. Next tick retries.
 
             except Exception as e:
@@ -501,3 +622,32 @@ def start_telemetry_scheduler(check_interval: int = 300):
     t = threading.Thread(target=_loop, name="TelemetryScheduler", daemon=True)
     t.start()
     return t
+
+
+def record_web_response(
+    endpoint: str | None, method: str, status: int, authenticated: bool
+) -> None:
+    if not authenticated:
+        return
+    if status >= 500:
+        metrics.record("web_error")
+    if not 200 <= status < 300:
+        return
+    if endpoint == "review.review_page" and method == "GET":
+        metrics.record("review_used")
+    if endpoint in {
+        "human_labels.label_answer",
+        "human_labels.manual_object_create",
+        "human_labels.manual_object_update",
+    } and method in {"POST", "PATCH"}:
+        metrics.record("correction_used")
+    if (
+        endpoint
+        in {
+            "canonical_dataset.canonical_dataset_prepare",
+            "canonical_dataset.canonical_dataset_download",
+            "canonical_dataset.canonical_dataset_received",
+        }
+        and method == "POST"
+    ):
+        metrics.record("export_used")

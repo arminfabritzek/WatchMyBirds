@@ -11,8 +11,8 @@ sibling_count (int): Total number of detections on this image
 can_moderate (bool): Whether to show moderation controls (relabel/delete)
 #}
 {% macro render_review_status_text(item, style='') %}
-{% set has_manual_species_review = (item.species_source == 'manual') and item.manual_species_override %}
-{% set has_manual_review_approval = has_manual_species_review and (item.review_status == 'confirmed_bird') %}
+{% set has_manual_species_review = (item.human_species_source == 'manual') and item.human_species_key %}
+{% set has_manual_review_approval = has_manual_species_review %}
 {% if has_manual_review_approval %}
 <span{% if style %} style="{{ style }} color: var(--color-success, #22c55e);"{% else %} style="color: var(--color-success, #22c55e);"{% endif %} title="Confirmed by a human reviewer">🧑👍 manually confirmed</span>
 {% elif item.decision_state %}
@@ -70,8 +70,8 @@ Macro reduced to multi-bird sibling-selector strip.
                 {{ "%.0f"|format(sib.od_confidence * 100) }}%
                 {% if sib.cls_class_name %} / {{ "%.0f"|format(sib.cls_confidence * 100) }}%{% endif %}
             </div>
-            {% set sib_has_manual_species_review = (sib.species_source == 'manual') and sib.manual_species_override %}
-            {% set sib_has_manual_review_approval = sib_has_manual_species_review and (sib.review_status == 'confirmed_bird') %}
+            {% set sib_has_manual_species_review = (sib.human_species_source == 'manual') and sib.human_species_key %}
+            {% set sib_has_manual_review_approval = sib_has_manual_species_review %}
             {% if sib_has_manual_review_approval %}
             <div style="font-size: 0.6rem; margin-top: 2px;">
                 <span style="color: var(--color-success, #22c55e);" title="Confirmed by a human reviewer">🧑👍 manually confirmed</span>

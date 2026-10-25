@@ -1,24 +1,6 @@
 """Process-local named compute lease for CPU-heavy jobs.
 
-The lease lets one heavy workload at a time (Companion LLM inference,
-aesthetic tagger, future callers) coordinate so they do not run
-concurrently with each other or — when they ask for it — with the
-live OD/CLS detection loop.
-
-Why a single named lease and not three independent locks: deep-scan
-mode, the tagger, and the Companion inference all want the same
-resource (CPU on the Pi) but for different reasons and with different
-acceptance of detection running. A single registry surfaces *who*
-holds the resource, makes contention diagnosable, and keeps the
-exception-safety logic in one place.
-
-The lease coexists with `DetectionManager.enter_deep_scan_mode()` /
-`exit_deep_scan_mode()`. Deep-scan callers continue to use those
-methods; they were already shipped, already tested, and have their
-own reference-counting semantics. The lease is for the new callers.
-
-Single-process scope. There is no IPC here — both heavy workloads
-live in the same WMB Flask process today.
+Serializes heavy workloads and optionally pauses live detection.
 """
 
 from __future__ import annotations

@@ -1,8 +1,14 @@
 """Backend-neutral bird species classification service."""
 
+import json
+from dataclasses import replace
+from datetime import datetime
+from typing import Any
+
 import cv2
 import numpy as np
 
+from core.species_geography_runtime import GeographicWeighting
 from detectors.classifier import ImageClassifier
 from detectors.classifier_backends.base import ClassifierBackend
 from detectors.classifier_backends.wmb_onnx import WMBOnnxClassifierBackend
@@ -31,6 +37,7 @@ class ClassificationService(ClassificationInterface):
         classifier: ImageClassifier | None = None,
         *,
         backend: ClassifierBackend | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the classification service.
@@ -46,6 +53,7 @@ class ClassificationService(ClassificationInterface):
                 classifier if classifier is not None else ImageClassifier()
             )
         )
+        self._geography = GeographicWeighting(config) if config is not None else None
 
     @property
     def backend(self) -> ClassifierBackend:
@@ -62,7 +70,13 @@ class ClassificationService(ClassificationInterface):
         except Exception as exc:
             logger.debug("Species-name cache refresh skipped: %s", exc)
 
-    def classify(self, crop: np.ndarray) -> ClassificationResult:
+    def classify(
+        self,
+        crop: np.ndarray,
+        *,
+        observed_at: datetime | None = None,
+        location: dict[str, float] | None = None,
+    ) -> ClassificationResult:
         """
         Classifies a bird species from an RGB image crop.
 
@@ -75,7 +89,7 @@ class ClassificationService(ClassificationInterface):
         try:
             prediction = self._backend.predict_rgb(crop)
 
-            return ClassificationResult(
+            result = ClassificationResult(
                 class_name=prediction.class_name,
                 confidence=prediction.confidence,
                 model_id=prediction.model_id,
@@ -91,8 +105,64 @@ class ClassificationService(ClassificationInterface):
                 confidence=0.0,
                 model_id=self.get_model_id(),
             )
+        try:
+            return self.apply_geography(result, observed_at, location=location)
+        except Exception as exc:
+            logger.warning(
+                "Retaining image classification after geography error: %s", exc
+            )
+            return result
 
-    def classify_from_bgr(self, crop: np.ndarray) -> ClassificationResult:
+    def apply_geography(
+        self,
+        result: ClassificationResult,
+        observed_at: datetime | None,
+        *,
+        location: dict[str, float] | None = None,
+    ) -> ClassificationResult:
+        if (
+            self._geography is None
+            or result.decision_level != "species"
+            or result.class_name in {"", "background", "non_bird"}
+            or len(result.top_k_classes) != len(result.top_k_confidences)
+        ):
+            return result
+        candidates = list(
+            zip(result.top_k_classes, result.top_k_confidences, strict=False)
+        )
+        if not candidates or candidates[0][0] != result.class_name:
+            return result
+        assessed = self._geography.assess(candidates, observed_at, location=location)
+        if assessed is None:
+            return result
+        assessment, provenance = assessed
+        selected = assessment.suggested_species
+        if selected in {"background", "non_bird"}:
+            return result
+        evidence = {
+            **assessment.to_dict(),
+            **provenance,
+            "raw_candidates": candidates,
+            "raw_confidence": result.confidence,
+        }
+        return replace(
+            result,
+            class_name=selected,
+            confidence=dict(candidates)[selected],
+            raw_species_name=result.raw_species_name or result.class_name,
+            geography_json=json.dumps(evidence, allow_nan=False),
+            storage_alternatives=[
+                (name, score) for name, score in candidates if name != selected
+            ],
+        )
+
+    def classify_from_bgr(
+        self,
+        crop: np.ndarray,
+        *,
+        observed_at: datetime | None = None,
+        location: dict[str, float] | None = None,
+    ) -> ClassificationResult:
         """
         Classifies a bird species from a BGR image crop.
 
@@ -106,7 +176,7 @@ class ClassificationService(ClassificationInterface):
         """
         try:
             crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            return self.classify(crop_rgb)
+            return self.classify(crop_rgb, observed_at=observed_at, location=location)
         except Exception as e:
             logger.error(f"Classification error (BGR conversion): {e}")
             return ClassificationResult(

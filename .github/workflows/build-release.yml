@@ -102,9 +102,8 @@ jobs:
           #
           # We declare three platform tags and three ABI tags so pip accepts
           # any combination present in our pinned set:
-          #   - manylinux2014 / 2_27 / 2_28 covers the spread from older
-          #     pure-python deps to numpy 2.4.x and onnxruntime 1.24.x which
-          #     ship only newer-manylinux ARM64 wheels.
+          #   - manylinux2014 / 2_27 / 2_28 covers the different minimum
+          #     glibc versions required by the native ARM64 dependencies.
           #   - cp312 / abi3 / none covers cpython-specific (numpy, lxml),
           #     stable-ABI (opencv, psutil, protobuf), and pure-python wheels.
           # The Trixie golden-image base ships glibc 2.40, so 2_28 is safe.
@@ -122,10 +121,7 @@ jobs:
             --only-binary=:all: \
             --extra-index-url https://www.piwheels.org/simple
 
-          # Aesthetic-tagger stack (torch CPU-only + open_clip).
-          # Uses the PyTorch CPU index as primary, otherwise pip resolves
-          # to the CUDA wheel (~1.5 GB with cuDNN, drags in nvidia-*
-          # packages). The CPU index has genuine aarch64 wheels for cp312.
+          # Standard aesthetic stack; exact +cpu pins exclude CUDA builds.
           pip download \
             -r app_code/requirements-aesthetic.txt \
             --dest ./wheelhouse \
@@ -232,10 +228,7 @@ jobs:
             # Install Requirements from Wheelhouse
             /opt/app/.venv/bin/pip install --no-index --find-links /opt/wheelhouse -r /opt/app/requirements.txt
 
-            # Aesthetic tagger optional stack: install if the file is in
-            # the image (current images always include it; older
-            # release branches won't have the file and the conditional
-            # keeps the build green for them).
+            # Standard aesthetic stack. The file guard supports older refs.
             if [ -f /opt/app/requirements-aesthetic.txt ]; then
               /opt/app/.venv/bin/pip install --no-index \
                 --find-links /opt/wheelhouse \
@@ -371,10 +364,10 @@ jobs:
         run: echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker QEMU
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a  # v4.3.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
       - name: Login to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0

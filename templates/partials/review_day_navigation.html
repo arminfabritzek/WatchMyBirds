@@ -1,0 +1,34 @@
+{% if review_navigation is defined %}
+<nav class="review-day-nav" aria-label="Review day navigation">
+    <div class="review-day-nav__arrows">
+        {% if review_navigation.older_url %}
+        <a class="btn btn--secondary" href="{{ review_navigation.older_url }}" aria-label="Previous day with events">← Older day</a>
+        {% else %}
+        <span class="btn btn--secondary" aria-disabled="true">← Older day</span>
+        {% endif %}
+        {% if review_navigation.newer_url %}
+        <a class="btn btn--secondary" href="{{ review_navigation.newer_url }}" aria-label="Next day with events">Newer day →</a>
+        {% else %}
+        <span class="btn btn--secondary" aria-disabled="true">Newer day →</span>
+        {% endif %}
+    </div>
+    <form class="review-day-nav__form" method="get" action="{{ url_for('review.review_page') }}">
+
+        <input type="hidden" name="answered" value="{{ 1 if answered else 0 }}">
+        {% for key, value in selection.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+
+        <label for="review-day">Day</label>
+        <select class="form-control" id="review-day" name="day">
+            <option value="all" {% if review_navigation.selected_day == 'all' %}selected{% endif %}>All days ({{ review_navigation.total_events }}{{ " objects" if ordinary_review else "" }})</option>
+            {% if review_navigation.selected_day != 'all' and review_navigation.selected_day not in (review_navigation.days | map(attribute=0) | list) %}
+            <option value="{{ review_navigation.selected_day }}" selected>{{ review_navigation.selected_day }} (0)</option>
+            {% endif %}
+            {% for date, count in review_navigation.days %}
+            <option value="{{ date }}" {% if date == review_navigation.selected_day %}selected{% endif %}>{{ date }} ({{ count }})</option>
+            {% endfor %}
+        </select>
+
+        <button type="submit" class="btn btn--secondary">Apply</button>
+    </form>
+</nav>
+{% endif %}

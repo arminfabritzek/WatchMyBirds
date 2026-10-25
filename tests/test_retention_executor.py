@@ -1,250 +1,410 @@
-"""Retention Executor — file-delete-first, then DB status/log.
+from __future__ import annotations
 
-execute_plan(conn, output_dir, settings, now=...) deletes deletable
-originals and records original_present=0 / original_deleted_at. Contracts:
-files-first, missing-file-never-blocks-DB, survivors immutable,
-OUTPUT_DIR-contained, idempotent.
-
-Uses the shared production-shaped seed helper so the derivative layout
-matches what PersistenceService writes (optimized <stem>.webp + per-crop
-thumbs <stem>_crop_N.webp).
-"""
-
-import datetime as dt
 import hashlib
-import threading
-import time
+import sqlite3
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
+from PIL import Image
 
-from core import retention_core
+from core.deletion_plan import plan_deletions
+from core.human_label_core import HumanAnswer, record_human_answer
+from core.retention_core import _ROW_KEYS, execute_plan, settings_for_plan
+from core.training_export import create_export
 from tests.retention_helpers import seed_image
-from utils.db.connection import closing_connection, get_connection
+from tests.test_photo_deletion_plan import PROVENANCE
+from tests.test_photo_deletion_plan import case as case
+from utils.db.connection import HUMAN_ANSWERS_MIGRATION
+from utils.path_manager import PathManager
 
-NOW = dt.datetime(2026, 6, 1, 12, 0, 0, tzinfo=dt.UTC)
+Case = tuple[sqlite3.Connection, PathManager]
 
+NOW = datetime(2026, 10, 17, 12, tzinfo=UTC)
+ENABLED = NOW - timedelta(days=15)
 SETTINGS = {
-    "RETENTION_ENABLED": True,
-    "RETENTION_DAYS": 90,
-    "RETENTION_PROTECT_FAVORITES": True,
-    "RETENTION_PROTECT_UNREVIEWED": True,
+    "AUTOMATIC_DELETION_ENABLED": True,
+    "AUTOMATIC_DELETION_ENABLED_AT": ENABLED.isoformat(),
+    "OLD_BIRD_PHOTOS": "keep_previews",
 }
 
 
-@pytest.fixture(autouse=True)
-def wipe_schema_cache(monkeypatch, tmp_path):
-    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    import config
-
-    config._CONFIG = None
-    monkeypatch.setattr("utils.db.connection._schema_initialized_paths", set())
-    yield
-
-
-@pytest.fixture
-def output_dir(tmp_path):
-    return tmp_path / "output"
+def media(paths: PathManager) -> dict[str, str]:
+    return {
+        p.relative_to(paths.base_dir).as_posix(): hashlib.sha256(
+            p.read_bytes()
+        ).hexdigest()
+        for root in (paths.originals_dir, paths.derivatives_dir)
+        for p in root.rglob("*")
+        if p.is_file()
+    }
 
 
-def _digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def rows(conn: sqlite3.Connection) -> set[tuple[str, int | str]]:
+    return {
+        (table, row[0])
+        for table, key in _ROW_KEYS.items()
+        for row in conn.execute(f"SELECT {key} FROM {table}")
+    }
 
 
-def test_real_deletion_removes_original_keeps_derivatives_and_marks_db(output_dir):
-    fn = "20260101_120000_a.jpg"
-    with closing_connection() as conn:
-        paths = seed_image(conn, fn, output_dir, orig_bytes=2048)
-        opt_digest = _digest(paths["optimized"])
-        thumb_digest = _digest(paths["thumbs"][0])
-
-        result = retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-        row = conn.execute(
-            "SELECT original_present, original_deleted_at, timestamp, review_status "
-            "FROM images WHERE filename=?",
-            (fn,),
-        ).fetchone()
-        detection_count = conn.execute(
-            "SELECT COUNT(*) FROM detections WHERE image_filename=?", (fn,)
-        ).fetchone()[0]
-
-    assert result["deleted"] == 1
-    assert result["freed_bytes"] == 2048
-    assert not paths["original"].exists()  # original gone
-    assert paths["optimized"].exists()  # derivatives preserved
-    assert paths["thumbs"][0].exists()
-    # Derivatives byte-identical (no recompression / rewrite).
-    assert _digest(paths["optimized"]) == opt_digest
-    assert _digest(paths["thumbs"][0]) == thumb_digest
-    # DB marked.
-    assert row["original_present"] == 0
-    assert row["original_deleted_at"] is not None
-    assert row["timestamp"] == fn[:15]
-    assert row["review_status"] == "confirmed_bird"
-    assert detection_count == 1
-
-
-def test_missing_original_still_marks_db_and_does_not_raise(output_dir):
-    fn = "20260101_120001_b.jpg"
-    # Derivatives exist (so it's deletable) but the original is already gone,
-    # while the DB still says original_present=1.
-    with closing_connection() as conn:
-        seed_image(conn, fn, output_dir, write_original=False)
-        result = retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-        row = conn.execute(
-            "SELECT original_present FROM images WHERE filename=?", (fn,)
-        ).fetchone()
-
-    # File was missing -> counted as missing, but DB is still updated.
-    assert result["missing"] == 1
-    assert row["original_present"] == 0
-
-
-def test_protected_originals_are_untouched(output_dir):
-    fn = "20260530_120000_c.jpg"  # too recent -> protected
-    with closing_connection() as conn:
-        paths = seed_image(conn, fn, output_dir)
-        orig_digest = _digest(paths["original"])
-        result = retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-        row = conn.execute(
-            "SELECT original_present FROM images WHERE filename=?", (fn,)
-        ).fetchone()
-
-    assert result["deleted"] == 0
-    assert paths["original"].exists()
-    assert _digest(paths["original"]) == orig_digest  # immutable
-    assert row["original_present"] == 1
-
-
-def test_idempotent_second_run_deletes_nothing_new(output_dir):
-    fn = "20260101_120002_d.jpg"
-    with closing_connection() as conn:
-        seed_image(conn, fn, output_dir)
-        first = retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-        second = retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-
-    assert first["deleted"] == 1
-    assert second["deleted"] == 0
-    assert second["errors"] == 0
-
-
-def test_disabled_setting_deletes_nothing(output_dir):
-    fn = "20260101_120003_e.jpg"
-    settings = {**SETTINGS, "RETENTION_ENABLED": False}
-    with closing_connection() as conn:
-        paths = seed_image(conn, fn, output_dir)
-        result = retention_core.execute_plan(conn, str(output_dir), settings, now=NOW)
-
-    assert result["deleted"] == 0
-    assert paths["original"].exists()
-
-
-def test_repeated_runs_pick_up_newly_aged_and_new_images(output_dir):
-    first_old = "20260101_120010_first.jpg"
-    newly_old = "20260520_120010_newly.jpg"
-    added_later = "20260102_120010_added.jpg"
-    with closing_connection() as conn:
-        first_paths = seed_image(conn, first_old, output_dir)
-        newly_paths = seed_image(conn, newly_old, output_dir)
-        first = retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-        added_paths = seed_image(conn, added_later, output_dir)
-        second = retention_core.execute_plan(
-            conn,
-            str(output_dir),
-            SETTINGS,
-            now=dt.datetime(2026, 9, 1, 12, 0, tzinfo=dt.UTC),
-        )
-
-    assert first["deleted"] == 1
-    assert not first_paths["original"].exists()
-    assert newly_paths["original"].exists() is False
-    assert added_paths["original"].exists() is False
-    assert second["deleted"] == 2
-
-
-def test_protection_is_rechecked_immediately_before_delete(output_dir, monkeypatch):
-    fn = "20260101_120011_changed.jpg"
-    with closing_connection() as conn:
-        paths = seed_image(conn, fn, output_dir)
-        original_current_decision = retention_core._current_decision
-        changed = False
-
-        def add_favorite_then_decide(*args, **kwargs):
-            nonlocal changed
-            if not changed:
-                conn.execute(
-                    "UPDATE detections SET is_favorite=1, rating_source='manual' "
-                    "WHERE image_filename=?",
-                    (fn,),
-                )
-                conn.commit()
-                changed = True
-            return original_current_decision(*args, **kwargs)
-
-        monkeypatch.setattr(
-            retention_core, "_current_decision", add_favorite_then_decide
-        )
-        result = retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-
-    assert result["deleted"] == 0
-    assert result["protected"]["export_relevant"] == 1
-    assert paths["original"].exists()
-
-
-def test_concurrent_favorite_commit_precedes_delete_decision(output_dir):
-    fn = "20260101_120012_concurrent.jpg"
-    with closing_connection() as conn:
-        paths = seed_image(conn, fn, output_dir)
-
-    favorite_conn = get_connection()
-    favorite_conn.execute("BEGIN IMMEDIATE")
-    favorite_conn.execute(
-        "UPDATE detections SET is_favorite=1, rating_source='manual' "
-        "WHERE image_filename=?",
-        (fn,),
+def add(
+    conn: sqlite3.Connection, paths: PathManager, suffix: str, **kwargs: Any
+) -> tuple[str, int | None]:
+    name = f"20240101_120000_{suffix}.jpg"
+    seed_image(conn, name, paths.base_dir, **kwargs)
+    original = paths.get_original_path(name)
+    if original.exists():
+        Image.new("RGB", (200, 200), (100, 130, 90)).save(original)
+    conn.execute(
+        "UPDATE detections SET od_class_name='Parus_major', frame_width=200, frame_height=200 WHERE image_filename=?",
+        (name,),
     )
-
-    started = threading.Event()
-    finished = threading.Event()
-    outcome = {}
-
-    def run_retention():
-        started.set()
-        with closing_connection() as conn:
-            outcome.update(
-                retention_core.execute_plan(conn, str(output_dir), SETTINGS, now=NOW)
-            )
-        finished.set()
-
-    worker = threading.Thread(target=run_retention)
-    worker.start()
-    assert started.wait(timeout=1)
-    time.sleep(0.1)
-    assert paths["original"].exists()
-
-    favorite_conn.commit()
-    favorite_conn.close()
-    assert finished.wait(timeout=2)
-    worker.join(timeout=1)
-
-    assert outcome["deleted"] == 0
-    assert outcome["protected"]["export_relevant"] == 1
-    assert paths["original"].exists()
+    conn.commit()
+    row = conn.execute(
+        "SELECT detection_id FROM detections WHERE image_filename=?", (name,)
+    ).fetchone()
+    return name, row[0] if row else None
 
 
-def test_stop_before_protected_candidate_batch_is_reported(output_dir):
-    fn = "20260101_120013_protected.jpg"
-    with closing_connection() as conn:
-        paths = seed_image(
-            conn, fn, output_dir, write_optimized=False, write_thumbs=False
+def answer(
+    conn: sqlite3.Connection, name: str, identifier: int | None, **kwargs: Any
+) -> None:
+    record_human_answer(conn, HumanAnswer(name, identifier, **kwargs), PROVENANCE)
+    conn.commit()
+
+
+@pytest.mark.parametrize("option", ["keep_previews", "delete_all"])
+def test_accelerated_run_matches_exact_plan_and_preserves_answers(
+    case: Case, option: str
+) -> None:
+    conn, paths = case
+    bird, _ = add(conn, paths, "bird")
+    favorite, _ = add(conn, paths, "favorite", favorite=True)
+    waiting, did = add(conn, paths, "waiting")
+    answer(conn, waiting, did, object_bird_presence="present")
+    pending, did = add(conn, paths, "pending")
+    answer(conn, pending, did, object_bird_presence="absent")
+    create_export(
+        conn,
+        paths=paths,
+        labeling_installation_id="0" * 32,
+        selection={f"detection:{did}"},
+    )
+    answered, did = add(conn, paths, "answered")
+    answer(conn, answered, did, object_bird_presence="absent")
+    eid, _ = create_export(
+        conn,
+        paths=paths,
+        labeling_installation_id="0" * 32,
+        selection={f"detection:{did}"},
+    )
+    conn.execute(
+        "UPDATE labeling_exports SET received_at=? WHERE export_id=?",
+        ((NOW - timedelta(days=40)).isoformat(), eid),
+    )
+    conn.commit()
+    mixed, did = add(conn, paths, "mixed", detections=2, review_status="untagged")
+    conn.execute("UPDATE detections SET is_favorite=1 WHERE detection_id=?", (did,))
+    conn.commit()
+    opened, _ = add(conn, paths, "open", review_status="untagged")
+    orphan, _ = add(conn, paths, "orphan", detections=0)
+    trash, did = add(conn, paths, "trash", favorite=True)
+    answer(conn, trash, did, object_bird_presence="absent")
+    conn.execute(
+        "UPDATE detections SET status='rejected', trashed_at=? WHERE detection_id=?",
+        ((NOW - timedelta(days=30)).isoformat(), did),
+    )
+    conn.execute(
+        "INSERT INTO rescan_proposals(job_id,image_filename) VALUES ('test',?)",
+        (trash,),
+    )
+    conn.execute("INSERT INTO bird_add_requests VALUES ('test',?,'{}','{}')", (trash,))
+    conn.commit()
+    conn.execute(
+        "CREATE TABLE training_exports(export_id INTEGER PRIMARY KEY, detection_id INTEGER REFERENCES detections(detection_id) ON DELETE CASCADE)"
+    )
+    for name in (trash, opened, bird):
+        conn.execute(
+            "INSERT INTO training_exports(detection_id) SELECT detection_id FROM detections WHERE image_filename=?",
+            (name,),
         )
-        result = retention_core.execute_plan(
+    legacy_schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='training_exports'"
+    ).fetchone()[0]
+    conn.commit()
+    for table in ("labeling_exports", "labeling_export_members"):
+        assert not {
+            row[2] for row in conn.execute(f"PRAGMA foreign_key_list({table})")
+        } & {"detections", "label_subjects", "images"}
+    settings = {**SETTINGS, "OLD_BIRD_PHOTOS": option}
+    plans = list(
+        plan_deletions(
             conn,
-            str(output_dir),
-            SETTINGS,
-            now=NOW,
-            stop_requested=lambda: True,
+            settings_for_plan(settings),
+            NOW,
+            paths=paths,
+            automatic_deletion_enabled_at=ENABLED,
         )
+    )
+    expected_files = {
+        f.reference for p in plans for f in p.files if f.present and f.decision.due(NOW)
+    }
+    expected_rows = {
+        (r.table, r.key) for p in plans for r in p.rows if r.decision.due(NOW)
+    }
+    before_files, before_rows = media(paths), rows(conn)
+    exports = [
+        list(map(tuple, conn.execute(f"SELECT * FROM {t}")))
+        for t in ("labeling_exports", "labeling_export_members")
+    ]
+    facts = dict(
+        conn.execute(
+            "SELECT fact_id, subject_id FROM human_label_facts WHERE subject_id IN (SELECT subject_id FROM label_subjects WHERE image_filename=?)",
+            (answered,),
+        )
+    )
+    result = execute_plan(conn, str(paths.base_dir), settings, NOW, batch_size=2)
+    assert result["errors"] == 0, result
+    assert conn.execute("SELECT COUNT(*) FROM training_exports").fetchone()[0] == 1
+    assert (
+        legacy_schema
+        == conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name='training_exports'"
+        ).fetchone()[0]
+    )
+    after_files, after_rows = media(paths), rows(conn)
+    assert set(before_files) - set(after_files) == expected_files
+    assert before_rows - after_rows == expected_rows
+    assert result["deleted"] == len(expected_files)
+    assert result["deleted_rows"] == len(expected_rows)
+    assert all(
+        before_files[key] == value
+        for key, value in after_files.items()
+        if key in before_files
+    )
+    assert exports == [
+        list(map(tuple, conn.execute(f"SELECT * FROM {t}")))
+        for t in ("labeling_exports", "labeling_export_members")
+    ]
+    assert facts == dict(
+        conn.execute(
+            "SELECT fact_id, subject_id FROM human_label_facts WHERE subject_id IN (SELECT subject_id FROM label_subjects WHERE image_filename=?)",
+            (answered,),
+        )
+    )
+    for name in (favorite, waiting, pending, mixed):
+        assert paths.get_original_path(name).exists()
+    assert paths.get_derivative_path(bird, "optimized").exists() == (
+        option == "keep_previews"
+    )
+    assert not conn.execute("PRAGMA foreign_key_check").fetchall()
+    again = execute_plan(conn, str(paths.base_dir), settings, NOW)
+    assert again["deleted"] == again["deleted_rows"] == again["errors"] == 0
 
-    assert result["stopped"] is True
-    assert result["deleted"] == 0
-    assert paths["original"].exists()
+
+def test_trash_deadline_restore_and_grace(case: Case) -> None:
+    conn, paths = case
+    opened, _ = add(conn, paths, "open", review_status="untagged")
+    trash, did = add(conn, paths, "trash", favorite=True)
+    conn.execute(
+        "UPDATE detections SET status='rejected',trashed_at=? WHERE detection_id=?",
+        ((NOW - timedelta(days=29)).isoformat(), did),
+    )
+    conn.commit()
+    settings = {**SETTINGS, "AUTOMATIC_DELETION_ENABLED_AT": NOW.isoformat()}
+    assert execute_plan(conn, str(paths.base_dir), settings, NOW)["deleted"] == 0
+    conn.execute(
+        "UPDATE detections SET status='active',trashed_at=NULL WHERE detection_id=?",
+        (did,),
+    )
+    conn.commit()
+    assert (
+        execute_plan(
+            conn, str(paths.base_dir), settings, NOW + timedelta(days=13, hours=23)
+        )["deleted"]
+        == 0
+    )
+    result = execute_plan(conn, str(paths.base_dir), settings, NOW + timedelta(days=14))
+    assert result["deleted"] > 0
+    assert not paths.get_original_path(opened).exists()
+    assert paths.get_original_path(trash).exists()
+
+
+def test_switch_off_blocks_everything_and_missing_marker_blocks(case: Case) -> None:
+    conn, paths = case
+    add(conn, paths, "old", review_status="untagged")
+    before = media(paths), rows(conn)
+    assert execute_plan(
+        conn,
+        str(paths.base_dir),
+        {**SETTINGS, "AUTOMATIC_DELETION_ENABLED": False},
+        NOW,
+    )["disabled"]
+    assert before == (media(paths), rows(conn))
+    conn.execute("DELETE FROM _migration_state WHERE key=?", (HUMAN_ANSWERS_MIGRATION,))
+    conn.commit()
+    with pytest.raises(RuntimeError, match="migration"):
+        execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert before == (media(paths), rows(conn))
+
+
+def test_rechecks_favorite_committed_after_enumeration(case: Case) -> None:
+    conn, paths = case
+    name, did = add(conn, paths, "candidate", review_status="untagged")
+    from core import retention_core
+
+    original = retention_core.image_batches
+
+    def concurrent_batches(*args: Any, **kwargs: Any) -> Iterator[list[dict[str, Any]]]:
+        for batch in original(*args, **kwargs):
+            with sqlite3.connect(paths.get_database_path()) as other:
+                other.execute(
+                    "UPDATE detections SET is_favorite=1 WHERE detection_id=?", (did,)
+                )
+            yield batch
+
+    with patch.object(retention_core, "image_batches", concurrent_batches):
+        result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert result["deleted"] == result["deleted_rows"] == 0
+    assert paths.get_original_path(name).exists()
+
+
+def test_disable_between_batches_stops_before_next_photo(case: Case) -> None:
+    conn, paths = case
+    for index in range(3):
+        add(conn, paths, f"open{index}", review_status="untagged")
+    settings = dict(SETTINGS)
+
+    def stop_after_batch(progress: dict[str, Any]) -> None:
+        settings["AUTOMATIC_DELETION_ENABLED"] = False
+
+    result = execute_plan(
+        conn,
+        str(paths.base_dir),
+        settings,
+        NOW,
+        batch_size=1,
+        progress_callback=stop_after_batch,
+    )
+    assert result["processed"] == 1 and result["disabled"]
+    assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 2
+
+
+def test_missing_files_do_not_block_row_cleanup(case: Case) -> None:
+    conn, paths = case
+    name, _ = add(
+        conn,
+        paths,
+        "missing",
+        review_status="untagged",
+        write_original=False,
+        write_optimized=False,
+        write_thumbs=False,
+    )
+    result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert result["missing"] > 0 and result["errors"] == 0
+    assert not conn.execute("SELECT 1 FROM images WHERE filename=?", (name,)).fetchone()
+
+
+def test_file_failure_keeps_rows_and_retry_finishes(case: Case) -> None:
+    conn, paths = case
+    add(conn, paths, "failed", review_status="untagged")
+    before = rows(conn)
+    with patch("core.retention_core.os.unlink", side_effect=PermissionError):
+        assert execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)["errors"] == 1
+    assert rows(conn) == before
+    assert execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)["errors"] == 0
+    assert not rows(conn)
+
+
+def test_missing_bird_previews_are_regenerated_before_original_expires(
+    case: Case,
+) -> None:
+    conn, paths = case
+    name, _ = add(conn, paths, "bird", write_optimized=False, write_thumbs=False)
+    result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert result["errors"] == 0, result
+    assert not paths.get_original_path(name).exists()
+    assert paths.get_derivative_path(name, "optimized").exists()
+    assert paths.get_derivative_path(Path(name).stem + "_crop_1.webp").exists()
+
+
+def test_symlink_escape_keeps_outside_file_and_rows(case: Case, tmp_path: Path) -> None:
+    conn, paths = case
+    name, _ = add(conn, paths, "unsafe", review_status="untagged")
+    original = paths.get_original_path(name)
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"keep")
+    original.unlink()
+    original.symlink_to(outside)
+    before = rows(conn)
+    assert execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)["errors"] == 1
+    assert outside.read_bytes() == b"keep" and rows(conn) == before
+
+
+def test_bounded_batches_and_cooperative_stop(case: Case) -> None:
+    conn, paths = case
+    conn.executemany(
+        "INSERT INTO images(filename,timestamp) VALUES (?,?)",
+        [(f"20240101_120000_{i:04}.jpg", "20240101_120000") for i in range(1001)],
+    )
+    conn.commit()
+    batches: list[int] = []
+    result = execute_plan(
+        conn,
+        str(paths.base_dir),
+        SETTINGS,
+        NOW,
+        batch_size=17,
+        progress_callback=lambda progress: batches.append(progress["processed"]),
+        stop_requested=lambda: bool(batches),
+    )
+    assert batches[0] == 17 and result["stopped"]
+    assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 984
+
+
+def test_released_shared_photo_cleans_up_unreferenced_crops(case: Case) -> None:
+    conn, paths = case
+    name, did = add(conn, paths, "siblings", detections=2, review_status="untagged")
+    conn.execute("UPDATE detections SET is_favorite=1 WHERE detection_id=?", (did,))
+    conn.commit()
+    execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert len(list(paths.thumbs_dir.rglob("*.webp"))) == 2
+    conn.execute("UPDATE detections SET is_favorite=0 WHERE detection_id=?", (did,))
+    conn.commit()
+    result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert result["errors"] == 0
+    assert not media(paths)
+
+
+def test_directory_swap_cannot_redirect_file_deletion(
+    case: Case, tmp_path: Path
+) -> None:
+    conn, paths = case
+    name, _ = add(conn, paths, "swap", review_status="untagged")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / name).write_bytes(b"keep")
+    from core import retention_core
+
+    checked = retention_core._checked_media
+    switched = False
+
+    def swap(path_manager: PathManager, reference: str, category: str) -> Path:
+        nonlocal switched
+        result = checked(path_manager, reference, category)
+        if category == "original" and not switched:
+            switched = True
+            result.parent.rename(paths.base_dir / "moved-originals")
+            result.parent.symlink_to(outside, target_is_directory=True)
+        return result
+
+    before = rows(conn)
+    with patch.object(retention_core, "_checked_media", swap):
+        result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert result["errors"] == 1 and rows(conn) == before
+    assert (outside / name).read_bytes() == b"keep"

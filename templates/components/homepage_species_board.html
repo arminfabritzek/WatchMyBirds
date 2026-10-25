@@ -1,0 +1,95 @@
+{% from 'partials/tile_toolbox.html' import tile_toolbox with context %}
+        {% macro render_species_board(board, modal_group, title, title_href=none, all_href=none, all_label=none, extra_style='') %}
+        <div class="quiet-preview best-species-board"{% if extra_style %} style="{{ extra_style }}"{% endif %}>
+            <div class="quiet-preview__head">
+                <h3 class="quiet-preview__title">
+                    {% if title == "Today's Visitors" and today_iso is defined %}
+                    <a class="quiet-preview__title-link" href="{{ url_for('gallery.subgallery', date=today_iso) }}">{{ title }}</a>
+                    {% elif title_href %}
+                    <a class="quiet-preview__title-link" href="{{ title_href }}">{{ title }}</a>
+                    {% else %}
+                    {{ title }}
+                    {% endif %}
+                </h3>
+                {% if all_href %}
+                {% if title == "Today's Visitors" %}
+                <a class="quiet-preview__all" href="/gallery">Gallery</a>
+                {% else %}
+                <a class="quiet-preview__all" href="{{ all_href }}">{{ all_label or 'View All' }}</a>
+                {% endif %}
+                {% endif %}
+            </div>
+
+            {% if board.featured %}
+            <div class="best-species-board__featured">
+                {% for det in board.featured %}
+                {{ _render_species_card(det, modal_group, 'featured') }}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if board.grid %}
+            {% if modal_group == 'stream-best' %}
+            <details class="best-species-board__more">
+                <summary>Show more</summary>
+            {% endif %}
+            <div class="best-species-board__grid">
+                {% for det in board.grid %}
+                {{ _render_species_card(det, modal_group, 'grid') }}
+                {% endfor %}
+            </div>
+            {% if modal_group == 'stream-best' %}
+            </details>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endmacro %}
+
+        {% macro _render_species_card(det, modal_group, variant) %}
+        <article class="best-species-card best-species-card--{{ variant }} fade-in-item"
+            {% if det.species_colour is not none %}data-species-colour="{{ det.species_colour }}"
+            style="--cell-species-colour: var(--species-colour-{{ det.species_colour }})"{% endif %}>
+            <span class="quiet-preview__item fade-in-item wm-toolbox-host" hidden aria-hidden="true"></span>
+            {% set frames = det.story_frames or [det] %}
+            <div class="best-species-card__photos{% if frames|length == 1 %} best-species-card__photos--single{% endif %}">
+                {% for frame in frames %}
+                <div class="best-species-card__media wm-toolbox-host">
+                    {% if modal_group == 'stream-summary' and frame.gallery_date %}
+                    <a hidden aria-hidden="true" href="{{ url_for('gallery.subgallery', date=today_iso, focus=frame.detection_id) }}"></a>
+                    {% endif %}
+                    <button type="button" class="best-species-card__media-link"
+                        data-bs-toggle="modal" data-bs-target="#modal-{{ modal_group }}-{{ frame.detection_id }}"
+                        aria-label="Open image: {{ det.common_name }}">
+                        {% if frame.display_path %}
+                        <img class="best-species-card__image" loading="lazy"
+                            src="{{ frame.display_path }}" alt="{{ det.common_name }}">
+                        {% else %}
+                        <div class="best-species-card__placeholder">🐦</div>
+                        {% endif %}
+                    </button>
+                    {{ tile_toolbox(
+                        detection_id=frame.detection_id,
+                        surface='gallery',
+                        is_favorite=frame.is_favorite|default(false),
+                        can_moderate=can_moderate,
+                        current_species=det.species_key or det.latin_name,
+                        details_href='/gallery/' ~ frame.gallery_date ~ '?focus=' ~ frame.detection_id ~ '#detection-' ~ frame.detection_id if frame.gallery_date else none
+                    ) }}
+                </div>
+                {% endfor %}
+            </div>
+
+            <a class="best-species-card__link"
+                href="/species/overview?species_key={{ (det.species_key or det.latin_name or 'Unknown_species') | urlencode }}"
+                aria-label="Open species overview: {{ det.common_name }}">
+                <div class="best-species-card__body{% if variant == 'grid' %} best-species-card__body--compact{% endif %}">
+                    <span class="best-species-card__name">{{ det.common_name }}</span>
+                    <span class="best-species-card__latin">{{ det.latin_name | replace('_', ' ') }}</span>
+                    <div class="best-species-card__facts">
+                        <span class="best-species-card__fact">Nearby {{ det.last_seen_display }}</span>
+                        <span class="best-species-card__fact">{{ det.visit_count }} visit{{ 's' if det.visit_count != 1 }} here</span>
+                    </div>
+                </div>
+            </a>
+        </article>
+        {% endmacro %}

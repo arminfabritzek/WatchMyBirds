@@ -14,7 +14,6 @@ ARCHITECTURE:
 - No direct dependencies between implementations
 """
 
-from detectors.interfaces.capture import CaptureInterface
 from detectors.interfaces.classification import (
     ClassificationInterface,
     ClassificationResult,
@@ -32,7 +31,6 @@ from detectors.interfaces.persistence import (
 
 __all__ = [
     # Interfaces
-    "CaptureInterface",
     "DetectionInterface",
     "ClassificationInterface",
     "PersistenceInterface",

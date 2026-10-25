@@ -142,9 +142,7 @@ class TestNewSpeciesOnlyMode:
 
     @pytest.fixture
     def new_species_service(self, common_names):
-        with patch(
-            "detectors.services.notification_service.get_config"
-        ) as mock_config:
+        with patch("detectors.services.notification_service.get_config") as mock_config:
             mock_config.return_value = {
                 "TELEGRAM_MODE": "new_species_only",
                 "TELEGRAM_COOLDOWN": 60,
@@ -157,9 +155,7 @@ class TestNewSpeciesOnlyMode:
 
     def test_first_sighting_queues(self, new_species_service):
         """Brand-new species (not in seen_species table) gets queued."""
-        with patch(
-            "utils.db.seen_species.is_new_species", return_value=True
-        ):
+        with patch("utils.db.seen_species.is_new_species", return_value=True):
             new_species_service.queue_detection(
                 SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/img.jpg")
             )
@@ -167,9 +163,7 @@ class TestNewSpeciesOnlyMode:
 
     def test_already_seen_does_not_queue(self, new_species_service):
         """Species already in seen_species table is silently dropped."""
-        with patch(
-            "utils.db.seen_species.is_new_species", return_value=False
-        ):
+        with patch("utils.db.seen_species.is_new_species", return_value=False):
             new_species_service.queue_detection(
                 SpeciesInfo("Parus_major", "Kohlmeise", 0.9, "/img.jpg")
             )
@@ -183,9 +177,7 @@ class TestNewSpeciesOnlyMode:
         the routine 'Species detected:' headline."""
         mock_send.return_value = [{"ok": True}]
 
-        with patch(
-            "utils.db.seen_species.is_new_species", return_value=True
-        ):
+        with patch("utils.db.seen_species.is_new_species", return_value=True):
             new_species_service.queue_detection(
                 SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/img.jpg")
             )
@@ -211,9 +203,7 @@ class TestNewSpeciesOnlyMode:
         future detections without ever having alerted the operator."""
         mock_send.side_effect = RuntimeError("Telegram down")
 
-        with patch(
-            "utils.db.seen_species.is_new_species", return_value=True
-        ):
+        with patch("utils.db.seen_species.is_new_species", return_value=True):
             new_species_service.queue_detection(
                 SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/img.jpg")
             )
@@ -426,3 +416,20 @@ class TestThreadSafety:
 
         # Should have 100 unique species
         assert notification_service.pending_count == 100
+
+
+def test_cover_metadata_database_error_falls_back_to_score(
+    notification_service,
+) -> None:
+    import sqlite3
+
+    with patch(
+        "detectors.services.notification_service.closing_connection",
+        side_effect=sqlite3.OperationalError("database is locked"),
+    ):
+        info = notification_service.create_species_info(
+            "Parus_major", 0.9, "/photo.jpg", detection_id=1
+        )
+    assert info.cover_metadata == {}
+    notification_service.queue_detection(info)
+    assert notification_service.pending_count == 1

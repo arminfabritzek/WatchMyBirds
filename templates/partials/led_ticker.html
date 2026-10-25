@@ -760,6 +760,8 @@
         visits: 0, species: 0, total: 0, busiestHour: '', station: ''
     };
 
+    window.addEventListener('wmb:archive-total-ready', function () { rebuildBuffer(); });
+
     function buildHeartbeatSegments() {
         // Clock + date + weather + detection live in the left status
         // zone, and PTZ has its own DOM button on the appbar — so the

@@ -33,9 +33,10 @@ from detectors.services.classification_service import ClassificationService
 from detectors.services.crop_service import CropService
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.detection_service import DetectionService
-from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
-from detectors.services.temporal_decision_service import TemporalDecisionService
+from detectors.services.mqtt_detection_service import MqttDetectionService
+from detectors.services.scoring_pipeline import compute_detection_signals
 from logging_config import get_logger
+from utils.cover_selection import cover_sort_key
 from utils.db import get_connection, get_or_create_default_source
 from utils.path_manager import get_path_manager
 
@@ -70,7 +71,8 @@ class DetectionManager:
             backend=build_classifier_backend(
                 self.config,
                 wmb_classifier=self.classifier,
-            )
+            ),
+            config=self.config,
         )
         self.classifier_model_id = ""
 
@@ -159,10 +161,6 @@ class DetectionManager:
 
         # Control flags
         self.paused = False
-        self._deep_scan_active = False
-        self._deep_scan_gate_count = 0
-        self._paused_before_deep_scan = False
-        self._deep_scan_lock = threading.Lock()
         self.last_detection_had_frame = True
         self._last_components_ready_state = True
         self._last_frame_was_stale = False
@@ -236,85 +234,15 @@ class DetectionManager:
         except Exception:  # noqa: BLE001 — wizard registration is optional
             logger.debug("Empirical-probe wizard registration skipped")
         self.notification_service = NotificationService(common_names=self.common_names)
+        self.mqtt_detection_service = MqttDetectionService()
         self.persistence_service = PersistenceService(
             ptz_controller=self.auto_ptz_controller
         )
         self.crop_service = CropService()
         self.decision_policy_service = DecisionPolicyService()
-        self.temporal_decision_service = TemporalDecisionService()
         self.capability_registry = build_default_registry()
 
         logger.info("DetectionManager V2 initialized (with Services)")
-
-    # =========================================================================
-    # SIGNAL DELEGATE — single-entry scoring pipeline for external callers
-    # (e.g. analysis_service) without requiring cross-layer imports.
-    # =========================================================================
-
-    def compute_detection_signals(
-        self,
-        *,
-        bbox: tuple[int, int, int, int],
-        frame_shape: tuple[int, ...],
-        od_conf: float,
-        cls_conf: float,
-        top_k_confidences: list[float] | None,
-        species_key: str,
-        od_class_name: str | None = None,
-    ) -> "ScoringResult":
-        """Delegate to :func:`scoring_pipeline.compute_detection_signals`.
-
-        ``od_class_name`` routes deep-review reanalysis through the same
-        non-bird gate as live ingest. Omitting it preserves the legacy
-        bird-track-only behaviour for callers that have no class info.
-
-        Builds the same per-class resolver as the live `_processing_loop`
-        so deep-review reanalysis uses the model's per-class floors when
-        a v2-coco-shaped detector is loaded, and falls back to the scalar
-        for 5-class models.
-        """
-        detection_service = getattr(self, "detection_service", None)
-        detector_obj = getattr(detection_service, "_detector", None)
-        underlying = getattr(detector_obj, "model", None) if detector_obj else None
-        per_class_map: dict[str, float] = (
-            getattr(underlying, "conf_per_class_name", {}) or {}
-            if underlying is not None
-            else {}
-        )
-        global_non_bird_floor = float(
-            self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
-        )
-
-        def non_bird_floor_for(class_name: str) -> float:
-            # See non_bird_floor_for() in run() for the rationale:
-            # global NON_BIRD_CONFIRM_THRESHOLD is the minimum; per-class
-            # entries from the detector YAML may only RAISE it.
-            per_class = per_class_map.get(class_name)
-            if per_class is None:
-                return global_non_bird_floor
-            return max(float(per_class), global_non_bird_floor)
-
-        return compute_detection_signals(
-            bbox=bbox,
-            frame_shape=frame_shape,
-            od_conf=od_conf,
-            cls_conf=cls_conf,
-            top_k_confidences=top_k_confidences,
-            decision_policy=self.decision_policy_service,
-            temporal_service=self.temporal_decision_service,
-            capability_registry=self.capability_registry,
-            species_key=species_key,
-            od_class_name=od_class_name,
-            non_bird_confirm_threshold=global_non_bird_floor,
-            non_bird_confirm_threshold_fn=non_bird_floor_for,
-        )
-
-    def run_exhaustive_scan(self, frame: np.ndarray) -> list:
-        """Compatibility adapter for orphan deep-scan workflows."""
-        detections = self.detection_service.exhaustive_detect(frame)
-        if not self.detector_model_id:
-            self.detector_model_id = self.detection_service.get_model_id()
-        return detections
 
     # =========================================================================
     # LIFECYCLE
@@ -323,6 +251,7 @@ class DetectionManager:
     def start(self) -> None:
         """Starts the DetectionManager."""
         self.stop_event.clear()
+        self.mqtt_detection_service.start()
         self.frame_thread.start()
         self.detection_thread.start()
         self.processing_thread.start()
@@ -383,6 +312,7 @@ class DetectionManager:
     def stop(self) -> None:
         """Stops the DetectionManager."""
         self.stop_event.set()
+        self.mqtt_detection_service.stop()
 
         for thread in [
             self.frame_thread,
@@ -403,33 +333,6 @@ class DetectionManager:
         self.auto_ptz_controller.stop()
 
         logger.info("DetectionManager V2 stopped.")
-
-    def enter_deep_scan_mode(self) -> None:
-        """Pause live loops while a manual/nightly deep scan is running."""
-        with self._deep_scan_lock:
-            if self._deep_scan_gate_count == 0:
-                self._paused_before_deep_scan = self.paused
-                self.paused = True
-                self._deep_scan_active = True
-            self._deep_scan_gate_count += 1
-
-    def exit_deep_scan_mode(self) -> None:
-        """Restore live loops after deep scan completes."""
-        with self._deep_scan_lock:
-            if self._deep_scan_gate_count <= 0:
-                self._deep_scan_gate_count = 0
-                self._deep_scan_active = False
-                return
-
-            self._deep_scan_gate_count -= 1
-            if self._deep_scan_gate_count == 0:
-                self._deep_scan_active = False
-                self.paused = self._paused_before_deep_scan
-
-    def is_deep_scan_active(self) -> bool:
-        """Whether deep-scan gating is currently active."""
-        with self._deep_scan_lock:
-            return self._deep_scan_active
 
     # =========================================================================
     # OD NIGHT-PAUSE GATE
@@ -1055,448 +958,382 @@ class DetectionManager:
             except queue.Empty:
                 continue
 
-            capture_time = job["capture_time_precise"]
-            original_frame = job["original_frame"]
-            detection_info_list = job["detection_info_list"]
-            detection_time_ms = job["detection_time_ms"]
-
-            cls_start = time.time()
-
-            # --- Defer image save until we know the frame has a keeper ---
-            #
-            # If every detection in this frame ends up at
-            # ``decision_level='reject'``, we do NOT write the
-            # original/optimized image or an images-row. We only log a
-            # metadata audit per reject detection. This keeps disk and DB
-            # from filling up with static-background FPs (tree-branch,
-            # fat-ball) that the OD classifies as bird but the classifier
-            # rejects.
-            #
-            # We pre-compute the filename stamp that ``save_image`` would
-            # have generated, so detection rows / crop files / reject-
-            # audit rows can all reference the same frame identity even
-            # when no image file exists on disk.
-            timestamp_stamp = capture_time.strftime("%Y%m%d_%H%M%S_%f")
-            base_filename = f"{timestamp_stamp}.jpg"
-            img_result = None  # filled lazily on first keeper detection
-
-            # --- Process each detection ---
-            best_species = None
-            best_score = 0.0
-            best_thumb_path = None
-
-            # Resolve the active save threshold once per frame so Filter (A)
-            # uses exactly the same value as the detect-loop gate at
-            # detector.py:635 (any-above-threshold). Without this, a frame
-            # admitted by ONE strong detection would also persist all the
-            # weaker companion detections — the root cause of issue #32.
-            from config import effective_save_threshold
-            from detectors.interfaces.persistence import DetectionData
-
-            detector_obj = getattr(self.detection_service, "_detector", None)
-            underlying = getattr(detector_obj, "model", None) if detector_obj else None
-            detector_conf = (
-                getattr(underlying, "conf_threshold_default", None)
-                if underlying is not None
-                else None
-            )
-            save_thr = effective_save_threshold(self.config, detector_conf)
-
-            # Build the per-class non-bird floor resolver once per frame.
-            # Reads the detector's per-class map (v2-coco and later);
-            # falls back to the config scalar NON_BIRD_CONFIRM_THRESHOLD
-            # for any class the model didn't ship a threshold for
-            # (covers 5-class models entirely).
-            per_class_map: dict[str, float] = (
-                getattr(underlying, "conf_per_class_name", {}) or {}
-                if underlying is not None
-                else {}
-            )
-            global_non_bird_floor = float(
-                self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
-            )
-
-            def non_bird_floor_for(
-                class_name: str,
-                _map: dict[str, float] = per_class_map,
-                _floor: float = global_non_bird_floor,
-            ) -> float:
-                # The global ``NON_BIRD_CONFIRM_THRESHOLD`` is the
-                # *minimum* floor — non-bird classes never run through
-                # the bird classifier's sanity check, so we want at
-                # least bird-track-equivalent confidence before
-                # persisting. Per-class entries from the detector YAML
-                # may RAISE the floor (e.g. squirrel 0.70 → 0.80;
-                # cat 0.75 → 0.80) but must NOT lower it (e.g.
-                # hedgehog 0.30 must NOT mean "persist all hedgehogs
-                # above 0.30" — that would defeat
-                # NON_BIRD_DROP_BELOW_CONFIRM).
-                #
-                # Previously this read ``_map.get(class_name, _floor)``
-                # which silently dropped the global floor whenever the
-                # detector shipped a per-class threshold below it —
-                # letting static-background FPs of low-confidence
-                # non-bird classes flood the gallery.
-                per_class = _map.get(class_name)
-                if per_class is None:
-                    return _floor
-                return max(float(per_class), _floor)
-
-            for idx, det in enumerate(detection_info_list, start=1):
-                x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
-                od_conf = det["confidence"]
-                bbox_tuple = (x1, y1, x2, y2)
-                od_class_name = det.get("class_name", "bird")
-                is_bird = is_bird_od_class(od_class_name)
-
-                # Filter (A): per-detection save-threshold gate.
-                # The frame-level gate (detector.py:635) only checks whether
-                # ANY detection clears the threshold. Re-apply per detection
-                # here so weaker companions in a flock are not persisted.
-                if od_conf < save_thr:
-                    continue
-
-                # Filter (A2): non-bird pre-persist gate. Non-bird OD classes
-                # ride OD confidence directly with no CLS sanity check, so a
-                # weaker floor than the bird track is the wrong default. Drop
-                # non-bird detections below NON_BIRD_CONFIRM_THRESHOLD entirely
-                # — no crop, no DB row, no derivative files. The downstream
-                # scoring pipeline would have gated them to UNCERTAIN anyway;
-                # this just stops them from costing disk and compute on the
-                # way there. Flip NON_BIRD_DROP_BELOW_CONFIRM=false to keep
-                # them in the DB as UNCERTAIN (e.g. during a Phase-7
-                # bbox-cluster collection window).
-                if not is_bird and self.config.get("NON_BIRD_DROP_BELOW_CONFIRM", True):
-                    if od_conf < non_bird_floor_for(od_class_name):
-                        continue
-
-                # Filter (B): sliding-window burst cap. When too many
-                # detections fire in a short window (e.g. sparrow flock),
-                # stop persisting until the burst subsides.
-                if not self._burst_admit():
-                    continue
-
-                # Filter (B2): same-bird burst suppression. Skip
-                # persisting when a near-identical bbox + species was
-                # already admitted in the last few seconds — the
-                # "bird sits 30s at feeder, detected every 2s, all 15
-                # frames flood the review queue" pattern. species_key
-                # is set to the OD class name for non-birds (CLS does
-                # not run) and left "" for birds at this point (CLS
-                # has not run yet); the empty key gates on bbox-overlap
-                # alone, which is the right semantics: same bbox in a
-                # short window is the same bird regardless of how CLS
-                # may flip-flop between Parus/Cyanistes per frame.
-                species_key_for_burst = "" if is_bird else od_class_name
-                if not self._same_bird_burst_admit(bbox_tuple, species_key_for_burst):
-                    continue
-
-                # Create crop for classification via CropService
-                crop_rgb = self.crop_service.create_classification_crop(
-                    frame=original_frame,
-                    bbox=bbox_tuple,
-                    size=self.SAVE_RESOLUTION_CROP,
-                    margin_percent=0.1,
-                    to_rgb=True,
+            try:
+                self._process_job(job)
+            except Exception:
+                logger.exception(
+                    "Detection processing failed; continuing with next frame"
                 )
-                if crop_rgb is None:
-                    continue
-
-                # Classify via ClassificationService — bird track only.
-                # Non-bird OD classes (squirrel/cat/marten_mustelid/hedgehog)
-                # skip CLS entirely; their species identity comes straight
-                # from od_class_name.
-                cls_name = ""
-                cls_conf = 0.0
-                cls_result = None
-                if is_bird:
-                    try:
-                        if crop_rgb is not None:
-                            cls_result = self.classification_service.classify(crop_rgb)
-                            cls_name = cls_result.class_name
-                            cls_conf = cls_result.confidence
-                            if not self.classifier_model_id:
-                                self.classifier_model_id = cls_result.model_id or ""
-                    except Exception as e:
-                        logger.error(f"Classification error: {e}")
-
-                # Species key for temporal smoothing:
-                # - bird track: CLS result, or "unknown" when CLS failed
-                # - non-bird track: the OD class name itself (it IS the species)
-                if is_bird:
-                    species_key = cls_name or "unknown"
-                else:
-                    species_key = od_class_name
-
-                # Centralised scoring pipeline (single source of truth)
-                signals = compute_detection_signals(
-                    bbox=bbox_tuple,
-                    frame_shape=original_frame.shape,
-                    od_conf=od_conf,
-                    cls_conf=cls_conf,
-                    top_k_confidences=(
-                        cls_result.top_k_confidences
-                        if cls_result is not None and cls_conf > 0
-                        else None
-                    ),
-                    decision_policy=self.decision_policy_service,
-                    temporal_service=self.temporal_decision_service,
-                    capability_registry=self.capability_registry,
-                    species_key=species_key,
-                    od_class_name=od_class_name,
-                    non_bird_confirm_threshold=global_non_bird_floor,
-                    non_bird_confirm_threshold_fn=non_bird_floor_for,
-                )
-                score = signals.score
-                agreement = signals.agreement_score
-                smoothed_state = signals.decision_state
-
-                # Save detection via PersistenceService
-                det_data = DetectionData(
-                    bbox=(x1, y1, x2, y2),
-                    confidence=od_conf,
-                    class_name=det.get("class_name", "bird"),
-                    cls_class_name=cls_name,
-                    cls_confidence=cls_conf,
-                    score=score,
-                    agreement_score=agreement,
-                    decision_state=smoothed_state,
-                    bbox_quality=signals.bbox_quality,
-                    unknown_score=signals.unknown_score,
-                    decision_reasons=signals.decision_reasons_json,
-                    policy_version=signals.policy_version,
-                    top_k_predictions=list(
-                        zip(
-                            (getattr(cls_result, "top_k_classes", []) or [])[1:],
-                            [
-                                float(c)
-                                for c in (
-                                    getattr(cls_result, "top_k_confidences", []) or []
-                                )[1:]
-                            ],
-                            strict=False,
-                        )
-                    )
-                    if cls_conf > 0
-                    else [],
-                    decision_level=getattr(cls_result, "decision_level", None)
-                    if cls_result is not None
-                    else None,
-                    raw_species_name=getattr(cls_result, "raw_species_name", None)
-                    if cls_result is not None
-                    else None,
-                )
-
-                # A1a routing — reject detections do NOT write image/
-                # crop/detection rows. They land in ``reject_audit`` as
-                # metadata only. Everything else (species/species_review/
-                # genus/None for non-bird) goes through the regular
-                # persistence path, lazy-initialising the image save on
-                # the first keeper.
-                detection_level = (
-                    getattr(cls_result, "decision_level", None)
-                    if cls_result is not None
-                    else None
-                )
-                if (
-                    detection_level is not None
-                    and str(detection_level).lower() == "reject"
-                ):
-                    try:
-                        h, w = original_frame.shape[:2]
-                        # Normalise bbox to 0..1 so audit rows are
-                        # resolution-agnostic and cluster-queryable
-                        # regardless of the source stream size.
-                        norm_x = max(0.0, min(1.0, x1 / w))
-                        norm_y = max(0.0, min(1.0, y1 / h))
-                        norm_w = max(0.0, min(1.0, (x2 - x1) / w))
-                        norm_h = max(0.0, min(1.0, (y2 - y1) / h))
-                        from utils.db import insert_reject_audit
-
-                        # Top-1 prob — when the classifier ran, its
-                        # top_k_confidences[0] IS the top-1 softmax. For
-                        # non-bird (no cls) and classifier failures
-                        # (cls_result is None) leave it NULL.
-                        top1 = None
-                        if cls_result is not None:
-                            tk = getattr(cls_result, "top_k_confidences", None)
-                            if tk:
-                                top1 = float(tk[0])
-
-                        # Best-effort: never let an audit failure block
-                        # the detection pipeline. The audit row is for
-                        # cluster diagnostics, not for correctness.
-                        insert_reject_audit(
-                            self.persistence_service._db_conn,
-                            {
-                                "frame_timestamp": timestamp_stamp,
-                                "frame_width": w,
-                                "frame_height": h,
-                                "bbox_x": norm_x,
-                                "bbox_y": norm_y,
-                                "bbox_w": norm_w,
-                                "bbox_h": norm_h,
-                                "od_class_name": od_class_name,
-                                "od_confidence": float(od_conf),
-                                "raw_species_name": getattr(
-                                    cls_result, "raw_species_name", None
-                                )
-                                if cls_result is not None
-                                else None,
-                                "top1_prob": top1,
-                                "decision_state": str(smoothed_state)
-                                if smoothed_state is not None
-                                else None,
-                                "decision_reasons": signals.decision_reasons_json,
-                                "detector_model_id": self.detector_model_id,
-                                "classifier_model_id": self.classifier_model_id,
-                            },
-                        )
-                    except Exception as audit_exc:
-                        logger.warning(
-                            f"reject_audit insert failed for {timestamp_stamp}: "
-                            f"{audit_exc}"
-                        )
-                    # Still bump the session counter so the operational
-                    # dashboard counts reject as a real decision event,
-                    # not just silent loss.
-                    if smoothed_state and smoothed_state in self.decision_state_counts:
-                        self.decision_state_counts[smoothed_state] += 1
-                    continue
-
-                # First keeper of this frame triggers the lazy image
-                # save. Subsequent keepers reuse the same base_filename.
-                if img_result is None:
-                    try:
-                        img_result = self.persistence_service.save_image(
-                            frame=original_frame,
-                            capture_time=capture_time,
-                            detector_model_id=self.detector_model_id,
-                            classifier_model_id=self.classifier_model_id,
-                            source_id=self.current_source_id,
-                            location_config=self.location_config,
-                            exif_gps_enabled=self.exif_gps_enabled,
-                        )
-                    except Exception as e:
-                        logger.error(f"PersistenceService.save_image error: {e}")
-                        img_result = None
-
-                    if img_result is None or not img_result.success:
-                        logger.error(
-                            f"Failed to save image for keeper frame {timestamp_stamp}"
-                        )
-                        # Without an images row we cannot persist this
-                        # detection's FK either — skip the rest of the
-                        # frame.
-                        break
-                    # PathManager generates ``<stamp>.jpg``; keep our
-                    # pre-computed stamp in sync with the persisted file.
-                    base_filename = img_result.base_filename
-
-                try:
-                    det_result = self.persistence_service.save_detection(
-                        image_filename=base_filename,
-                        detection=det_data,
-                        frame=original_frame,
-                        detector_model_id=self.detector_model_id,
-                        classifier_model_id=self.classifier_model_id,
-                        crop_index=idx,
-                    )
-
-                    # Push to the live-event bus so the stream-page LED
-                    # ticker can render this detection in real time. Wrapped
-                    # so a bus-side bug never breaks the detector loop.
-                    try:
-                        from utils.live_event_bus import get_bus
-
-                        _species_latin = cls_name or det_data.class_name
-                        _species_common = self.notification_service.get_common_name(
-                            _species_latin
-                        )
-                        get_bus().publish(
-                            {
-                                "type": "detection",
-                                "ts": time.time(),
-                                "species_latin": _species_latin,
-                                "species_common": _species_common,
-                                "od_class": det_data.class_name,
-                                "confidence": float(score),
-                                "od_confidence": float(od_conf),
-                                "cls_confidence": float(cls_conf),
-                                "decision_state": (
-                                    smoothed_state.value
-                                    if smoothed_state is not None
-                                    else None
-                                ),
-                            }
-                        )
-                    except Exception as bus_err:
-                        logger.debug("live_event_bus publish failed: %s", bus_err)
-
-                    # P1-03: session counter for operational monitoring
-                    if smoothed_state and smoothed_state in self.decision_state_counts:
-                        self.decision_state_counts[smoothed_state] += 1
-
-                    # Track best detection for notification.
-                    # Policy ON:  gate on smoothed decision state == CONFIRMED.
-                    # Policy OFF: conservative legacy gate — cls_conf > 0
-                    #             AND score >= SAVE_THRESHOLD.
-                    notify_eligible = False
-                    if smoothed_state is not None:
-                        # Decision policy active → require CONFIRMED
-                        notify_eligible = smoothed_state == DecisionState.CONFIRMED
-                    else:
-                        # Legacy-conservative fallback (no decision policy).
-                        # Reuses save_thr already resolved at the top of the
-                        # detection loop so auto and manual modes stay
-                        # consistent across gates.
-                        notify_eligible = cls_conf > 0 and score >= save_thr
-
-                    if score > best_score and notify_eligible:
-                        best_score = score
-                        best_species = cls_name or "Unknown"
-                        best_thumb_path = (
-                            str(det_result.thumbnail_path)
-                            if det_result.thumbnail_path
-                            else None
-                        )
-
-                except Exception as e:
-                    logger.error(f"PersistenceService.save_detection error: {e}")
-
-            # --- Notification via NotificationService ---
-            if best_species and best_thumb_path:
-                species_info = self.notification_service.create_species_info(
-                    latin_name=best_species,
-                    score=best_score,
-                    image_path=best_thumb_path,
-                )
-                self.notification_service.queue_detection(species_info)
-
-                if self.notification_service.should_send():
-                    self.notification_service.send_summary()
-
-            # Log timing.
-            # The detect-loop and processing-loop run on separate threads.
-            # det_cycle = DETECTION_INTERVAL_SECONDS target = DET + det_idle
-            # (the idle is what the *detect* loop sleeps after queuing this
-            # job). CLS happens here in the processing loop and does NOT
-            # add to det_cycle — it runs in parallel with the next detect.
-            cls_duration_ms = int((time.time() - cls_start) * 1000)
-            det_idle_ms = job["sleep_time_ms"]
-            det_cycle_ms = detection_time_ms + det_idle_ms
-            # Feed the CLS sample into the shared summary buffer; the
-            # detect-loop reads it on its 15s-tick so the summary line
-            # carries both DET and CLS aggregates.
-            self._cls_times.append(cls_duration_ms)
-            logger.debug(
-                f"[DET+CLS] pipeline={detection_time_ms + cls_duration_ms}ms "
-                f"(DET={detection_time_ms}ms, CLS={cls_duration_ms}ms) | "
-                f"Objects={len(detection_info_list)} | "
-                f"det_cycle={det_cycle_ms}ms (idle {det_idle_ms}ms)"
-            )
 
         logger.info("Processing loop stopped.")
+
+    def _process_job(self, job: dict[str, object]) -> None:
+        capture_time = job["capture_time_precise"]
+        original_frame = job["original_frame"]
+        detection_info_list = job["detection_info_list"]
+        detection_time_ms = job["detection_time_ms"]
+
+        cls_start = time.time()
+
+        # Rejected classifier results never reach image persistence.
+        timestamp_stamp = capture_time.strftime("%Y%m%d_%H%M%S_%f")
+        base_filename = f"{timestamp_stamp}.jpg"
+        img_result = None  # filled lazily on first keeper detection
+
+        # --- Process each detection ---
+        best_species = None
+        best_score = 0.0
+        best_cover_key = None
+        best_detection_id = None
+        best_thumb_path = None
+
+        # Resolve the active save threshold once per frame so Filter (A)
+        # uses exactly the same value as the detect-loop gate at
+        # detector.py:635 (any-above-threshold). Without this, a frame
+        # admitted by ONE strong detection would also persist all the
+        # weaker companion detections — the root cause of issue #32.
+        from config import effective_save_threshold
+        from detectors.interfaces.persistence import DetectionData
+
+        detector_obj = getattr(self.detection_service, "_detector", None)
+        underlying = getattr(detector_obj, "model", None) if detector_obj else None
+        detector_conf = (
+            getattr(underlying, "conf_threshold_default", None)
+            if underlying is not None
+            else None
+        )
+        save_thr = effective_save_threshold(self.config, detector_conf)
+
+        # Build the per-class non-bird floor resolver once per frame.
+        # Reads the detector's per-class map (v2-coco and later);
+        # falls back to the config scalar NON_BIRD_CONFIRM_THRESHOLD
+        # for any class the model didn't ship a threshold for
+        # (covers 5-class models entirely).
+        per_class_map: dict[str, float] = (
+            getattr(underlying, "conf_per_class_name", {}) or {}
+            if underlying is not None
+            else {}
+        )
+        global_non_bird_floor = float(
+            self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
+        )
+
+        def non_bird_floor_for(
+            class_name: str,
+            _map: dict[str, float] = per_class_map,
+            _floor: float = global_non_bird_floor,
+        ) -> float:
+            # The global ``NON_BIRD_CONFIRM_THRESHOLD`` is the
+            # *minimum* floor — non-bird classes never run through
+            # the bird classifier's sanity check, so we want at
+            # least bird-track-equivalent confidence before
+            # persisting. Per-class entries from the detector YAML
+            # may RAISE the floor (e.g. squirrel 0.70 → 0.80;
+            # cat 0.75 → 0.80) but must NOT lower it (e.g.
+            # hedgehog 0.30 must NOT mean "persist all hedgehogs
+            # above 0.30" — that would defeat
+            # NON_BIRD_DROP_BELOW_CONFIRM).
+            #
+            # Previously this read ``_map.get(class_name, _floor)``
+            # which silently dropped the global floor whenever the
+            # detector shipped a per-class threshold below it —
+            # letting static-background FPs of low-confidence
+            # non-bird classes flood the gallery.
+            per_class = _map.get(class_name)
+            if per_class is None:
+                return _floor
+            return max(float(per_class), _floor)
+
+        for idx, det in enumerate(detection_info_list, start=1):
+            x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
+            od_conf = det["confidence"]
+            bbox_tuple = (x1, y1, x2, y2)
+            od_class_name = det.get("class_name", "bird")
+            is_bird = is_bird_od_class(od_class_name)
+
+            # Filter (A): per-detection save-threshold gate.
+            # The frame-level gate (detector.py:635) only checks whether
+            # ANY detection clears the threshold. Re-apply per detection
+            # here so weaker companions in a flock are not persisted.
+            if od_conf < save_thr:
+                continue
+
+            # Filter (A2): non-bird pre-persist gate. Non-bird OD classes
+            # ride OD confidence directly with no CLS sanity check, so a
+            # weaker floor than the bird track is the wrong default. Drop
+            # non-bird detections below NON_BIRD_CONFIRM_THRESHOLD entirely
+            # — no crop, no DB row, no derivative files. The downstream
+            # scoring pipeline would have gated them to UNCERTAIN anyway;
+            # this just stops them from costing disk and compute on the
+            # way there. Flip NON_BIRD_DROP_BELOW_CONFIRM=false to keep
+            # them in the DB as UNCERTAIN (e.g. during a Phase-7
+            # bbox-cluster collection window).
+            if not is_bird and self.config.get("NON_BIRD_DROP_BELOW_CONFIRM", True):
+                if od_conf < non_bird_floor_for(od_class_name):
+                    continue
+
+            # Filter (B): sliding-window burst cap. When too many
+            # detections fire in a short window (e.g. sparrow flock),
+            # stop persisting until the burst subsides.
+            if not self._burst_admit():
+                continue
+
+            # Filter (B2): same-bird burst suppression. Skip
+            # persisting when a near-identical bbox + species was
+            # already admitted in the last few seconds — the
+            # "bird sits 30s at feeder, detected every 2s, all 15
+            # frames flood the review queue" pattern. species_key
+            # is set to the OD class name for non-birds (CLS does
+            # not run) and left "" for birds at this point (CLS
+            # has not run yet); the empty key gates on bbox-overlap
+            # alone, which is the right semantics: same bbox in a
+            # short window is the same bird regardless of how CLS
+            # may flip-flop between Parus/Cyanistes per frame.
+            species_key_for_burst = "" if is_bird else od_class_name
+            if not self._same_bird_burst_admit(bbox_tuple, species_key_for_burst):
+                continue
+
+            # Create crop for classification via CropService
+            crop_rgb = self.crop_service.create_classification_crop(
+                frame=original_frame,
+                bbox=bbox_tuple,
+                size=self.SAVE_RESOLUTION_CROP,
+                margin_percent=0.1,
+                to_rgb=True,
+            )
+            if crop_rgb is None:
+                continue
+
+            # Classify via ClassificationService — bird track only.
+            # Non-bird OD classes (squirrel/cat/marten_mustelid/hedgehog)
+            # skip CLS entirely; their species identity comes straight
+            # from od_class_name.
+            cls_name = ""
+            cls_conf = 0.0
+            cls_result = None
+            if is_bird:
+                try:
+                    if crop_rgb is not None:
+                        cls_result = self.classification_service.classify(
+                            crop_rgb, observed_at=capture_time
+                        )
+                        cls_name = cls_result.class_name
+                        cls_conf = cls_result.confidence
+                        if not self.classifier_model_id:
+                            self.classifier_model_id = cls_result.model_id or ""
+                except Exception as e:
+                    logger.error(f"Classification error: {e}")
+
+            # Centralised scoring pipeline (single source of truth)
+            signals = compute_detection_signals(
+                bbox=bbox_tuple,
+                frame_shape=original_frame.shape,
+                od_conf=od_conf,
+                cls_conf=cls_conf,
+                top_k_confidences=(
+                    cls_result.top_k_confidences
+                    if cls_result is not None and cls_conf > 0
+                    else None
+                ),
+                decision_policy=self.decision_policy_service,
+                capability_registry=self.capability_registry,
+                od_class_name=od_class_name,
+                species_key=cls_name,
+                geography_json=getattr(cls_result, "geography_json", None),
+                decision_level=getattr(cls_result, "decision_level", None),
+                non_bird_confirm_threshold=global_non_bird_floor,
+                non_bird_confirm_threshold_fn=non_bird_floor_for,
+            )
+            score = signals.score
+            agreement = signals.agreement_score
+            decision_state = signals.decision_state
+
+            # Save detection via PersistenceService
+            det_data = DetectionData(
+                bbox=(x1, y1, x2, y2),
+                confidence=od_conf,
+                class_name=det.get("class_name", "bird"),
+                cls_class_name=cls_name,
+                cls_confidence=cls_conf,
+                score=score,
+                agreement_score=agreement,
+                decision_state=decision_state,
+                bbox_quality=signals.bbox_quality,
+                unknown_score=signals.unknown_score,
+                decision_reasons=signals.decision_reasons_json,
+                policy_version=signals.policy_version,
+                top_k_predictions=getattr(cls_result, "storage_alternatives", None)
+                or list(
+                    zip(
+                        (getattr(cls_result, "top_k_classes", []) or [])[1:],
+                        [
+                            float(c)
+                            for c in (
+                                getattr(cls_result, "top_k_confidences", []) or []
+                            )[1:]
+                        ],
+                        strict=False,
+                    )
+                )
+                if cls_conf > 0
+                else [],
+                decision_level=signals.decision_level,
+                raw_species_name=getattr(cls_result, "raw_species_name", None)
+                if cls_result is not None
+                else None,
+                geography_json=getattr(cls_result, "geography_json", None)
+                if cls_result is not None
+                else None,
+            )
+
+            detection_level = (
+                getattr(cls_result, "decision_level", None)
+                if cls_result is not None
+                else None
+            )
+            if detection_level is not None and str(detection_level).lower() == "reject":
+                if decision_state in self.decision_state_counts:
+                    self.decision_state_counts[decision_state] += 1
+                continue
+
+            # First keeper of this frame triggers the lazy image
+            # save. Subsequent keepers reuse the same base_filename.
+            if img_result is None:
+                try:
+                    img_result = self.persistence_service.save_image(
+                        frame=original_frame,
+                        capture_time=capture_time,
+                        detector_model_id=self.detector_model_id,
+                        classifier_model_id=self.classifier_model_id,
+                        source_id=self.current_source_id,
+                        location_config=self.location_config,
+                        exif_gps_enabled=self.exif_gps_enabled,
+                    )
+                except Exception as e:
+                    logger.error(f"PersistenceService.save_image error: {e}")
+                    img_result = None
+
+                if img_result is None or not img_result.success:
+                    logger.error(
+                        f"Failed to save image for keeper frame {timestamp_stamp}"
+                    )
+                    # Without an images row we cannot persist this
+                    # detection's FK either — skip the rest of the
+                    # frame.
+                    break
+                # PathManager generates ``<stamp>.jpg``; keep our
+                # pre-computed stamp in sync with the persisted file.
+                base_filename = img_result.base_filename
+
+            try:
+                det_result = self.persistence_service.save_detection(
+                    image_filename=base_filename,
+                    detection=det_data,
+                    frame=original_frame,
+                    detector_model_id=self.detector_model_id,
+                    classifier_model_id=self.classifier_model_id,
+                    crop_index=idx,
+                )
+
+                # Push to the live-event bus so the stream-page LED
+                # ticker can render this detection in real time. Wrapped
+                # so a bus-side bug never breaks the detector loop.
+                try:
+                    from utils.live_event_bus import get_bus
+
+                    _species_latin = (
+                        cls_name if decision_state == DecisionState.CONFIRMED else ""
+                    )
+                    _species_common = (
+                        self.notification_service.get_common_name(_species_latin)
+                        if _species_latin
+                        else ""
+                    )
+                    get_bus().publish(
+                        {
+                            "type": "detection",
+                            "ts": time.time(),
+                            "species_latin": _species_latin,
+                            "species_common": _species_common,
+                            "od_class": det_data.class_name,
+                            "confidence": float(score),
+                            "od_confidence": float(od_conf),
+                            "cls_confidence": float(cls_conf),
+                            "decision_state": decision_state.value,
+                        }
+                    )
+                except Exception as bus_err:
+                    logger.debug("live_event_bus publish failed: %s", bus_err)
+
+                # P1-03: session counter for operational monitoring
+                if decision_state in self.decision_state_counts:
+                    self.decision_state_counts[decision_state] += 1
+
+                notify_eligible = decision_state == DecisionState.CONFIRMED
+
+                # New objects on one frame share capture context and unassessed image quality.
+                cover_key = cover_sort_key(
+                    {"score": score, "bbox_quality": signals.bbox_quality}
+                )
+                if notify_eligible and (
+                    best_cover_key is None or cover_key > best_cover_key
+                ):
+                    best_cover_key = cover_key
+                    best_detection_id = det_result.detection_id
+                    best_score = score
+                    best_species = cls_name or "Unknown"
+                    best_thumb_path = (
+                        str(det_result.thumbnail_path)
+                        if det_result.thumbnail_path
+                        else None
+                    )
+
+                if notify_eligible and cls_name and det_result.success:
+                    try:
+                        self.mqtt_detection_service.publish_detection(
+                            result=det_result,
+                            latin_name=cls_name,
+                            score=score,
+                            capture_time=capture_time,
+                        )
+                    except Exception:
+                        logger.warning("MQTT event preparation failed")
+
+            except Exception as e:
+                logger.error(f"PersistenceService.save_detection error: {e}")
+
+        # --- Notification via NotificationService ---
+        if best_species and best_thumb_path:
+            species_info = self.notification_service.create_species_info(
+                latin_name=best_species,
+                score=best_score,
+                image_path=best_thumb_path,
+                detection_id=best_detection_id,
+            )
+            self.notification_service.queue_detection(species_info)
+
+            if self.notification_service.should_send():
+                self.notification_service.send_summary()
+
+        # Log timing.
+        # The detect-loop and processing-loop run on separate threads.
+        # det_cycle = DETECTION_INTERVAL_SECONDS target = DET + det_idle
+        # (the idle is what the *detect* loop sleeps after queuing this
+        # job). CLS happens here in the processing loop and does NOT
+        # add to det_cycle — it runs in parallel with the next detect.
+        cls_duration_ms = int((time.time() - cls_start) * 1000)
+        det_idle_ms = job["sleep_time_ms"]
+        det_cycle_ms = detection_time_ms + det_idle_ms
+        # Feed the CLS sample into the shared summary buffer; the
+        # detect-loop reads it on its 15s-tick so the summary line
+        # carries both DET and CLS aggregates.
+        self._cls_times.append(cls_duration_ms)
+        logger.debug(
+            f"[DET+CLS] pipeline={detection_time_ms + cls_duration_ms}ms "
+            f"(DET={detection_time_ms}ms, CLS={cls_duration_ms}ms) | "
+            f"Objects={len(detection_info_list)} | "
+            f"det_cycle={det_cycle_ms}ms (idle {det_idle_ms}ms)"
+        )
 
     # =========================================================================
     # PUBLIC INTERFACE - Same as original
@@ -1533,7 +1370,7 @@ class DetectionManager:
 
     def update_configuration(self, changes: dict) -> None:
         """Handles runtime config changes."""
-        if "VIDEO_SOURCE" in changes:
+        if "VIDEO_SOURCE" in changes and changes["VIDEO_SOURCE"] != self.video_source:
             self.update_source(changes["VIDEO_SOURCE"])
 
         if "DEBUG_MODE" in changes:
@@ -1568,30 +1405,3 @@ class DetectionManager:
         self.classifier_model_id = ""
         self.config["CLASSIFIER_BACKEND"] = normalized
         logger.info("Classifier backend switched to %s", normalized)
-
-    def start_user_ingest(self, folder_path: str | None = None) -> None:
-        """Orchestrates User Ingest process."""
-        from utils.db import get_or_create_user_import_source
-        from utils.ingest import ingest_folder
-
-        if folder_path is None:
-            folder_path = self.config.get("INGEST_DIR", "")
-
-        try:
-            logger.info("Initiating User Ingest. Pausing detection...")
-            self.paused = True
-            time.sleep(2)
-
-            source_id = get_or_create_user_import_source(self.db_conn)
-
-            if os.path.exists(folder_path):
-                logger.info(f"Running ingest on {folder_path}...")
-                ingest_folder(folder_path, source_id, move_files=True)
-                logger.info("User Ingest complete.")
-            else:
-                logger.error(f"Ingest folder not found: {folder_path}")
-        except Exception as e:
-            logger.error(f"Error during User Ingest: {e}", exc_info=True)
-        finally:
-            logger.info("Resuming detection...")
-            self.paused = False

@@ -4,6 +4,7 @@ import threading
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 from tests.retention_helpers import seed_image
 from utils.db.connection import closing_connection
@@ -32,16 +33,16 @@ def _seed_deletable(output_dir, filename):
         seed_image(conn, filename, output_dir, orig_bytes=1000)
 
 
-ENABLED_CFG = {
-    "RETENTION_ENABLED": True,
-    "RETENTION_DAYS": 90,
-    "RETENTION_PROTECT_FAVORITES": True,
-    "RETENTION_PROTECT_UNREVIEWED": True,
-}
+ENABLED_CFG = {"AUTOMATIC_DELETION_ENABLED": True, "OLD_BIRD_PHOTOS": "keep_previews"}
 
 
 @pytest.fixture
 def client(output_dir, monkeypatch):
+    from config import update_runtime_settings
+
+    with closing_connection():
+        pass
+    update_runtime_settings(ENABLED_CFG)
     cfg = {"OUTPUT_DIR": str(output_dir), **ENABLED_CFG}
     monkeypatch.setattr("config.get_config", lambda: cfg)
 
@@ -71,8 +72,8 @@ def test_preview_returns_counts_and_is_side_effect_free(client, output_dir):
     resp = client.get("/api/v1/retention/preview")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["deletable"]["count"] == 1
-    assert data["deletable"]["estimated_bytes"] == 1000
+    assert data["due_files"] == 1
+    assert data["due_bytes"] == 1000
 
     # Side-effect free: original still on disk, DB still present.
     assert (output_dir / "originals" / "2026-01-01" / fn).exists()
@@ -83,39 +84,11 @@ def test_preview_returns_counts_and_is_side_effect_free(client, output_dir):
     assert row["original_present"] == 1
 
 
-def test_preview_reports_posture(client):
-    resp = client.get("/api/v1/retention/preview")
-    data = resp.get_json()
-    # Legacy ENABLED_CFG (no posture, enabled=True) resolves to conservative.
-    assert data["posture"] == "conservative"
-
-
-def test_conservative_protects_unreviewed_but_reclaim_retires_it(
-    output_dir, monkeypatch
-):
-    fn = "20260101_120000_u.jpg"
-    with closing_connection() as conn:
-        seed_image(conn, fn, output_dir, review_status="untagged", orig_bytes=1000)
-
-    base = {"OUTPUT_DIR": str(output_dir), "RETENTION_DAYS": 90}
-
-    monkeypatch.setattr(
-        "config.get_config", lambda: {**base, "RETENTION_POSTURE": "conservative"}
-    )
-    from core import retention_core
-
-    cons = retention_core.preview()
-    assert cons["posture"] == "conservative"
-    assert cons["deletable"]["count"] == 0
-    assert cons["protected"]["unreviewed"] == 1
-
-    monkeypatch.setattr(
-        "config.get_config", lambda: {**base, "RETENTION_POSTURE": "reclaim"}
-    )
-    rec = retention_core.preview()
-    assert rec["posture"] == "reclaim"
-    assert rec["deletable"]["count"] == 1
-    assert rec["protected"]["unreviewed"] == 0
+def test_preview_reports_switch_and_upcoming_files(client: FlaskClient) -> None:
+    data = client.get("/api/v1/retention/preview").get_json()
+    assert data["enabled"] is True
+    assert data["settings"]["old_bird_photos"] == "keep_previews"
+    assert "next_14_days" in data
 
 
 def test_run_starts_shared_job_and_deletes_previewed_set(client, output_dir):
@@ -261,7 +234,7 @@ def test_download_returns_410_when_retention_deleted(output_dir, monkeypatch):
 
 def test_serve_original_410_even_when_retention_disabled(output_dir, monkeypatch):
     # enable -> delete -> disable: the marker persists, so a removed original
-    # must still report 410, not 404. RETENTION_ENABLED is False here.
+    # must still report 410, not 404. AUTOMATIC_DELETION_ENABLED is False here.
     fn = "20260101_120000_i.jpg"
     with closing_connection() as conn:
         conn.execute(
@@ -272,7 +245,11 @@ def test_serve_original_410_even_when_retention_disabled(output_dir, monkeypatch
         )
         conn.commit()
 
-    cfg = {"OUTPUT_DIR": str(output_dir), **ENABLED_CFG, "RETENTION_ENABLED": False}
+    cfg = {
+        "OUTPUT_DIR": str(output_dir),
+        **ENABLED_CFG,
+        "AUTOMATIC_DELETION_ENABLED": False,
+    }
     monkeypatch.setattr("config.get_config", lambda: cfg)
     app = Flask(__name__)
     app.config["TESTING"] = True

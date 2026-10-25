@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% from 'components/station_cards.html' import station_cards %}
+{% block title %}Station Report · WatchMyBirds{% endblock %}
+{% block content %}
+<div class="station-report" data-report-state="{{ status.state }}" data-report-revision="{{ status.revision }}">
+    <nav class="page-control-bar" aria-label="Station Report controls">
+        <span class="page-control-bar__title">Station Report</span>
+        {% include 'partials/station_filters.html' %}
+        <button type="button" class="btn btn--secondary" data-report-refresh>Refresh</button>
+    </nav>
+    <p id="report-progress" role="status" {% if status.state == 'ready' %}hidden{% endif %}>{% if status.state == 'error' %}The report could not be calculated. Use Refresh to try again.{% else %}Building the station history automatically…{% endif %}</p>
+    <aside class="alert alert-info my-3" data-report-outdated role="status" hidden>
+        <strong>Report totals are outdated.</strong>
+        <p>Your correction is saved. Refresh the report to update the species list, counts and recorded days.</p>
+    </aside>
+    {% if report %}
+    <div data-current-report>
+        <header class="station-report__overview">
+            <p class="station-report__eyebrow">{{ selection.start or 'First archived capture' }} – {{ selection.end or 'Latest archived capture' }}</p>
+            <h1>Your station history</h1>
+            <p>{{ report.summary.species_count }} recorded species · of these, {{ report.summary.human_species }} with user confirmations · {{ report.summary.automatic_species }} with automatic records. Species with both origins count once in the total.</p>
+            <p class="station-card-meta"><time data-report-time datetime="{{ report.built_at }}">as of {{ report.built_at[11:16] }} UTC</time> · {{ report.summary.identified_objects }} identified objects · {{ report.summary.unknown_birds }} birds with unknown species.</p>
+            <p>Dates describe positive records in stored images. They do not establish arrival, absence, individuals or visit totals.</p>
+        </header>
+        <section aria-labelledby="report-pictures">
+            <h2 id="report-pictures">Selected observations</h2>
+            <p class="station-intro">Sparse user-confirmed records and representative images. Selection is automatic; image quality and identification remain separate.</p>
+            {% if highlights %}{{ station_cards(highlights, 'station_report') }}{% else %}<p>No identified observations in this selection yet. The optional Review can help with unclear proposals.</p>{% endif %}
+        </section>
+        <section aria-labelledby="report-species">
+            <h2 id="report-species">Species and recorded days</h2>
+            <aside class="alert alert-info my-3" data-report-outdated role="status" hidden>
+                <strong>Report totals are outdated.</strong>
+                <p>Your correction is saved. Refresh the report to update the species list, counts and recorded days.</p>
+                <button type="button" class="btn btn--secondary" data-report-refresh>Refresh</button>
+            </aside>
+            <div class="station-report__table-scroll"><table class="station-report__table">
+                <caption>Current identifications by local capture day. User and automatic days may overlap.</caption>
+                <thead><tr><th scope="col">Species</th><th scope="col">User confirmed</th><th scope="col">Automatic</th><th scope="col">Total days</th><th scope="col">First / latest record</th></tr></thead>
+                <tbody>{% for row in report.species %}<tr>
+                    <th scope="row"><a href="/species/overview?species_key={{ row.species_key | urlencode }}&{{ selection | urlencode }}">{{ common_name_for_species(row.species_key) }}</a><small>{{ row.species_key | replace('_', ' ') }}</small>{% if row.legacy_count %}<small>{{ row.legacy_count }} earlier assignments · no new confirmation</small>{% endif %}</th>
+                    <td>{{ row.human_days }}</td><td>{{ row.automatic_days }}</td><td>{{ row.days }}</td>
+                    <td>{{ row.first_seen_date }} / {{ row.last_seen_date }}{% if row.missing_originals %}<small>{{ row.missing_originals }} originals unavailable</small>{% endif %}</td>
+                </tr>{% else %}<tr><td colspan="5">No named species in this selection.</td></tr>{% endfor %}</tbody>
+            </table></div>
+            <a class="station-unknown" href="/species/overview?species_key=Unknown_species&{{ selection | urlencode }}">Bird · species unknown · {{ report.summary.unknown_birds }} records</a>
+        </section>
+        <section aria-labelledby="report-calendar">
+            <h2 id="report-calendar">Recorded-day calendar</h2>
+            <p class="station-intro">User confirmed ● · Automatic ○ · Both ◉ · Earlier assignment ◇ · Empty means unknown. Missing originals do not erase records. Latest 366 calendar days are shown; species details retain older history.</p>
+            {% if report.calendar_days %}<div class="station-report__table-scroll" tabindex="0" aria-label="Scrollable recorded-day calendar"><table class="station-report__calendar">
+                <thead><tr><th scope="col">Species</th>{% for day in report.calendar_days %}<th scope="col"><span>{{ day[5:] }}</span></th>{% endfor %}</tr></thead>
+                <tbody>{% for row in report.species %}<tr><th scope="row">{{ common_name_for_species(row.species_key) }}</th>
+                    {% for cell in row.calendar %}<td title="{{ report.calendar_days[loop.index0] }} · {% if cell %}{{ 'User confirmed and automatic' if cell.human and cell.automatic else 'User confirmed' if cell.human else 'Automatic' if cell.automatic else 'Earlier assignment' }}{% if cell.missing_original %} · Original unavailable{% endif %}{% else %}Unknown coverage or no identified record{% endif %}">{% if cell %}{{ '◉' if cell.human and cell.automatic else '●' if cell.human else '○' if cell.automatic else '◇' }}{% else %}<span class="station-report__unknown">·</span>{% endif %}</td>{% endfor %}
+                </tr>{% endfor %}</tbody>
+            </table></div>{% else %}<p>No dated identifications available.</p>{% endif %}
+        </section>
+        <section aria-labelledby="report-knowledge">
+            <h2 id="report-knowledge">Learn about these species</h2>
+            <p>No sourced local species profiles are available in this installation. Explore the existing reference links alongside your station images. General species knowledge does not establish behavior in a particular photo.</p>
+            <ul>{% for row in report.species %}{% set source_url = wikipedia_species_url(common_name_for_species(row.species_key), row.species_key) %}<li><a href="/species/overview?species_key={{ row.species_key | urlencode }}&{{ selection | urlencode }}">{{ common_name_for_species(row.species_key) }} · station images</a>{% if source_url %} · <a href="{{ source_url }}" target="_blank" rel="noopener noreferrer external">Wikipedia reference ↗</a>{% endif %}</li>{% endfor %}</ul>
+        </section>
+        <section aria-labelledby="report-limits">
+            <h2 id="report-limits">Data and limits</h2>
+            <p>{{ report.summary.missing_originals }} active objects have no original according to the database. Preview availability is checked separately. A placeholder is not image evidence.</p>
+            <p>{{ report.summary.open_objects }} objects have no completed species answer or admitted automatic identification. <a href="/admin/review?{{ selection | urlencode }}">Optional review</a></p>
+            <p>Technical samples cover {{ report.runtime.first_sample or 'an unknown start' }} – {{ report.runtime.last_sample or 'an unknown end' }} ({{ report.runtime.samples }} samples across the station archive). Earlier coverage is unknown. Samples do not establish valid biological observation hours.</p>
+            {% if report.gaps %}<details data-report-details="sample-gaps"><summary>{{ report.gaps[0].total_gaps }} technical sample gaps · largest {{ '%.2f' | format(report.gaps[0].hours) }} hours</summary><ul>{% for gap in report.gaps %}<li>{{ gap.previous }} – {{ gap.sampled_at }} · {{ '%.2f' | format(gap.hours) }} hours</li>{% endfor %}</ul></details>{% endif %}
+            <details data-report-details="models"><summary>Capture context and model history</summary><p>PTZ framing and review effort may vary. Model changes limit comparisons. No change in bird abundance, behavior or observation rate is inferred.</p><ul>{% for model in report.models %}<li>{{ model.model }} · {{ model.first_capture }} – {{ model.last_capture }}</li>{% endfor %}</ul></details>
+        </section>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block modals %}
+{% from 'components/detection_modal.html' import render_modal %}
+<div data-report-modals>
+{% for det in highlights %}{{ render_modal(det, 'station_report') }}{% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/station_report.js?v={{ asset_version }}"></script>
+{% endblock %}

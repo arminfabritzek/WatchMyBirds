@@ -14,10 +14,9 @@ Why a thread instead of systemd:
 Duplicate-send protection is minute-grained (guards against restart
 storms near the scheduled minute), mirroring report_scheduler.py.
 
-If the optional ``open_clip_torch`` / ``torch`` packages are missing
-(slim image variant), the scheduler logs a warning and stays idle
-instead of crashing. This is intentional: a small Pi or a stripped
-Docker image without the aesthetic stack should still boot the app.
+Every standard build includes ``open_clip_torch`` and ``torch``. If these
+dependencies are missing from an incomplete installation, the scheduler
+logs a warning and stays idle so the rest of the app can still boot.
 """
 
 from __future__ import annotations
@@ -175,7 +174,7 @@ def _run_tagger(
     score every detection of the previous day for completeness.
 
     Acquires the shared compute lease with ``pause_detection=False`` so
-    Companion inference and the tagger cannot run concurrently. The
+    heavy tagger jobs cannot run concurrently. The
     tagger does not pause OD on its own — the existing throttle
     behaviour stays in place.
 
@@ -350,8 +349,7 @@ def run_now(
 def _check_dependencies_available() -> bool:
     """Verify that torch + open_clip_torch are importable.
 
-    Slim image variants without the aesthetic stack should boot the
-    app; they just don't run the tagger.
+    Keep the rest of the app available if its installation is incomplete.
     """
     try:
         import open_clip  # noqa: F401
@@ -361,7 +359,7 @@ def _check_dependencies_available() -> bool:
     except ImportError as exc:
         logger.warning(
             "Aesthetic tagger dependencies not installed (%s); "
-            "scheduler will stay idle. Install requirements-aesthetic.txt to enable.",
+            "scheduler will stay idle. Install requirements-aesthetic.txt to repair.",
             exc,
         )
         return False

@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from 'components/human_review_progress.html' import render_human_review_progress %}
 
 {% block title %}Gallery - WatchMyBirds{% endblock %}
 
@@ -26,17 +27,23 @@
             {% endif %}
         </div>
         <div class="date-card__label">{{ day.date }}</div>
-        <div class="wm-review-progress{% if day.review_progress.complete %} is-complete{% endif %}"
-            aria-label="{{ day.review_progress.reviewed }} of {{ day.review_progress.total }} species labels checked">
-            <span class="wm-review-progress__mark" aria-hidden="true">{% if day.review_progress.complete %}✓{% endif %}</span>
-            <span>{{ day.review_progress.reviewed }}/{{ day.review_progress.total }} checked</span>
-            <span class="wm-review-progress__track" aria-hidden="true">
-                <span style="width: {{ (day.review_progress.reviewed * 100 / day.review_progress.total) if day.review_progress.total else 0 }}%"></span>
-            </span>
-        </div>
+        {{ render_human_review_progress(day.review_progress) }}
     </a>
     {% endfor %}
 </div>
+{% if total_pages > 1 %}
+<nav class="pagination-wrapper" aria-label="Gallery pagination">
+    <ul class="pagination">
+        {% if page > 1 %}
+        <li class="page-item"><a class="page-link" href="{{ url_for('gallery.gallery', page=page-1) }}">Previous</a></li>
+        {% endif %}
+        <li class="page-item disabled"><span class="page-link">{{ page }} / {{ total_pages }}</span></li>
+        {% if page < total_pages %}
+        <li class="page-item"><a class="page-link" href="{{ url_for('gallery.gallery', page=page+1) }}">Next</a></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
 {% else %}
 <div class="empty-state">
     <div class="empty-state__icon">📷</div>

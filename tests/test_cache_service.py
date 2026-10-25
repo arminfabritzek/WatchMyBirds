@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from core import read_cache
 from web.services import cache_service
 
 
@@ -50,7 +51,7 @@ def test_second_call_inside_ttl_skips_builder():
 
 def test_expired_entry_rebuilds(monkeypatch):
     clock = {"t": 1000.0}
-    monkeypatch.setattr(cache_service.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(read_cache, "monotonic", lambda: clock["t"])
 
     calls = {"n": 0}
 
@@ -192,7 +193,92 @@ def test_builder_only_holds_local_lock_briefly():
     t0 = time.monotonic()
     cache_service.cached("fast.b", 60, fast_b)
     elapsed = time.monotonic() - t0
-    assert elapsed < 0.5, f"fast builder waited {elapsed:.3f}s on unrelated slow builder"
+    assert elapsed < 0.5, (
+        f"fast builder waited {elapsed:.3f}s on unrelated slow builder"
+    )
 
     proceed.set()
     a_thread.join(timeout=2)
+
+
+def test_same_key_rebuild_is_shared_by_concurrent_readers() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    start = threading.Barrier(8)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def build() -> object:
+        calls.append(1)
+        entered.set()
+        assert release.wait(3)
+        return object()
+
+    def read() -> object:
+        start.wait(timeout=3)
+        return cache_service.cached("shared", 60, build)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        jobs = [pool.submit(read) for _ in range(8)]
+        assert entered.wait(3)
+        release.set()
+        results = [job.result(timeout=3) for job in jobs]
+    assert len(calls) == 1
+    assert all(value is results[0] for value in results)
+
+
+def test_invalidation_cancels_publication_during_build() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def build() -> object:
+        entered.set()
+        assert release.wait(3)
+        return "stale"
+
+    thread = threading.Thread(
+        target=lambda: cache_service.cached("analytics.x", 60, build)
+    )
+    thread.start()
+    assert entered.wait(3)
+    cache_service.invalidate("analytics.")
+    assert cache_service.cached("analytics.x", 60, lambda: "corrected") == "corrected"
+    release.set()
+    thread.join(3)
+    assert not thread.is_alive()
+    assert cache_service.cached("analytics.x", 60, lambda: "wrong") == "corrected"
+
+
+def test_failed_builder_releases_waiters() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fail() -> None:
+        entered.set()
+        assert release.wait(3)
+        raise ValueError("build failed")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        failed = pool.submit(cache_service.cached, "same", 60, fail)
+        assert entered.wait(3)
+        retry = pool.submit(cache_service.cached, "same", 60, lambda: "retry")
+        release.set()
+        with pytest.raises(ValueError):
+            failed.result(timeout=3)
+        assert retry.result(timeout=3) == "retry"
+
+
+def test_cache_evicts_expired_and_excess_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [1.0]
+    monkeypatch.setattr(read_cache, "monotonic", lambda: clock[0])
+    for i in range(200):
+        cache_service.cached(str(i), 1, lambda: object())
+    assert cache_service.size() == 128
+    clock[0] += 2
+    cache_service.cached("fresh", 1, lambda: object())
+    assert cache_service.size() == 1

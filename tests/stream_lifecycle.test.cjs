@@ -29,8 +29,12 @@ function setup(relay = true) {
     function element() {
         const listeners = {};
         const classes = new Set();
+        let source = '';
+        const sourceWrites = [];
         return {style: {setProperty(key, value) { this[key] = value; }}, dataset: {},
-            naturalWidth: 0, naturalHeight: 0, complete: false, src: '', listeners,
+            naturalWidth: 0, naturalHeight: 0, complete: false, listeners, sourceWrites,
+            get src() { return source; },
+            set src(value) { source = value; sourceWrites.push(value); },
             lastElementChild: {}, classList: {
                 add: name => classes.add(name), remove: name => classes.delete(name),
                 contains: name => classes.has(name)},
@@ -47,7 +51,7 @@ function setup(relay = true) {
     let sequence = 0;
     const documentEvents = {};
     const windowEvents = {};
-    const document = {hidden: false, getElementById: id => elements[id],
+    const document = {hidden: false, fullscreenElement: null, getElementById: id => elements[id],
         querySelector: selector => selector === '.stream-embed' ? embed : container,
         addEventListener: (name, cb) => documentEvents[name] = cb};
     const window = {location: {hostname: 'camera.local'}, innerHeight: 1000,
@@ -86,6 +90,56 @@ test('restored go2rtc page reconnects to the configured player', async () => {
     state.windowEvents.pageshow({persisted: true});
     state.flush();
     assert.match(state.elements['go2rtc-frame'].src, /:1984\/stream.html/);
+});
+
+test('go2rtc visibility changes preserve the loaded player and fullscreen', async () => {
+    const state = setup();
+    await new Promise(resolve => setImmediate(resolve));
+    const frame = state.elements['go2rtc-frame'];
+    assert.equal(frame.sourceWrites.length, 1);
+    for (const fullscreen of [null, frame]) {
+        state.document.fullscreenElement = fullscreen;
+        for (const hidden of [false, true, false]) {
+            state.document.hidden = hidden;
+            state.documentEvents.visibilitychange();
+            state.flush();
+        }
+    }
+    assert.equal(frame.sourceWrites.length, 1, 'the embedded player owns visibility recovery');
+});
+
+test('a restored page does not navigate a fullscreen player', async () => {
+    const state = setup();
+    await new Promise(resolve => setImmediate(resolve));
+    const frame = state.elements['go2rtc-frame'];
+    state.document.fullscreenElement = frame;
+    state.windowEvents.pageshow({persisted: true});
+    state.flush();
+    assert.equal(frame.sourceWrites.length, 1);
+});
+
+test('fullscreen entered after scheduling a reconnect cancels the navigation', async () => {
+    const state = setup();
+    await new Promise(resolve => setImmediate(resolve));
+    const frame = state.elements['go2rtc-frame'];
+    state.windowEvents.pageshow({persisted: true});
+    state.document.fullscreenElement = frame;
+    state.flush();
+    assert.equal(frame.sourceWrites.length, 1);
+});
+
+test('MJPEG reconnects after returning to a visible page', () => {
+    const state = setup(false);
+    const fallback = state.elements['video-feed-fallback'];
+    state.document.hidden = true;
+    state.documentEvents.visibilitychange();
+    state.flush();
+    assert.equal(fallback.sourceWrites.length, 1);
+    state.document.hidden = false;
+    state.documentEvents.visibilitychange();
+    state.flush();
+    assert.equal(fallback.sourceWrites.length, 2);
+    assert.match(fallback.src, /^\/video_feed\?reconnect=/);
 });
 
 test('MJPEG overlay waits for an image and reconnect is cancelled on pagehide', () => {

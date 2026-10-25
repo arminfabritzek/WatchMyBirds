@@ -1,0 +1,7 @@
+<form method="get" class="station-filters" aria-label="Observation period">
+    {% if species_key %}<input type="hidden" name="species_key" value="{{ species_key }}">{% endif %}
+    {% if ordinary_review %}<input type="hidden" name="answered" value="{{ 1 if answered else 0 }}">{% endif %}
+    <label>From <input type="date" name="start" value="{{ selection.start }}"></label>
+    <label>To <input type="date" name="end" value="{{ selection.end }}"></label>
+    <button class="btn btn--secondary" type="submit" title="Apply period">Apply</button>
+</form>

@@ -8,16 +8,10 @@
     <meta name="theme-color" content="#0f1a12">
     <title>{% block title %}WatchMyBirds{% endblock %}</title>
 
-    <!-- Google Fonts: Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-    <!-- Bootstrap CSS (for grid utilities and components) -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/assets/vendor/bootstrap/5.3.2/bootstrap.min.css?v={{ asset_version }}" rel="stylesheet">
 
     <!-- Design System (Source of Truth for all styling) -->
-    <link rel="stylesheet" href="/assets/design-system.css?v=20260902-responsive-touch-layout">
+    <link rel="stylesheet" href="/assets/design-system.css?v={{ asset_version }}">
 
     {# Theme hydration — must run BEFORE the body paints to avoid a
        flash of the wrong palette. Resolves the effective theme once
@@ -100,7 +94,23 @@
 
     <main class="page">
         <div class="container-fluid px-3 px-xl-4 px-xxl-5">
-            {% block content %}{% endblock %}
+            {% if local_development %}
+            <aside class="alert alert-info my-3" role="status" data-local-development>
+                <strong>Local development</strong> · Pi snapshot: {{ local_snapshot_date }}.
+                Edits stay local. Camera, inference and maintenance jobs are disabled.
+            </aside>
+            {% endif %}
+            {% if retention_update_notice %}
+            <aside class="alert alert-info my-3" role="status" data-retention-update-notice>
+                Automatic deletion is off after the update. Choose your storage rules in
+                <a href="/settings">Settings</a>.
+            </aside>
+            {% endif %}
+        {% if is_authenticated %}
+        <aside class="alert alert-info my-3" role="status" aria-live="polite" id="photo-saving-notice"{% if not photo_saving_state.message and not photo_saving_state.get('last_cleanup', {}).get('freed_bytes') %} hidden{% endif %}>{{ photo_saving_state.message }}</aside>
+        <script src="/assets/js/storage_status.js?v={{ asset_version }}" defer></script>
+        {% endif %}
+        {% block content %}{% endblock %}
         </div>
     </main>
 
@@ -152,9 +162,9 @@
     {% block modals %}{% endblock %}
     {% include 'partials/no_bird_confirm_dialog.html' %}
 
-    <!-- Bootstrap JS Bundle -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/assets/js/bbox_editor_math.js?v=20260810-direct-correction"></script>
+    <script src="/assets/vendor/bootstrap/5.3.2/bootstrap.bundle.min.js?v={{ asset_version }}"></script>
+    <script src="/assets/js/bbox_editor_math.js?v={{ asset_version }}"></script>
+    <script src="/assets/js/bird_editor.js?v={{ asset_version }}"></script>
 
     {% block scripts %}{% endblock %}
 

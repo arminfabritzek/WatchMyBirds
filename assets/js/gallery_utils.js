@@ -36,7 +36,9 @@ function safeSameOriginPath(rawUrl) {
 
 function getViewerScope(el) {
     if (!el || !el.closest) return null;
-    return el.closest('.wm-viewer-scope') || el.closest('.modal');
+    return el.closest('.wm-viewer-scope')
+        || el.closest('.modal')
+        || el.closest('.wm-box-walkthrough');
 }
 
 function getViewerHost(el) {
@@ -63,10 +65,9 @@ function resolveViewerHost(scope, el) {
 function resolveViewerToolButton(host, scope, selector) {
     const hostBtn = host && host.querySelector ? host.querySelector(selector) : null;
     if (hostBtn) return hostBtn;
-    if (scope && scope.classList && scope.classList.contains('modal')) {
-        return scope.querySelector('.modal-action-bar ' + selector);
-    }
-    return null;
+    if (!scope || !scope.querySelector) return null;
+    return scope.querySelector('.wm-bird-editor ' + selector)
+        || scope.querySelector('.modal-action-bar ' + selector);
 }
 
 function isReviewViewerScope(scope) {
@@ -124,20 +125,24 @@ function redirectToLogin() {
 function setToolboxFavoriteState(btn, isFav) {
     if (!btn || !btn.classList) return;
     btn.classList.toggle('wm-toolbox__fav--active', isFav);
-    btn.textContent = isFav ? '⭐' : '☆';
+    const icon = btn.querySelector('[data-favorite-icon]');
+    const label = btn.querySelector('[data-favorite-label]');
+    if (icon) icon.textContent = isFav ? '⭐' : '☆';
+    else if (!label) btn.textContent = isFav ? '⭐' : '☆';
+    if (label) label.textContent = isFav ? 'Unfavorite' : 'Favorite';
     btn.setAttribute('aria-pressed', isFav ? 'true' : 'false');
     btn.setAttribute('aria-label', isFav ? 'Remove from favorites' : 'Add to favorites');
     btn.setAttribute('title', isFav ? 'Unfavorite' : 'Favorite');
 }
 
 function setLegacyTileBadgeState(btn, isFav) {
-    if (!btn || !btn.classList) return;
+    if (!btn || !btn.classList || !btn.classList.contains('wm-tile__fav-badge')) return;
     btn.classList.toggle('wm-tile__fav-badge--active', isFav);
     btn.textContent = isFav ? '⭐' : '☆';
 }
 
 function setModalFavoriteState(btn, isFav) {
-    if (!btn || !btn.classList) return;
+    if (!btn || !btn.classList || !btn.classList.contains('fav-btn')) return;
     btn.classList.toggle('fav-btn--active', isFav);
     btn.textContent = isFav ? '⭐' : '☆';
 }
@@ -162,6 +167,9 @@ async function toggleFavorite(event, detectionId, btn) {
 
             const data = await resp.json();
             const isFav = Boolean(data.is_favorite);
+            document.dispatchEvent(new CustomEvent('wmb:favorite-updated', {
+                detail: { detectionId: Number(detectionId), isFavorite: isFav }
+            }));
 
             // Update the button in the modal or the hovered badge
             if (btn && btn.classList) {
@@ -221,6 +229,7 @@ function showModalTransition(currentModalEl, nextModalEl) {
     };
 
     const showNextModal = function () {
+        currentModalEl.removeEventListener('hide.bs.modal', detectPreventedHide);
         const nextInstance = bootstrap.Modal.getOrCreateInstance
             ? bootstrap.Modal.getOrCreateInstance(nextModalEl)
             : new bootstrap.Modal(nextModalEl);
@@ -229,9 +238,18 @@ function showModalTransition(currentModalEl, nextModalEl) {
         nextInstance.show();
     };
 
+    const detectPreventedHide = function (event) {
+        queueMicrotask(function () {
+            if (!event.defaultPrevented || currentModalEl.dataset.birdEditorDiscardAccepted === 'true') return;
+            currentModalEl.removeEventListener('hidden.bs.modal', showNextModal);
+            unlockNavigation();
+        });
+    };
+
     const currentInstance = bootstrap.Modal.getInstance(currentModalEl);
     if (currentInstance && currentModalEl.classList.contains('show')) {
         currentModalEl.addEventListener('hidden.bs.modal', showNextModal, { once: true });
+        currentModalEl.addEventListener('hide.bs.modal', detectPreventedHide, { once: true });
         currentInstance.hide();
         return;
     }
@@ -242,6 +260,11 @@ function showModalTransition(currentModalEl, nextModalEl) {
 function navigateModal(btn, direction) {
     const currentModalEl = btn.closest('.modal');
     if (!currentModalEl) return;
+
+    if (currentModalEl.dataset.reviewLazy && window.WmReviewModal) {
+        window.WmReviewModal.navigate(currentModalEl, direction);
+        return;
+    }
 
     const navScope = currentModalEl.getAttribute('data-nav-scope');
     if (navScope) {
@@ -310,6 +333,29 @@ function navigateModal(btn, direction) {
 /* =========================================
    Deletion Logic
    ========================================= */
+function updateStationReportObject(id, updates) {
+    const report = document.querySelector('[data-report-state]');
+    if (!report) return false;
+    const tile = report.querySelector('article[data-detection-id="' + id + '"]');
+    if (!tile) return false;
+    const modal = document.getElementById('modal-station_report-' + id);
+    const viewer = modal && modal.querySelector('.wm-image-viewer');
+    if (!viewer) return false;
+    const current = JSON.parse(viewer.dataset.currentDetection || '{}');
+    const siblings = JSON.parse(viewer.dataset.siblings || '[]');
+    const objects = new Map();
+    [current].concat(siblings).forEach(function (item) {
+        if (Number(item.detection_id) === id) Object.assign(item, updates);
+        objects.set(item.object_key || 'detection:' + item.detection_id, item);
+    });
+    viewer.dataset.currentDetection = JSON.stringify(current);
+    viewer.dataset.siblings = JSON.stringify(Array.from(objects.values()));
+    document.dispatchEvent(new CustomEvent('wmb:bird-objects-updated', {
+        detail: {filename: tile.dataset.imageFilename, objects: Array.from(objects.values())}
+    }));
+    return true;
+}
+
 async function deleteDetection(event, id) {
     if (event) {
         event.preventDefault();
@@ -318,7 +364,7 @@ async function deleteDetection(event, id) {
     if (!confirm('Move this detection to trash?')) return;
 
     try {
-        const response = await fetch('/api/detections/reject', {
+        const response = await fetch('/api/trash/move', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -353,6 +399,7 @@ async function deleteDetection(event, id) {
                 }
             }
 
+            if (updateStationReportObject(id, {object_status: 'rejected'})) return;
             // Fallback: main detection deleted or last one — reload page
             location.reload();
         } else {
@@ -397,16 +444,25 @@ async function relabelDetection(event, detectionId, currentSpecies) {
 
     // Perform the single-item relabel POST
     try {
-        const resp = await fetch('/api/detections/relabel', {
+        const resp = await fetch('/api/labels/answer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ detection_id: detectionId, species: choice.scientific })
+            body: JSON.stringify({ detection_id: detectionId, species_identity: 'corrected', species_key: choice.scientific })
         });
         if (isAuthRedirect(resp)) {
             redirectToLogin();
             return;
         }
         if (resp.ok) {
+            if (updateStationReportObject(detectionId, {
+                species_key: choice.scientific,
+                human_species_key: choice.scientific,
+                human_species_source: 'manual',
+                human_review_state: 'corrected',
+                provenance: 'manually_identified',
+                common_name: choice.common,
+                needs_review: false
+            })) return;
             // Species changed — reload to get correct groupings and status
             location.reload();
             return;
@@ -929,8 +985,6 @@ function startWmBboxEditor(actionEl) {
                 body: JSON.stringify({
                     filename: filename,
                     detection_id: detectionId,
-                    object_bird_presence: 'present',
-                    bbox_quality: 'suitable',
                     bbox_correction: currentBox
                 })
             });
@@ -971,6 +1025,10 @@ function initBboxOverlay(img) {
 
     const canvas = container.querySelector('.bbox-overlay');
     if (!canvas) return;
+    if (container.querySelector('[data-bird-editor-layer]')) {
+        canvas.style.display = 'none';
+        return;
+    }
 
     const apply = function () {
         // Canvas backing store sizing is now owned entirely by
@@ -1265,7 +1323,9 @@ async function confirmBboxSpecies(event, viewer, box) {
         if (!response.ok || payload.status !== 'success') {
             throw new Error(payload.message || 'Unable to confirm species');
         }
-        _setInteractiveReviewState(viewer, box.id, 'confirmed', box.speciesKey);
+        _setInteractiveReviewState(
+            viewer, box.id, payload.review_state?.state || 'confirmed', box.speciesKey
+        );
         const toggle = viewer.closest('.wm-toolbox-host')?.querySelector('.bbox-toggle.active')
             || viewer.closest('.wm-modal')?.querySelector('.bbox-toggle.active');
         if (toggle) redrawBboxOverlay(toggle);
@@ -1278,28 +1338,123 @@ async function confirmBboxSpecies(event, viewer, box) {
     }
 }
 
-function _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale) {
+function _positionInteractiveBboxLabel(label, layer, viewer, boxRect) {
+    const viewport = viewer.getBoundingClientRect();
+    const layerRect = layer.getBoundingClientRect();
+    const labelRect = label.getBoundingClientRect();
+    const gap = 10;
+    const inset = 6;
+    const box = {
+        left: layerRect.left + boxRect.x,
+        top: layerRect.top + boxRect.y,
+        right: layerRect.left + boxRect.x + boxRect.w,
+        bottom: layerRect.top + boxRect.y + boxRect.h
+    };
+    const placements = [
+        {
+            name: 'above',
+            space: box.top - viewport.top,
+            fits: box.top - viewport.top >= labelRect.height + gap + inset,
+            left: box.left + ((box.right - box.left) - labelRect.width) / 2,
+            top: box.top - labelRect.height - gap
+        },
+        {
+            name: 'below',
+            space: viewport.bottom - box.bottom,
+            fits: viewport.bottom - box.bottom >= labelRect.height + gap + inset,
+            left: box.left + ((box.right - box.left) - labelRect.width) / 2,
+            top: box.bottom + gap
+        },
+        {
+            name: 'right',
+            space: viewport.right - box.right,
+            fits: viewport.right - box.right >= labelRect.width + gap + inset,
+            left: box.right + gap,
+            top: box.top + ((box.bottom - box.top) - labelRect.height) / 2
+        },
+        {
+            name: 'left',
+            space: box.left - viewport.left,
+            fits: box.left - viewport.left >= labelRect.width + gap + inset,
+            left: box.left - labelRect.width - gap,
+            top: box.top + ((box.bottom - box.top) - labelRect.height) / 2
+        }
+    ];
+    const maxLeft = Math.max(viewport.left + inset, viewport.right - labelRect.width - inset);
+    const maxTop = Math.max(viewport.top + inset, viewport.bottom - labelRect.height - inset);
+    const otherLabels = Array.from(layer.querySelectorAll('.wm-bbox-label')).filter(function (other) {
+        return other !== label;
+    });
+    const positioned = placements.map(function (candidate) {
+        const screenLeft = Math.min(Math.max(candidate.left, viewport.left + inset), maxLeft);
+        const screenTop = Math.min(Math.max(candidate.top, viewport.top + inset), maxTop);
+        const bounds = {
+            left: screenLeft,
+            top: screenTop,
+            right: screenLeft + labelRect.width,
+            bottom: screenTop + labelRect.height
+        };
+        const overlapsBox = bounds.left < box.right + gap
+            && bounds.right > box.left - gap
+            && bounds.top < box.bottom + gap
+            && bounds.bottom > box.top - gap;
+        const overlapsLabel = otherLabels.some(function (other) {
+            const otherRect = other.getBoundingClientRect();
+            return bounds.left < otherRect.right + 4
+                && bounds.right > otherRect.left - 4
+                && bounds.top < otherRect.bottom + 4
+                && bounds.bottom > otherRect.top - 4;
+        });
+        return Object.assign({}, candidate, {
+            screenLeft: screenLeft,
+            screenTop: screenTop,
+            overlapsBox: overlapsBox,
+            overlapsLabel: overlapsLabel
+        });
+    });
+    const placement = positioned.find(function (candidate) {
+        return candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel;
+    }) || positioned.find(function (candidate) {
+        return candidate.fits && !candidate.overlapsBox;
+    }) || positioned.find(function (candidate) {
+        return !candidate.overlapsBox && !candidate.overlapsLabel;
+    }) || positioned.reduce(function (best, candidate) {
+            return candidate.space > best.space ? candidate : best;
+        });
+
+    label.dataset.placement = placement.name;
+    label.style.left = (placement.screenLeft - layerRect.left) + 'px';
+    label.style.top = (placement.screenTop - layerRect.top) + 'px';
+}
+
+function _renderInteractiveBboxLabels(img, boxes, geometry) {
     const viewer = img.closest('.wm-image-viewer');
     const layer = viewer?.querySelector('.wm-bbox-label-layer');
     if (!layer || viewer.dataset.interactiveLabels !== 'true') return;
 
     layer.replaceChildren();
     layer.hidden = false;
-    layer.style.left = (img.offsetLeft || 0) + 'px';
-    layer.style.top = (img.offsetTop || 0) + 'px';
-    layer.style.width = geometry.elementW + 'px';
-    layer.style.height = geometry.elementH + 'px';
+    layer.style.left = '0';
+    layer.style.top = '0';
+    layer.style.width = viewer.clientWidth + 'px';
+    layer.style.height = viewer.clientHeight + 'px';
     layer.style.transformOrigin = '0 0';
-    layer.style.transform = img.style.transform || '';
+    layer.style.transform = '';
 
     const canModerate = viewer.dataset.canModerate === 'true';
-    const inv = 1 / zoomScale;
+    const imageRect = img.getBoundingClientRect();
+    const layerRect = layer.getBoundingClientRect();
+    const renderedScaleX = imageRect.width / geometry.elementW;
+    const renderedScaleY = imageRect.height / geometry.elementH;
     boxes.forEach(function (rawBox, index) {
         const box = _enrichInteractiveBox(viewer, rawBox);
         if (!box.w || !box.h) return;
-        const x = geometry.contentX + box.x * geometry.contentW;
-        const y = geometry.contentY + box.y * geometry.contentH;
-        const h = box.h * geometry.contentH;
+        const x = imageRect.left - layerRect.left
+            + (geometry.contentX + box.x * geometry.contentW) * renderedScaleX;
+        const y = imageRect.top - layerRect.top
+            + (geometry.contentY + box.y * geometry.contentH) * renderedScaleY;
+        const w = box.w * geometry.contentW * renderedScaleX;
+        const h = box.h * geometry.contentH * renderedScaleY;
         const label = document.createElement('div');
         const state = box.reviewState || 'unreviewed';
         const reviewed = state !== 'unreviewed';
@@ -1308,9 +1463,6 @@ function _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale) {
             + (box.isCurrent ? ' is-current' : '');
         label.dataset.detectionId = String(box.id || '');
         label.dataset.reviewState = state;
-        label.style.left = x + 'px';
-        label.style.top = Math.max(0, y - (34 * inv)) + 'px';
-        label.style.transform = 'scale(' + inv + ')';
         label.style.setProperty('--bbox-label-colour', resolveBboxColour(box, index));
 
         const statusText = state === 'reviewed_negative'
@@ -1349,6 +1501,12 @@ function _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale) {
             label.appendChild(pickerButton);
         }
         layer.appendChild(label);
+        _positionInteractiveBboxLabel(label, layer, viewer, {
+            x: x,
+            y: y,
+            w: w,
+            h: h
+        });
     });
 }
 
@@ -1455,8 +1613,8 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     const labelHeight = 18 * inv;
     const labelPadX = 4 * inv;
     const labelPadY = 2 * inv;
-    const strokeCurrent = 3 * inv;
-    const strokeOther = 2 * inv;
+    const strokeCurrent = 1 * inv;
+    const strokeOther = 0.75 * inv;
 
     // Collect CSS-pixel rects keyed by detection id so the click handler
     // below can hit-test without recomputing. Stored on the canvas DOM
@@ -1533,7 +1691,7 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     canvas._hitTestBoxes = hitTestBoxes.slice().sort(function (a, b) {
         return a.area - b.area;
     });
-    _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale);
+    _renderInteractiveBboxLabels(img, boxes, geometry);
 }
 
 // Re-draw boxes on window resize
@@ -1791,7 +1949,7 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
     const labelLayer = viewer.querySelector('.wm-bbox-label-layer');
     if (labelLayer) {
         labelLayer.style.transformOrigin = '0 0';
-        labelLayer.style.transform = transformCSS;
+        labelLayer.style.transform = '';
     }
 
 }

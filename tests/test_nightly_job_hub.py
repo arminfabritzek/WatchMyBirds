@@ -92,8 +92,9 @@ def test_run_now_starts_job_and_finishes(monkeypatch):
     assert j.finished_event.wait(timeout=1.0)
     assert j.received_reason == "unit-test"
 
-    # Wait for thread cleanup.
-    time.sleep(0.05)
+    # The worker still persists its final status (with fsync) after run()
+    # returns, so wait for the thread instead of a fixed delay.
+    nightly_job_hub._registry["foo"].thread.join(timeout=2)
     status = nightly_job_hub.status("foo")
     assert status is not None
     assert status["running"] is False

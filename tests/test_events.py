@@ -40,9 +40,9 @@ def _det(
         "bbox_w": bbox[2],
         "bbox_h": bbox[3],
         "cls_class_name": cls_species,
-        "manual_species_override": manual_species,
+        "human_species_key": manual_species,
         "species_key": manual_species or cls_species,
-        "species_source": "manual" if manual_species else "classifier",
+        "human_species_source": "manual" if manual_species else "classifier",
         "sibling_detection_count": sibling_detection_count,
     }
 
@@ -322,7 +322,7 @@ def test_bbox_jump_within_event_window_flags_ineligible():
     assert event.fallback_reason == "bbox_jump"
 
 
-def test_manual_species_override_takes_priority_over_classifier():
+def test_human_species_key_takes_priority_over_classifier():
     """Manual override is the source of truth for species resolution."""
     events = build_bird_events(
         [

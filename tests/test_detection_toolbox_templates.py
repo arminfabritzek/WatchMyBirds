@@ -51,34 +51,39 @@ def test_subgallery_observation_modals_define_global_nav_scope():
 def test_detection_modal_supports_optional_nav_scope_and_index():
     content = _read("templates/components/detection_modal.html")
 
-    assert "{% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}" in content
+    assert (
+        "{% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}"
+        in content
+    )
     assert 'data-nav-scope="{{ nav_scope }}"' in content
     assert 'data-nav-index="{{ nav_index }}"' in content
-    assert "has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override" in content
-    assert "has_manual_review_approval = has_manual_species_review and (det.review_status == 'confirmed_bird')" in content
-    assert "title_species = det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name" in content
-    assert "ai_status_label = '🤖 AI confirmed'" in content
-    assert "🧑👍 manually confirmed" in content
-    assert "🤖 AI unknown" in content
-    assert "wikipedia_species_url(det.common_name, title_species)" in content
+    assert "wikipedia_species_url(" in content
+    assert "Manually identified" in content
+    # The AI-status labels that used to be pinned here were assigned but never
+    # rendered; the string assertions kept the dead block alive. Anything about
+    # the head's visible text belongs in the rendering tests named below.
 
 
-def test_detection_modal_offers_scoped_interactive_bbox_labels():
+# The head's species/provenance/confidence rules are asserted on rendered
+# output in test_detail_modal_unknown_species_head.py: pinned as source
+# strings they passed while the head showed a withdrawn species.
+
+
+def test_detection_modal_uses_one_shared_bird_editor():
     modal = _read("templates/components/detection_modal.html")
     viewer = _read("templates/components/modal_image_viewer.html")
-    gallery_js = _read("assets/js/gallery_utils.js")
+    toolbar = _read("templates/components/bird_editor_toolbar.html")
+    editor = _read("assets/js/bird_editor.js")
 
-    assert "interactive_labels=interactive_labels" in modal
-    assert 'data-interactive-labels="true"' in viewer
-    assert "wm-bbox-label-layer" in viewer
-    assert "confirmBboxSpecies" in gallery_js
-    confirm_body = gallery_js.split("async function confirmBboxSpecies", 1)[1]
-    confirm_body = confirm_body.split("\n}", 1)[0]
-    assert "'/api/labels/answer'" in confirm_body
-    assert "object_bird_presence: 'present'" in confirm_body
-    assert "species_identity: 'confirmed'" in confirm_body
-    assert "bbox_quality" not in confirm_body
-    assert "image_bird_presence" not in confirm_body
+    assert "render_bird_editor_toolbar(det, can_moderate=can_moderate)" in modal
+    assert "tile_toolbox(" not in modal
+    assert "data-current-detection=" in viewer
+    assert "data-bird-editor-layer" in viewer
+    assert "data-editor-object-select" in toolbar
+    assert 'data-editor-action="adjust"' in toolbar
+    assert 'data-editor-action="add"' in toolbar
+    assert "window.WmSpeciesPicker.pickSpecies" in editor
+    assert "allowUnknown: true" in editor
 
 
 def test_detection_modals_defer_full_image_load_until_modal_open():
@@ -151,16 +156,18 @@ def test_modal_action_bar_data_actions_are_dispatched():
     # footer-rendered form. Match the class as a prefix and verify the
     # in-header variant lives on the same element.
     assert 'class="modal-action-bar' in action_bar
-    assert 'modal-action-bar--in-header' in action_bar
+    assert "modal-action-bar--in-header" in action_bar
     assert 'data-action="toggle-menu"' in action_bar
     assert 'data-action="toggle-smart-zoom"' not in action_bar
     assert 'data-action="toggle-bbox-overlay"' in action_bar
     assert 'data-action="toggle-modal-maximize"' in action_bar
     assert 'data-action="move-trash"' not in action_bar
-    assert 'data-action="set-smart-zoom"' in viewer
-    assert 'data-view-mode="zoom"' in viewer
-    assert 'data-view-mode="full"' in viewer
-    assert "show_view_mode=true" in detection_modal
+    toolbar = _read("templates/components/bird_editor_toolbar.html")
+    assert 'data-action="set-smart-zoom"' in toolbar
+    assert 'data-view-mode="zoom"' in toolbar
+    assert 'data-view-mode="full"' in toolbar
+    assert "show_view_mode=false" in detection_modal
+    assert "show_more=false" in detection_modal
     assert "actionEl.closest('.modal-action-bar')" in js
     assert "actionEl.closest('.wm-view-mode-toggle')" in js
     assert "case 'set-smart-zoom':" in js
@@ -189,6 +196,21 @@ def test_toolbox_escape_closes_only_the_open_menu():
     assert "}, true); // Capture before Bootstrap modal Escape handling" in js
 
 
+def test_species_picker_escape_does_not_reach_the_parent_modal():
+    picker = _read("assets/js/species_picker.js")
+    escape_branch = picker.split("if (e.key === 'Escape' || e.key === 'ArrowLeft')")[
+        1
+    ].split("return;", 1)[0]
+
+    assert "e.preventDefault();" in escape_branch
+    assert "e.stopImmediatePropagation();" in escape_branch
+    assert escape_branch.index("e.stopImmediatePropagation();") < escape_branch.index(
+        "cancel();"
+    )
+    assert "document.addEventListener('keydown', onKey, true);" in picker
+    assert "document.removeEventListener('keydown', onKey, true);" in picker
+
+
 def test_detection_info_hides_decision_badges_after_manual_species_review():
     content = _read("templates/components/modal_detection_info.html")
 
@@ -198,10 +220,16 @@ def test_detection_info_hides_decision_badges_after_manual_species_review():
     # branch remains; the manual-species-review guard still has to
     # suppress decision badges per sibling when human approval has
     # landed.
-    assert "sib_has_manual_species_review = (sib.species_source == 'manual') and sib.manual_species_override" in content
-    assert "sib_has_manual_review_approval = sib_has_manual_species_review and (sib.review_status == 'confirmed_bird')" in content
+    assert (
+        "sib_has_manual_species_review = (sib.human_species_source == 'manual') and sib.human_species_key"
+        in content
+    )
+    assert "sib_has_manual_review_approval = sib_has_manual_species_review" in content
     assert "{% if sib_has_manual_review_approval %}" in content
-    assert "{% elif sib.decision_state and not sib_has_manual_review_approval %}" in content
+    assert (
+        "{% elif sib.decision_state and not sib_has_manual_review_approval %}"
+        in content
+    )
     assert "🤖 AI confirmed" in content
     assert "🤖 AI uncertain" in content
     assert "🤖 AI unknown" in content
@@ -212,7 +240,9 @@ def test_species_templates_use_toolbox_without_legacy_badge():
     species_content = _read("templates/species.html")
     overview_content = _read("templates/species_overview.html")
 
-    assert "{% from 'partials/tile_toolbox.html' import tile_toolbox %}" in species_content
+    assert (
+        "{% from 'partials/tile_toolbox.html' import tile_toolbox %}" in species_content
+    )
     assert "details_href=('/gallery/' ~ det.gallery_date" in species_content
     assert "source-link-badge" in species_content
     assert "wikipedia_species_url(" in species_content
@@ -225,15 +255,24 @@ def test_species_templates_use_toolbox_without_legacy_badge():
 
 
 def test_stream_detection_previews_use_toolbox():
-    content = _read("templates/stream.html")
+    shared_import = (
+        "{% from 'components/homepage_species_board.html' "
+        "import render_species_board with context %}"
+    )
+    assert shared_import in _read("templates/stream.html")
+    assert shared_import in _read("templates/partials/homepage_archive.html")
+    content = _read("templates/components/homepage_species_board.html")
 
-    assert "{% from 'partials/tile_toolbox.html' import tile_toolbox %}" in content
-    assert content.count("{{ tile_toolbox(") >= 2
+    assert (
+        "{% from 'partials/tile_toolbox.html' import tile_toolbox with context %}"
+        in content
+    )
+    assert content.count("{{ tile_toolbox(") >= 1
     assert "quiet-preview__item fade-in-item wm-toolbox-host" in content
     assert "best-species-board__featured" in content
     assert 'class="best-species-card__media wm-toolbox-host"' in content
     assert "best-species-board__grid" in content
-    assert "details_href='/gallery/' ~ det.gallery_date" in content
+    assert "details_href='/gallery/' ~ frame.gallery_date" in content
     assert "filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));" not in content
 
 
@@ -273,187 +312,6 @@ def test_subgallery_focus_styles_live_in_design_system():
     assert "@keyframes subgallery-focus-pulse" in css
 
 
-def test_review_modal_uses_quick_review_layout():
-    content = _read("templates/components/orphan_modal.html")
-    stage_content = _read("templates/components/review_stage_panel.html")
-    css = _read("assets/design-system.css")
-    review_page = _read("templates/orphans.html")
-    review_js = _read("assets/js/review_workspace.js")
-    review_grid_js = _read("assets/js/review_grid.js")
-    event_content = _read("templates/components/review_event_panel.html")
-
-    assert "review-stage-panel__canvas" in content
-    assert 'render_orphan_modal(orphan, true)' in stage_content
-    assert 'data-review-panel-action="trash"' in content
-    assert 'data-review-panel-action="approve_review"' in content
-    assert 'data-review-panel-action="select_species"' in content
-    assert 'data-review-panel-action="confirm_species"' in content
-    assert 'data-review-panel-action="open_species_picker"' in content
-    assert 'data-review-panel-action="deep_scan"' in content
-    assert 'data-review-nav="-1"' in content
-    assert 'data-review-nav="1"' in content
-    assert 'data-review-facts-toggle' in content
-    assert 'data-review-facts-panel' in content
-    assert 'aria-expanded="true"' in content
-    assert 'data-review-global-metric="auto_accepted"' in content
-    assert 'data-review-global-metric="manual_confirmed"' in content
-    assert 'data-review-global-metric="policy_confirmed"' in content
-    assert 'data-review-global-metric="review_queue"' in content
-    assert "render_image_viewer(" in content
-    assert "tile_toolbox(" in content
-    assert "show_viewer_tools=true" in content
-    assert "show_boxes=has_bbox" in content
-    assert "review-stage-panel__decision-rail" in content
-    assert "review-stage-panel__species-strip" in content
-    assert "review-stage-panel__species-actions" in content
-    assert "species.thumb_url" in content
-    assert "review-stage-panel__species-image" in content
-    assert "Choose another species" in content
-    assert 'data-default-suggestion="{% if species.scientific == orphan.default_species %}1{% else %}0{% endif %}"' in content
-    assert "Default suggestion · Click to confirm" not in content
-    assert 'data-review-viewer-tool="zoom"' in content
-    assert 'data-review-viewer-tool="bbox"' in content
-    assert 'data-bbox-review-toggle' in content
-    assert 'data-bbox-review-copy' in content
-    assert 'data-bbox-review="correct"' not in event_content
-    assert 'data-bbox-review-value="correct"' not in event_content
-    assert "bbox_review: 'correct'" not in review_js
-    assert "bbox_review: 'correct'" not in review_grid_js
-    toolbox = _read("templates/partials/tile_toolbox.html")
-    tile_actions = _read("assets/js/tile_actions.js")
-    assert 'data-action="correction-details"' in toolbox
-    assert "Correction details — this box only" in tile_actions
-    assert "/api/labels/state?" in tile_actions
-    assert "review-stage-panel__image-frame" in content
-    assert "review-stage-panel__facts-toggle" in css
-    assert "review-stage-panel__facts-panel" in css
-    assert "review-stage-panel__facts-label" in css
-    assert ".review-stage-panel__facts-divider" in css
-    assert ".review-stage-panel__facts-grid--global" in css
-    assert ".review-stage-panel__viewer-media" in css
-    assert ".review-stage-panel__decision-rail" in css
-    assert ".review-stage-panel__species-strip" in css
-    assert ".review-stage-panel__species-actions" in css
-    assert ".review-stage-panel__species-media" in css
-    assert ".review-stage-panel__species-image" in css
-    assert ".review-stage-panel__species-overlay" in css
-    assert '.review-stage-panel__species-btn[data-default-suggestion="1"]' in css
-    assert '.review-stage-panel__species-btn[data-default-suggestion="1"]::before' in css
-    assert ".review-stage-panel__species-btn.is-selected::after" in css
-    assert ".review-stage-panel__action--picker" in css
-    assert ".review-stage-panel__toggle.is-correct" in css
-    assert ".review-stage-panel__toggle.is-wrong" in css
-    assert "overflow-wrap: anywhere;" in css
-    assert "font-size: 0.72rem;" in css
-    assert "{{ img.formatted_date }}" not in review_page
-    assert 'onclick="modalAction(' not in content
-    assert 'onclick="analyzeAction(' not in content
-    assert 'onclick="reviewQuickSpecies(' not in content
-    assert 'onclick="stepReviewItem(' not in content
-    assert 'onclick="setReviewBboxState(' not in content
-    assert 'data-review-controls' in content
-    assert ".review-workspace" in css
-    assert ".review-stage-panel__species-strip" in css
-    assert ".review-stage-panel__action" in css
-    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in css
-    assert "aspect-ratio: 4 / 3;" in css
-    assert "object-fit: contain;" in css
-    assert ".review-stage-panel__image-frame" in css
-    assert ".review-stage-panel__viewer-trigger" in css
-    assert "overflow: hidden;" in css
-    assert "min-height: clamp(360px, 62vh, 820px);" in css
-    assert "width: min(100%, 1180px);" in css
-    assert "aspect-ratio: 3 / 2;" in css
-    assert "grid-template-columns: minmax(180px, 228px) minmax(0, 1fr);" in css
-    assert "grid-template-columns: 72px 1fr;" in css
-    assert "display: block;" in css
-    assert "position: absolute;" in css
-    assert "width: 44px;" in css
-    assert "height: 44px;" in css
-    assert "statusEl.hidden = true;" in review_js
-    assert "/assets/js/review_workspace.js?v=20260819-full-image-no-bird" in review_page
-    assert "data-review-item" in review_page
-    assert 'id="dsManualConfirmed"' in review_page
-    assert 'onchange="toggleOrphanFilter(this)"' not in review_page
-    assert "Current · CLS {{ species.score_pct }}%" in content
-    assert "CLS {{ species.score_pct }}%" in content
-    assert "/assets/js/species_picker.js" in review_page
-    assert "/assets/js/tile_actions.js?v=" in review_page
-    assert 'id="reviewActivePanel"' in review_page
-    assert 'onclick="selectReviewItem(' not in review_page
-    assert "action === 'select_species'" in review_js
-    assert "action === 'confirm_species'" in review_js
-    assert "/api/review/bbox-review" in review_js
-    assert "/api/review/panel/" in review_js
-    assert "encodeURIComponent(filename)}?force=1" in review_js
-    assert "[data-review-panel-action]" in review_js
-    assert "[data-review-nav]" in review_js
-    assert "[data-review-facts-toggle]" in review_js
-    assert "event.target.closest('[data-review-item]')" in review_js
-    assert "event.target.closest('[data-review-nav]')" in review_js
-    assert "toggleReviewFacts(factsToggle);" in review_js
-    assert "event.target.closest('[data-bbox-review-toggle]')" in review_js
-    assert "function getNextReviewBboxState(currentState)" in review_js
-    assert "event.target.closest('#hide-orphans')" in review_js
-    assert "selectReviewItem(reviewItem.dataset.itemKey);" in review_js
-    assert "Manual confirmed " in review_js
-    assert "Policy confirmed " in review_js
-    assert "data.manual_confirmed_count || 0" in review_js
-    assert "function applyDecisionStatsToReviewMetrics(root = document)" in review_js
-    assert "let reviewMetricsExpanded = localStorage.getItem('reviewMetricsExpanded') !== 'false';" in review_js
-    assert "function applyReviewMetricsState(root = document)" in review_js
-    assert "localStorage.setItem('reviewMetricsExpanded', reviewMetricsExpanded ? 'true' : 'false');" in review_js
-    assert "applyReviewMetricsState(panel);" in review_js
-    assert "applyReviewMetricsState(document);" in review_js
-    assert "latestDecisionStats = data;" in review_js
-    assert "applyDecisionStatsToReviewMetrics(panel);" in review_js
-    assert "applyDecisionStatsToReviewMetrics(document);" in review_js
-    assert "const REVIEW_PENDING_SPECIES_KEY = 'reviewPendingSpeciesV1';" in review_js
-    assert "function getPendingReviewSpecies(itemKey)" in review_js
-    assert "function setPendingReviewSpecies(itemKey, species)" in review_js
-    assert "function clearPendingReviewSpecies(itemKey)" in review_js
-    assert "persistPending: Boolean(pendingSpecies)" in review_js
-    assert "new Image()" in review_js
-    assert "hydrateReviewSpeciesThumbs();" in review_js
-    assert "async function hydrateReviewSpeciesThumbs()" in review_js
-    assert "reviewApprove(" in review_js
-    assert "async function confirmReviewSpeciesSelection(actionBtn, panel, itemKey, filename)" in review_js
-    assert "prefetchReviewPanel(" in review_js
-    assert "prefetchReviewImage(" in review_js
-    assert "scheduleReviewPrefetch(itemKey);" in review_js
-    assert "requestIdleCallback" in review_js
-    assert "[data-review-viewer-tool]" in review_js
-    assert "toggleSmartZoom(viewerToolBtn);" in review_js
-    assert "toggleBboxOverlay(viewerToolBtn);" in review_js
-    assert "action === 'approve_review'" in review_js
-    assert "const pendingSpecies = getPendingReviewSpecies(itemKey);" in review_js
-    assert "clearPendingReviewSpecies(itemKey);" in review_js
-    assert "applyReviewSpeciesUi(controls, species, { origin: 'pending' });" in review_js
-    assert "currentPendingSpecies && currentPendingSpecies === species" in review_js
-    assert "document.addEventListener('dblclick'" in review_js
-    assert "Species selected. Click again to confirm." in review_js
-    assert "Species confirmed. Approve when the review is complete." in review_js
-    assert "if (action === 'no_bird')" in review_js
-    assert "window.wmConfirmFullImageNoBird" in review_js
-    assert "modalAction(itemKey, filename, action, detectionId, actionBtn);" in review_js
-    assert "noBirdConfirmed" not in review_js
-    assert "reviewTrashConfirmed" in review_js
-    assert "waitForReviewDetectionControls(itemKey, filename);" in review_js
-    assert "Deep Scan finished. BBox and species review are now available." in review_js
-    assert "Status unavailable" not in review_js
-    assert "window.initReviewDefaultBboxes = initReviewDefaultBboxes;" in review_js
-    gallery_js = _read("assets/js/gallery_utils.js")
-    assert "function getViewerScope(el)" in gallery_js
-    assert "function isReviewViewerScope(scope)" in gallery_js
-    assert "el.closest('.wm-viewer-scope') || el.closest('.modal')" in gallery_js
-    assert "'wmb_review_bbox_pref'" in gallery_js
-    assert "'wmb_review_zoom_pref'" in gallery_js
-    toolbox = _read("templates/partials/tile_toolbox.html")
-    assert "show_viewer_tools=false" in toolbox
-    assert "show_boxes=false" in toolbox
-    assert "current_bbox_json='{}'" in toolbox
-
-
 def test_no_bird_action_renders_on_browse_and_review_surfaces():
     """The full-image action is available where its whole-frame scope is supported.
 
@@ -472,7 +330,9 @@ def test_no_bird_action_renders_on_browse_and_review_surfaces():
     # allow_review_no_bird parameter still guards the button
     assert "allow_review_no_bird" in toolbox
     # Trash and Species surfaces are excluded (not in the allowed tuple)
-    gate_body = toolbox.split("surface in ('review', 'gallery', 'detail_modal')")[1].split("endif")[0]
+    gate_body = toolbox.split("surface in ('review', 'gallery', 'detail_modal')")[
+        1
+    ].split("endif")[0]
     assert "'trash'" not in gate_body
     assert "'species'" not in gate_body
 
@@ -491,28 +351,34 @@ def test_no_bird_action_not_on_trash_or_species_surface():
     assert "'species'" not in gate
 
 
-def test_detail_modal_keeps_bbox_correction_in_the_overflow_menu():
-    toolbox = _read("templates/partials/tile_toolbox.html")
+def test_detail_modal_keeps_editing_in_the_fixed_editor_toolbar():
     modal = _read("templates/components/detection_modal.html")
+    toolbar = _read("templates/components/bird_editor_toolbar.html")
+    editor = _read("assets/js/bird_editor.js")
     base = _read("templates/base.html")
 
-    assert 'data-action="correct-bbox"' in toolbox
-    assert "surface == 'detail_modal'" in toolbox
-    assert "correct_bbox_is_primary" in toolbox
-    assert "show_correct_bbox and not correct_bbox_is_primary" in toolbox
-    assert 'data-filename="{{ filename }}"' in toolbox
+    assert 'data-editor-action="adjust"' in toolbar
+    assert 'data-editor-action="add"' in toolbar
+    assert 'data-editor-action="cancel"' in toolbar
+    assert 'data-editor-action="save"' in toolbar
+    assert 'data-filename="{{ image_filename }}"' in toolbar
     assert "bbox_editor_math.js" in base
-    assert "startWmBboxEditor" in _read("assets/js/gallery_utils.js")
-    assert "filename=det.image_filename" in modal
+    assert "bird_editor.js" in base
+    assert "render_bird_editor_toolbar" in modal
+    assert "'/api/manual-objects'" in editor
+    assert "'/api/labels/answer'" in editor
 
 
-def test_saved_box_correction_also_states_the_bird_is_present():
-    """Without the presence axis the corrected box never reaches OD export."""
-    editor = _read("assets/js/gallery_utils.js")
-    payload = editor.split("/api/labels/answer")[1].split("})")[0]
+def test_saved_existing_box_changes_only_the_geometry_axis():
+    editor = _read("assets/js/bird_editor.js")
+    save_flow = editor.split("async function save()", 1)[1].split(
+        "async function retractManualObject()", 1
+    )[0]
+    payload = save_flow.split("'/api/labels/answer'", 1)[1].split("});", 1)[0]
 
-    assert "object_bird_presence: 'present'" in payload
-    assert "bbox_quality: 'suitable'" in payload
+    assert "bbox_correction" in editor
+    assert "object_bird_presence" not in payload
+    assert "bbox_quality" not in payload
 
 
 def test_bbox_arrow_keys_do_not_reach_modal_navigation():
@@ -530,8 +396,8 @@ def test_gallery_utils_cache_key_reaches_every_image_surface():
     """Every image surface must request the current shared viewer logic."""
     templates = (
         "templates/edit.html",
-        "templates/orphans.html",
         "templates/review_grid.html",
+        "templates/canonical_dataset_box_walkthrough.html",
         "templates/species.html",
         "templates/species_overview.html",
         "templates/stream.html",
@@ -540,9 +406,64 @@ def test_gallery_utils_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        assert (
-            "gallery_utils.js?v=20260820-interactive-labels" in _read(template)
-        ), template
+        assert "gallery_utils.js?v={{ asset_version }}" in _read(template), template
+
+
+def test_offered_box_labels_choose_visible_space_around_the_box():
+    """Interactive species controls must not always cover the box at top-left."""
+    js = _read("assets/js/gallery_utils.js")
+
+    assert "function _positionInteractiveBboxLabel" in js
+    assert "name: 'above'" in js
+    assert "name: 'below'" in js
+    assert "name: 'right'" in js
+    assert "name: 'left'" in js
+    assert "candidate.space > best.space" in js
+    assert "label.dataset.placement = placement.name" in js
+    assert "viewport.right - labelRect.width - inset" in js
+    assert "candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel" in js
+    assert "layer.style.transform = '';" in js
+    assert "const renderedScaleX = imageRect.width / geometry.elementW;" in js
+    assert "labelLayer.style.transform = '';" in js
+
+    css = _read("assets/design-system.css")
+    assert "@media (hover: hover) and (pointer: fine)" in css
+    assert ".wm-bbox-label__confirm:hover" in css
+    assert ".wm-bbox-label__picker:hover" in css
+    assert "border: 1px solid #f5c84c" in css
+    assert "const strokeCurrent = 1 * inv;" in js
+    assert "const strokeOther = 0.75 * inv;" in js
+
+    editor = _read("assets/js/bird_editor.js")
+    assert "function positionShapeLabel" in editor
+    assert "const previousPlacement = label.dataset.placement;" in editor
+    assert "candidate.name === previousPlacement" in editor
+    assert "img.addEventListener('transitionend', syncFinishedTransform);" in editor
+    assert (
+        "candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel" in editor
+    )
+    assert "--wm-bird-editor-stroke" in editor
+    assert "--wm-bird-editor-soft-stroke" in editor
+    assert "label.style.transform = 'scale(' + inverse + ')'" in editor
+    assert "button.wm-bird-editor__box-label-name:hover" in css
+    assert ".wm-bird-editor__box-label-picker:hover" in css
+
+
+def test_adjust_box_preserves_focus_and_handles_keep_screen_size():
+    editor = _read("assets/js/bird_editor.js")
+    css = _read("assets/design-system.css")
+    begin_edit = editor.split("function beginEdit()", 1)[1].split(
+        "function beginAdd()", 1
+    )[0]
+    begin_add = editor.split("function beginAdd()", 1)[1].split(
+        "function cancelEdit", 1
+    )[0]
+
+    assert "forceFull();" not in begin_edit
+    assert "forceFull();" in begin_add
+    assert "--wm-bird-editor-handle-scale" in editor
+    assert "transform: scale(var(--wm-bird-editor-handle-scale, 1));" in css
+    assert "transform-origin: center;" in css
 
 
 def test_no_bird_js_fallback_is_surface_agnostic():
@@ -553,8 +474,8 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     css = _read("assets/design-system.css")
 
     assert "async function noBirdFrame(" in js
-    assert "'/api/review/decision'" in js
-    assert "'no_bird'" in js
+    assert "'/api/labels/answer'" in js
+    assert "image_bird_presence: 'absent'" in js
     assert "window.wmConfirmFullImageNoBird = confirmFullImageNoBird" in js
     assert "noBirdConfirmed" not in js
     assert "NO_BIRD_KEY" not in js
@@ -562,10 +483,7 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     # language (multi-detection count or generic "all detections").
     # Tolerates both the modal-with-full-frame UX and the legacy
     # confirm() fallback path used by old browsers.
-    assert (
-        "ALL will be flagged as false-positives" in js
-        or "All detections on this frame" in js
-    )
+    assert "Every detected object will be answered No bird." in js
     # Modal must include a full-frame preview to prevent the UX trap
     # where the operator confirms based on the cropped tile view.
     assert "data-full-src" in js
@@ -596,25 +514,11 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     assert "noBirdFrame(filename, actionEl)" in js
 
 
-def test_no_bird_review_surface_uses_full_image_gate():
-    tile_js = _read("assets/js/tile_actions.js")
-    grid_js = _read("assets/js/review_grid.js")
-    no_bird_flow = grid_js.split("async function noBirdEvent(card)")[1].split(
-        "/* Apple-Photos click semantics"
-    )[0]
-
-    assert "case 'review-no-bird':" in tile_js
-    assert "await window.wmConfirmFullImageNoBird(frames, card)" in no_bird_flow
-    assert "image.getAttribute('data-full-src')" in no_bird_flow
-    assert "if (!confirmed) return;" in no_bird_flow
-    assert "confirm(promptText)" not in no_bird_flow
-
-
 def test_tile_action_cache_key_reaches_every_image_surface():
     templates = (
         "templates/edit.html",
-        "templates/orphans.html",
         "templates/review_grid.html",
+        "templates/canonical_dataset_box_walkthrough.html",
         "templates/species.html",
         "templates/species_overview.html",
         "templates/stream.html",
@@ -623,4 +527,37 @@ def test_tile_action_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        assert "tile_actions.js?v=20260823-full-frame-confirm" in _read(template), template
+        assert "tile_actions.js?v={{ asset_version }}" in _read(template), template
+
+
+def test_box_walkthrough_is_a_shared_viewer_scope():
+    gallery = _read("assets/js/gallery_utils.js")
+
+    assert "el.closest('.wm-box-walkthrough')" in gallery
+
+
+def test_bird_editor_keeps_selection_confirmation_and_picker_separate():
+    editor = _read("assets/js/bird_editor.js")
+    toolbar = _read("templates/components/bird_editor_toolbar.html")
+    tile_actions = _read("assets/js/tile_actions.js")
+
+    assert "data-editor-object-select" in toolbar
+    assert 'data-editor-action="species"' not in toolbar
+    assert "data-editor-confirm" in editor
+    assert "object_bird_presence: 'present'" in editor
+    assert "species_identity: 'confirmed'" in editor
+    assert "data-editor-species" in editor
+    assert "wm-species-picker-overlay" in editor
+    assert "actionEl.closest('.wm-bird-editor')" in tile_actions
+    assert "const savingDraft = clone(draft)" in editor
+    assert 'data-editor-action="retract"' in toolbar
+
+
+def test_homepage_species_cards_share_the_fixed_photo_grid():
+    content = _read("templates/components/homepage_species_board.html")
+    assert "{% set frames = det.story_frames or [det] %}" in content
+    assert "{% for frame in frames %}" in content
+    assert "best-species-card__photos--single" in content
+    assert "variant == 'featured' and det.story_frames" not in content
+    assert '<details class="best-species-board__more">' in content
+    assert "<summary>Show more</summary>" in content

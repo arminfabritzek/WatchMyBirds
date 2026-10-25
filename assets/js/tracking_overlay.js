@@ -17,12 +17,12 @@
 
     // Controlled by the "Live Tracking Overlay" setting (Settings →
     // Detection & AI), delivered as overlay_enabled in the status poll
-    // below. The poll always runs (moderator-only page), but the overlay
-    // only shows + draws while the setting is on, so a live toggle change
-    // takes effect within one poll without a page reload.
+    // below. The Live page supplies the initial and inactive snapshots;
+    // only visible, enabled auto-tracking needs the fast overlay poll.
     var canvas = document.getElementById("trackingOverlay");
     if (!canvas || !canvas.getContext) return;
     var ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
     // State → colour + label. States with no entry draw no box (idle,
     // overview, returning).
@@ -46,40 +46,68 @@
     var tweenStart = 0;
     var state = "idle";
     var countdown = null;
+    var pollTimer = null;
+    var pollInFlight = false;
+    var statusVersion = 0;
 
     function setEnabled(on) {
         if (on === enabled) return;
         enabled = on;
         canvas.hidden = !on;
-        if (!on) { tgt = null; cur = null; }
+        if (!on) {
+            tgt = null;
+            cur = null;
+            clearTimeout(pollTimer);
+            pollTimer = null;
+        }
+    }
+
+    function schedulePoll() {
+        if (!enabled || document.hidden || pollInFlight || pollTimer !== null) return;
+        pollTimer = setTimeout(poll, POLL_MS);
+    }
+
+    function applyStatus(data) {
+        var a = data.auto_ptz || {};
+        var autoEnabled = (typeof a.configured_enabled === "boolean")
+            ? a.configured_enabled : !!a.enabled;
+        setEnabled(data.overlay_enabled === true && autoEnabled && !document.hidden);
+        if (!enabled) return;
+        state = a.state || "idle";
+        countdown = (typeof a.seconds_until_return === "number")
+            ? a.seconds_until_return : null;
+        var b = a.last_bbox;
+        if (b && b.length === 4 && COLOURS[state]) {
+            tgt = { x: b[0], y: b[1], w: b[2], h: b[3] };
+            if (!cur) cur = { x: tgt.x, y: tgt.y, w: tgt.w, h: tgt.h };
+            tweenStart = (typeof performance !== "undefined")
+                ? performance.now() : 0;
+        } else {
+            tgt = null;
+            cur = null;
+        }
+        schedulePoll();
     }
 
     function poll() {
+        pollTimer = null;
+        if (!enabled || document.hidden) return;
+        pollInFlight = true;
+        var version = statusVersion;
         fetch("/api/v1/ptz/auto/status", { credentials: "same-origin" })
             .then(function (r) {
-                if (!r.ok) { state = "idle"; tgt = null; cur = null; return null; }
-                return r.json();
+                return r.ok ? r.json() : null;
             })
             .then(function (data) {
-                if (!data) return;
-                setEnabled(data.overlay_enabled === true);
-                if (!enabled) return;
-                var a = data.auto_ptz || {};
-                state = a.state || "idle";
-                countdown = (typeof a.seconds_until_return === "number")
-                    ? a.seconds_until_return : null;
-                var b = a.last_bbox;
-                if (b && b.length === 4 && COLOURS[state]) {
-                    tgt = { x: b[0], y: b[1], w: b[2], h: b[3] };
-                    if (!cur) cur = { x: tgt.x, y: tgt.y, w: tgt.w, h: tgt.h };
-                    tweenStart = (typeof performance !== "undefined")
-                        ? performance.now() : 0;
-                } else {
-                    tgt = null;
-                    cur = null;
-                }
+                if (version === statusVersion) applyStatus(data || {});
             })
-            .catch(function () { state = "idle"; tgt = null; cur = null; });
+            .catch(function () {
+                if (version === statusVersion) setEnabled(false);
+            })
+            .finally(function () {
+                pollInFlight = false;
+                schedulePoll();
+            });
     }
 
     function lerp(a, b, t) { return a + (b - a) * t; }
@@ -137,10 +165,18 @@
         window.requestAnimationFrame(draw);
     }
 
-    // Start hidden; the first poll flips visibility via setEnabled once
-    // the overlay_enabled setting is known.
+    // The initial snapshot can arrive before this deferred script loads.
     canvas.hidden = true;
-    poll();
-    setInterval(poll, POLL_MS);
+    window.addEventListener("wmb:ptz-status", function (event) {
+        statusVersion += 1;
+        applyStatus(event.detail || {});
+    });
+    document.addEventListener("visibilitychange", function () {
+        if (document.hidden) {
+            statusVersion += 1;
+            setEnabled(false);
+        }
+    });
+    if (window.wmbPtzStatus) applyStatus(window.wmbPtzStatus);
     window.requestAnimationFrame(draw);
 })();

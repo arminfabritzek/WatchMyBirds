@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 # Directory structure:
@@ -23,16 +24,12 @@ class PathManager:
         self.optimized_dir = self.derivatives_dir / "optimized"
         self.ptz_snapshots_dir = self.derivatives_dir / "ptz_snapshots"
         self.visual_ptz_dir = self.derivatives_dir / "visual_ptz"
-        # Inbox directories (for web upload ingest)
-        self.inbox_dir = self.base_dir / "inbox"
-        self.inbox_pending_dir = self.inbox_dir / "pending"
-        self.inbox_error_dir = self.inbox_dir / "error"
         # Backup directory
         self.backup_dir = self.base_dir / "backup"
 
-    # -------------------------------------------------------------------------
-    # Inbox Path Methods
-    # -------------------------------------------------------------------------
+    def get_telemetry_metrics_path(self) -> Path:
+        return self.base_dir / "telemetry_metrics.json"
+
     def get_ptz_snapshot_path(self, camera_id: int, kind: str = "overview") -> Path:
         """Absolute path for a PTZ overview snapshot used by the Mini-Map UI."""
         self.ptz_snapshots_dir.mkdir(parents=True, exist_ok=True)
@@ -71,39 +68,6 @@ class PathManager:
         if not safe:
             raise ValueError("keyframe_id must contain a letter or digit")
         return safe[:80]
-
-    def get_inbox_root_dir(self) -> Path:
-        """Returns the inbox root directory."""
-        self.inbox_dir.mkdir(parents=True, exist_ok=True)
-        return self.inbox_dir
-
-    def get_inbox_pending_dir(self) -> Path:
-        """Returns the inbox/pending directory, creates if needed."""
-        self.inbox_pending_dir.mkdir(parents=True, exist_ok=True)
-        return self.inbox_pending_dir
-
-    def get_inbox_processed_dir(self, date_str: str) -> Path:
-        """
-        Returns inbox/processed/YYYYMMDD directory.
-        date_str should be in YYYYMMDD format.
-        """
-        processed_dir = self.inbox_dir / "processed" / date_str
-        processed_dir.mkdir(parents=True, exist_ok=True)
-        return processed_dir
-
-    def get_inbox_skipped_dir(self, date_str: str) -> Path:
-        """
-        Returns inbox/skipped/YYYYMMDD directory.
-        date_str should be in YYYYMMDD format.
-        """
-        skipped_dir = self.inbox_dir / "skipped" / date_str
-        skipped_dir.mkdir(parents=True, exist_ok=True)
-        return skipped_dir
-
-    def get_inbox_error_dir(self) -> Path:
-        """Returns the inbox/error directory, creates if needed."""
-        self.inbox_error_dir.mkdir(parents=True, exist_ok=True)
-        return self.inbox_error_dir
 
     # -------------------------------------------------------------------------
     # Backup Path Methods
@@ -152,9 +116,38 @@ class PathManager:
         """
         return self.base_dir / ".restart_required"
 
-    def get_retention_status_path(self) -> Path:
-        """Return the persisted last-run status for storage retention."""
-        return self.base_dir / "retention_status.json"
+    def get_storage_usage_path(self) -> Path:
+        """Return the bounded local storage-accounting history."""
+        return self.base_dir / "storage_usage.json"
+
+    def get_database_path(self) -> Path:
+        return self.base_dir / "images.db"
+
+    def get_report_tmp_dir(self) -> Path:
+        return self.base_dir / "report_tmp"
+
+    def disposable_files(self) -> Iterator[tuple[Path, str]]:
+        for directory in (self.base_dir / "restore_tmp", self.get_report_tmp_dir()):
+            yield from (
+                (path, "temporary") for path in directory.rglob("*") if path.is_file()
+            )
+        for pattern in (
+            "backup/tmp_db_*.db*",
+            "*.tmp",
+            ".storage-usage-*",
+            "nightly_jobs/tmp*",
+        ):
+            yield from ((path, "temporary") for path in self.base_dir.glob(pattern))
+        for pattern in (
+            "logs/*",
+            "vital_signs_legacy_*.csv",
+            "derivatives/visual_ptz/cam*/debug/*",
+        ):
+            yield from (
+                (path, "log")
+                for path in self.base_dir.glob(pattern)
+                if path.is_file() and path.name not in {"app.log", "aesthetic_tag.log"}
+            )
 
     def get_nightly_job_status_path(self, name: str) -> Path:
         """Return the lifecycle status path for one registered job."""

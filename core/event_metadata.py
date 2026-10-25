@@ -16,9 +16,8 @@ from dataclasses import dataclass, field
 # Bumped whenever the field set or serialisation changes in a way a
 # downstream reader would need to know about. Carried into the wmb:
 # namespace so a re-imported WMB copy can tell which envelope produced it.
-# v2: added image-wide rating/favorite/review fields and the
-#   xmp:Rating / xmp:Label / wmb:* mapping for them.
-METADATA_SCHEMA_VERSION = 2
+# v3 removes star ratings; favorite labels remain.
+METADATA_SCHEMA_VERSION = 3
 
 # dwc constants are gated on bird detections only; a squirrel/marten must
 # never receive Aves/Animalia. Non-bird species carry no dwc class block.
@@ -41,7 +40,6 @@ class SpeciesEntry:
     detection_id: int | None = None
     confidence: float | None = None
     is_favorite: bool = False
-    rating: int | None = None
 
     @property
     def genus(self) -> str:
@@ -82,7 +80,7 @@ class EventMetadata:
     detector_model: str | None = None
     classifier_model: str | None = None
     schema_version: int = METADATA_SCHEMA_VERSION
-    # Image-wide (not per-detection) facts. A JPEG carries one rating/label,
+    # Image-wide (not per-detection) facts. A JPEG carries one label,
     # so these aggregate across the frame's detections.
     creator_tool: str | None = None
     creator: str | None = None
@@ -97,19 +95,6 @@ class EventMetadata:
     def is_favorite(self) -> bool:
         """True when any detection on this frame is a manual favorite."""
         return any(s.is_favorite for s in self.species)
-
-    def xmp_rating(self) -> int | None:
-        """Image-wide ``xmp:Rating`` (0-5) for foto tools.
-
-        A favorite anywhere on the frame pins the image to 5 stars; otherwise
-        the highest manual/auto star rating across detections wins (one JPEG,
-        one rating). ``None`` when nothing rates the image, so no tag is
-        written rather than a misleading 0.
-        """
-        if self.is_favorite:
-            return 5
-        ratings = [s.rating for s in self.species if s.rating]
-        return max(ratings) if ratings else None
 
     def xmp_label(self) -> str | None:
         """Image-wide ``xmp:Label`` — ``"Favorite"`` when starred, else None."""

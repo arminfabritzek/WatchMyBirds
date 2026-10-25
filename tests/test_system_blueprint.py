@@ -9,7 +9,6 @@ def detection_manager():
     dm = MagicMock()
     dm.paused = False
     dm.decision_state_counts = {}
-    dm.is_deep_scan_active.return_value = False
     return dm
 
 
@@ -53,6 +52,7 @@ def test_status_reports_detection_state(client):
     body = resp.get_json()
     assert body["detection_paused"] is False
     assert body["detection_running"] is True
+    assert not any(key.startswith("deep_scan_") for key in body)
 
 
 def test_detection_pause(client, detection_manager):

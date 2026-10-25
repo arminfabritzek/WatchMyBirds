@@ -99,8 +99,8 @@ def test_group_detections_different_species():
     assert species_set == {"parus_major", "erithacus_rubecula"}
 
 
-def test_cover_uses_most_recent_detection():
-    """Cover detection follows the newest image in the observation."""
+def test_cover_uses_quality_before_recency():
+    """Detection score breaks quality ties before recency."""
     dets = [
         _det(1, "20260101_120000", score=0.70),
         _det(2, "20260101_120020", score=0.95),
@@ -108,7 +108,7 @@ def test_cover_uses_most_recent_detection():
     ]
     obs = group_detections_into_observations(dets)
     assert len(obs) == 1
-    assert obs[0]["cover_detection_id"] == 3
+    assert obs[0]["cover_detection_id"] == 2
     assert obs[0]["best_score"] == 0.95
 
 

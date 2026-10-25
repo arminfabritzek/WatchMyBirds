@@ -69,8 +69,7 @@ class DetectionData:
         decision_reasons: JSON list or serializable string of reason codes.
         policy_version: Version identifier string of the policy engine.
         decision_level: "species" / "genus" / "reject" from the classifier
-            decision layer. NULL when no decision config is loaded (legacy
-            classifiers) — downstream treats NULL as species-level.
+            decision layer. A missing level does not admit a named species.
         raw_species_name: top-1 latin species name from the classifier
             softmax, regardless of decision level. Retained for audit and
             for later re-analysis even when cls_class_name was promoted
@@ -92,6 +91,7 @@ class DetectionData:
     top_k_predictions: list[tuple[str, float]] = field(default_factory=list)
     decision_level: str | None = None
     raw_species_name: str | None = None
+    geography_json: str | None = None
 
 
 class PersistenceInterface(ABC):

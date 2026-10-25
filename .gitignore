@@ -302,3 +302,4 @@ infra/telemetry-worker/node_modules/
 
 # Local scratch directory, not part of the distribution.
 docs/superpowers/
+Status.md

@@ -10,12 +10,14 @@ from core import retention_core
 
 
 def preview() -> dict[str, Any]:
-    """Dry-run preview: deletable counts, bytes, protection breakdown."""
+    """Preview the same deadlines the deletion job executes."""
     return retention_core.preview()
 
 
 def start_run() -> dict[str, Any]:
     """Start the registered retention job, sharing its overlap lock."""
+    if retention_core.activation_date(retention_core._settings_from_config()) is None:
+        return {"status": "disabled", "reason": "Automatic deletion is off"}
     from web.services.nightly_job_hub import run_now
 
     return run_now("retention", reason="manual retention trigger")

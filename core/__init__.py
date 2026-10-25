@@ -28,7 +28,6 @@ __all__ = [
     "detections_core",
     "backup_restore_core",
     "db_core",
-    "ingest_core",
     "path_core",
     "recovery_core",
 ]

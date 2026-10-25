@@ -1,6 +1,7 @@
 # config.py
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -76,7 +77,6 @@ _CONFIG = None
 DEFAULTS = {
     "DEBUG_MODE": False,
     "OUTPUT_DIR": "./data/output",
-    "INGEST_DIR": "./data/ingest",
     "VIDEO_SOURCE": "0",
     "LOCATION_DATA": {"latitude": 52.516, "longitude": 13.377},
     # Human-readable label for this WMB instance. Shown in the
@@ -89,6 +89,7 @@ DEFAULTS = {
     # Species-classifier runtime. The detector remains unchanged; only the
     # crop classifier is selected here.
     "CLASSIFIER_BACKEND": "inat_tflite",  # "wmb_onnx" | "inat_tflite"
+    "SPECIES_GEOGRAPHY_ENABLED": True,
     # Detection-confidence floor is now model-owned (read from the active
     # model_metadata.json). CONFIDENCE_THRESHOLD_DETECTION has been retired.
     "SAVE_THRESHOLD": 0.65,
@@ -168,6 +169,14 @@ DEFAULTS = {
     "GALLERY_DISPLAY_THRESHOLD": 0.1,
     "TELEGRAM_BOT_TOKEN": "",
     "TELEGRAM_CHAT_ID": "",
+    "MQTT_ENABLED": False,
+    "MQTT_HOST": "",
+    "MQTT_PORT": 1883,
+    "MQTT_USERNAME": "",
+    "MQTT_PASSWORD": "",
+    "MQTT_TLS": False,
+    "MQTT_TOPIC_PREFIX": "watchmybirds",
+    "MQTT_IMAGE_BASE_URL": "",
     "TELEGRAM_REPORT_TIME": "21:00",
     "TELEGRAM_MODE": "off",  # "off", "live", "daily", "interval", "new_species_only"
     "TELEGRAM_REPORT_INTERVAL_HOURS": 1,
@@ -178,16 +187,6 @@ DEFAULTS = {
     # frame. 1 = keep all confirmed species; raise to 2 or 3 for stricter
     # rarity filtering.
     "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS": 1,
-    # Reserved aesthetic-score floor for future per-photo filtering inside
-    # the daily Telegram report. Currently NOT applied (the previous
-    # implementation treated it as a species-level gate, which made
-    # taggable species vanish on days when none cleared the floor —
-    # see utils/daily_report.py:_fetch_species_best_photos for the
-    # full rationale). The constant stays so we can re-introduce it as
-    # a per-photo floor later (e.g. "use detector_confidence ranking
-    # instead of aesthetic_score when no photo of the species clears
-    # this threshold"). Today it is purely informational.
-    "TELEGRAM_MIN_AESTHETIC_SCORE": 0.10,
     # Nightly aesthetic auto-tagger (CLIP-based). The scheduler in
     # web/services/aesthetic_tag_scheduler.py reads these. Time is HH:MM
     # 24h, default 02:10 (low-traffic). Disable on slim images / low-RAM
@@ -225,61 +224,31 @@ DEFAULTS = {
     "AESTHETIC_BRIDGE_PER_SPECIES_CAP": 8,
     "DEVICE_NAME": "",
     "EXIF_GPS_ENABLED": True,
-    "INBOX_REQUIRE_EXIF_DATETIME": True,
-    "INBOX_REQUIRE_EXIF_GPS": True,
     # When True, human-facing downloads (detail-modal "Download" and the
     # edit-page batch ZIP) serve a COPY with species/location/provenance
     # burned into XMP at current DB state, never touching the immutable
     # original. Off restores the verbatim-original download. Runtime
     # (live-editable in Settings), not a boot ENV like EXIF_GPS_ENABLED.
     "EXPORT_BURN_IN_METADATA": True,
-    # Artifact retention (full-resolution originals only); ships OFF.
-    # RETENTION_POSTURE is the policy authority. RETENTION_ENABLED is derived
-    # from it at decision time and retained for backcompat; automatic execution
-    # has a separate default-OFF opt-in.
-    "RETENTION_POSTURE": "off",
-    "RETENTION_ENABLED": False,
-    "RETENTION_AUTO_ENABLED": False,
-    "RETENTION_DAYS": 90,
-    "RETENTION_PROTECT_FAVORITES": True,
-    "RETENTION_PROTECT_UNREVIEWED": True,
+    "AUTOMATIC_DELETION_ENABLED": False,
+    "AUTOMATIC_DELETION_ENABLED_AT": None,
+    "OLD_BIRD_PHOTOS": "keep_previews",
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
-    "ENABLE_NIGHTLY_DEEP_SCAN": False,
     "STREAM_SOURCE_MODE": "auto",  # "auto", "relay", "direct"
     "GO2RTC_STREAM_NAME": "camera",
     "GO2RTC_API_BASE": "http://127.0.0.1:1984",
     "GO2RTC_CONFIG_PATH": "./go2rtc.yaml",
     "SPECIES_COMMON_NAME_LOCALE": "DE",
-    # --- Companion v1 backend (default OFF) ---
-    # Backend-only in v1. All keys default conservative so a fresh
-    # install never reaches an LLM runtime by accident.
-    #
-    # The default backend is `llama_cpp` (in-process GGUF via
-    # llama-cpp-python). Ollama remains an alternative for hosts that
-    # already serve the model via a local daemon. Switching the backend
-    # takes effect on next boot.
-    "COMPANION_ENABLED": False,
-    "COMPANION_INFERENCE_BACKEND": "llama_cpp",  # "llama_cpp" | "ollama"
-    # llama_cpp adapter knobs:
-    "COMPANION_LLAMA_CPP_GGUF_PATH": "",  # empty -> auto-pick newest .gguf under <models>/companion/
-    "COMPANION_LLAMA_CPP_N_CTX": 4096,
-    "COMPANION_LLAMA_CPP_N_THREADS": 0,  # 0 -> library default (typically all cores)
-    # ollama adapter knobs:
-    "COMPANION_OLLAMA_URL": "http://127.0.0.1:11434",
-    "COMPANION_OLLAMA_MODEL_TAG": "wmb-companion:1b-q4",
-    # shared:
-    "COMPANION_INFERENCE_TIMEOUT_S": 60,
-    "COMPANION_PAUSE_DETECTION_DURING_INFERENCE": True,
-    "COMPANION_LANGUAGE": "de",
-    "COMPANION_TONE": "adult_dry",
     # --- Anonymous opt-in usage heartbeat (default OFF) ---
     # See web/services/telemetry_service.py and docs/PRIVACY.md.
     # The toggle is the ONLY enable surface; there is no banner or
     # popup. Endpoint is overridable for self-hosters / privacy-paranoid
     # operators (point it at /dev/null or a self-hosted Worker).
     "telemetry_enabled": False,
+    "telemetry_consent_version": 0,
+    "telemetry_consent_at": "",
     # Canonical default lives in web/services/telemetry_service.DEFAULT_TELEMETRY_ENDPOINT;
     # kept as a literal here to avoid a config -> web.services import cycle. Keep in sync.
     "telemetry_endpoint": (
@@ -289,14 +258,11 @@ DEFAULTS = {
 }
 
 RUNTIME_KEYS = {
+    "SPECIES_GEOGRAPHY_ENABLED",
     "CLASSIFIER_BACKEND",
     "EXPORT_BURN_IN_METADATA",
-    "RETENTION_POSTURE",
-    "RETENTION_ENABLED",
-    "RETENTION_AUTO_ENABLED",
-    "RETENTION_DAYS",
-    "RETENTION_PROTECT_FAVORITES",
-    "RETENTION_PROTECT_UNREVIEWED",
+    "AUTOMATIC_DELETION_ENABLED",
+    "OLD_BIRD_PHOTOS",
     "SAVE_THRESHOLD",
     "SAVE_THRESHOLD_MODE",
     "NON_BIRD_CONFIRM_THRESHOLD",
@@ -324,38 +290,26 @@ RUNTIME_KEYS = {
     "DEBUG_MODE",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
+    "MQTT_ENABLED",
+    "MQTT_HOST",
+    "MQTT_PORT",
+    "MQTT_USERNAME",
+    "MQTT_PASSWORD",
+    "MQTT_TLS",
+    "MQTT_TOPIC_PREFIX",
+    "MQTT_IMAGE_BASE_URL",
     "TELEGRAM_REPORT_TIME",
     "TELEGRAM_MODE",
     "TELEGRAM_REPORT_INTERVAL_HOURS",
     "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS",
-    "TELEGRAM_MIN_AESTHETIC_SCORE",
     "AESTHETIC_TAG_ENABLED",
     "AESTHETIC_TAG_TIME",
     "AESTHETIC_TAGGER_NICE",
     "AESTHETIC_TAGGER_TORCH_THREADS",
     "AESTHETIC_BRIDGE_PER_SPECIES_CAP",
-    # Companion runtime knobs. Enable / pause / language / tone are
-    # safe to flip live; backend, GGUF path, n_ctx, n_threads, the URL
-    # and model tag re-bind on next service init (read once when
-    # constructing the adapter at process boot, not on every API call),
-    # so those changes need a restart — same as the existing telemetry
-    # endpoint key.
-    "COMPANION_ENABLED",
-    "COMPANION_PAUSE_DETECTION_DURING_INFERENCE",
-    "COMPANION_LANGUAGE",
-    "COMPANION_TONE",
-    "COMPANION_INFERENCE_TIMEOUT_S",
-    "COMPANION_INFERENCE_BACKEND",
-    "COMPANION_LLAMA_CPP_GGUF_PATH",
-    "COMPANION_LLAMA_CPP_N_CTX",
-    "COMPANION_LLAMA_CPP_N_THREADS",
-    "COMPANION_OLLAMA_URL",
-    "COMPANION_OLLAMA_MODEL_TAG",
     "DEVICE_NAME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",
-    "INBOX_REQUIRE_EXIF_DATETIME",
-    "INBOX_REQUIRE_EXIF_GPS",
     "MOTION_DETECTION_ENABLED",
     "MOTION_SENSITIVITY",
     "SPECIES_COMMON_NAME_LOCALE",
@@ -385,8 +339,6 @@ def _load_config() -> dict[str, Any]:
         config["DEBUG_MODE"] = os.getenv("DEBUG_MODE")
     if os.getenv("OUTPUT_DIR") is not None:
         config["OUTPUT_DIR"] = os.getenv("OUTPUT_DIR")
-    if os.getenv("INGEST_DIR") is not None:
-        config["INGEST_DIR"] = os.getenv("INGEST_DIR")
     if os.getenv("VIDEO_SOURCE") is not None:
         config["VIDEO_SOURCE"] = os.getenv("VIDEO_SOURCE")
     if os.getenv("CAMERA_URL") is not None:
@@ -403,6 +355,9 @@ def _load_config() -> dict[str, Any]:
     location_str = os.getenv("LOCATION_DATA")
     if location_str:
         config["LOCATION_DATA"] = location_str
+    config["LOCATION_DATA_CONFIGURED"] = bool(location_str)
+    if os.getenv("SPECIES_GEOGRAPHY_ENABLED") is not None:
+        config["SPECIES_GEOGRAPHY_ENABLED"] = os.getenv("SPECIES_GEOGRAPHY_ENABLED")
 
     for key in (
         "DETECTOR_MODEL_CHOICE",
@@ -443,8 +398,6 @@ def _load_config() -> dict[str, Any]:
         config["EXIF_GPS_ENABLED"] = os.getenv("EXIF_GPS_ENABLED")
     if os.getenv("TELEGRAM_ENABLED") is not None:
         config["TELEGRAM_ENABLED"] = os.getenv("TELEGRAM_ENABLED")
-    if os.getenv("ENABLE_NIGHTLY_DEEP_SCAN") is not None:
-        config["ENABLE_NIGHTLY_DEEP_SCAN"] = os.getenv("ENABLE_NIGHTLY_DEEP_SCAN")
     if os.getenv("CPU_LIMIT") is not None:
         config["CPU_LIMIT"] = os.getenv("CPU_LIMIT")
 
@@ -453,14 +406,22 @@ def _load_config() -> dict[str, Any]:
         config["TELEGRAM_BOT_TOKEN"] = os.getenv("TELEGRAM_BOT_TOKEN")
     if os.getenv("TELEGRAM_CHAT_ID") is not None:
         config["TELEGRAM_CHAT_ID"] = os.getenv("TELEGRAM_CHAT_ID")
+    for key in (
+        "MQTT_ENABLED",
+        "MQTT_HOST",
+        "MQTT_PORT",
+        "MQTT_USERNAME",
+        "MQTT_PASSWORD",
+        "MQTT_TLS",
+        "MQTT_TOPIC_PREFIX",
+        "MQTT_IMAGE_BASE_URL",
+    ):
+        if os.getenv(key) is not None:
+            config[key] = os.getenv(key)
     if os.getenv("TELEGRAM_REPORT_TIME") is not None:
         config["TELEGRAM_REPORT_TIME"] = os.getenv("TELEGRAM_REPORT_TIME")
     if os.getenv("TELEGRAM_MODE") is not None:
         config["TELEGRAM_MODE"] = os.getenv("TELEGRAM_MODE")
-    if os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE") is not None:
-        config["TELEGRAM_MIN_AESTHETIC_SCORE"] = os.getenv(
-            "TELEGRAM_MIN_AESTHETIC_SCORE"
-        )
     if os.getenv("AESTHETIC_TAG_ENABLED") is not None:
         config["AESTHETIC_TAG_ENABLED"] = os.getenv("AESTHETIC_TAG_ENABLED")
     if os.getenv("AESTHETIC_TAG_TIME") is not None:
@@ -478,6 +439,8 @@ def _load_config() -> dict[str, Any]:
 
     # YAML runtime overrides
     yaml_settings = load_settings_yaml(str(config["OUTPUT_DIR"]))
+    if "LOCATION_DATA" in yaml_settings:
+        config["LOCATION_DATA_CONFIGURED"] = True
 
     if (
         "MAX_FPS_DETECTION" in yaml_settings
@@ -495,20 +458,9 @@ def _load_config() -> dict[str, Any]:
         if key in RUNTIME_KEYS:
             config[key] = value
 
-    # Legacy retention migration: before RETENTION_POSTURE existed, the
-    # persisted RETENTION_ENABLED boolean controlled manual cleanup. The
-    # default posture must not hide that explicit older choice. Automatic
-    # execution remains independently default-OFF unless its new key is
-    # explicitly present in YAML.
-    if (
-        "RETENTION_POSTURE" not in yaml_settings
-        and "RETENTION_ENABLED" in yaml_settings
-    ):
-        config["RETENTION_POSTURE"] = (
-            "conservative"
-            if _coerce_bool(yaml_settings["RETENTION_ENABLED"])
-            else "off"
-        )
+    config["AUTOMATIC_DELETION_ENABLED_AT"] = yaml_settings.get(
+        "AUTOMATIC_DELETION_ENABLED_AT"
+    )
 
     # Telemetry keys persist via a dedicated endpoint (/api/v1/settings/telemetry)
     # and deliberately bypass RUNTIME_KEYS so the generic Settings form can't
@@ -516,7 +468,10 @@ def _load_config() -> dict[str, Any]:
     # toggle "on" state is forgotten on every service restart (the loader
     # would silently drop telemetry_enabled=true from YAML, so the scheduler
     # logged "started" but never actually sent).
-    for key in ("telemetry_enabled", "telemetry_endpoint", "telemetry_installation_id"):
+    for key in (
+        "telemetry_enabled", "telemetry_endpoint", "telemetry_installation_id",
+        "telemetry_consent_version", "telemetry_consent_at",
+    ):
         if key in yaml_settings:
             config[key] = yaml_settings[key]
 
@@ -567,7 +522,6 @@ def ensure_app_directories(config_dict: dict[str, Any] | None = None) -> None:
 
     dirs_to_create = [
         config_dict["OUTPUT_DIR"],
-        config_dict["INGEST_DIR"],
         config_dict["MODEL_BASE_PATH"],
         os.path.join(config_dict["OUTPUT_DIR"], "logs"),  # Ensure log dir exists
     ]
@@ -808,31 +762,15 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
         "EXIF_GPS_ENABLED",
-        "INBOX_REQUIRE_EXIF_DATETIME",
-        "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
-        "ENABLE_NIGHTLY_DEEP_SCAN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
-        "RETENTION_ENABLED",
-        "RETENTION_AUTO_ENABLED",
-        "RETENTION_PROTECT_FAVORITES",
-        "RETENTION_PROTECT_UNREVIEWED",
+        "AUTOMATIC_DELETION_ENABLED",
     ):
         if key in config:
             config[key] = _coerce_bool(config.get(key))
 
-    # RETENTION_DAYS: positive int, capped at 3650 (~10 years).
-    try:
-        ret_days = int(float(config.get("RETENTION_DAYS", 90)))
-    except (TypeError, ValueError):
-        ret_days = 90
-    config["RETENTION_DAYS"] = max(1, min(3650, ret_days))
-
-    # RETENTION_POSTURE: normalize; unknown -> off (non-destructive default).
-    posture = str(config.get("RETENTION_POSTURE", "off")).strip().lower()
-    config["RETENTION_POSTURE"] = (
-        posture if posture in ("off", "conservative", "reclaim") else "off"
-    )
+    if config.get("OLD_BIRD_PHOTOS") not in {"keep_previews", "delete_all"}:
+        config["OLD_BIRD_PHOTOS"] = "keep_previews"
 
     # LOCATION_DATA: parse "lat, lon" strings into dict
     location_val = config.get("LOCATION_DATA")
@@ -845,6 +783,10 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
             }
         except Exception:
             config["LOCATION_DATA"] = DEFAULTS["LOCATION_DATA"]
+            config["LOCATION_DATA_CONFIGURED"] = False
+    config["SPECIES_GEOGRAPHY_ENABLED"] = _coerce_bool(
+        config.get("SPECIES_GEOGRAPHY_ENABLED", True)
+    )
 
     # VIDEO_SOURCE: int for webcams, string otherwise (startup-only per locked decision).
     source = config.get("VIDEO_SOURCE", "0")
@@ -1023,6 +965,14 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
     # working. "off" disables everything; individual features below gate on
     # TELEGRAM_MODE directly so the mode decides *what* gets sent.
     config["TELEGRAM_ENABLED"] = mode_val != "off"
+    config["MQTT_ENABLED"] = _coerce_bool(config.get("MQTT_ENABLED", False))
+    config["MQTT_TLS"] = _coerce_bool(config.get("MQTT_TLS", False))
+    try:
+        config["MQTT_PORT"] = int(config.get("MQTT_PORT", 1883))
+    except (TypeError, ValueError):
+        config["MQTT_PORT"] = 1883
+    if not 1 <= config["MQTT_PORT"] <= 65535:
+        config["MQTT_PORT"] = 1883
 
     # TELEGRAM_REPORT_INTERVAL_HOURS: integer in [1, 24]. Used only when
     # TELEGRAM_MODE == "interval".
@@ -1039,17 +989,6 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
     except Exception:
         min_obs = 1
     config["TELEGRAM_MIN_CONFIRMED_OBSERVATIONS"] = max(1, min(100, min_obs))
-
-    # TELEGRAM_MIN_AESTHETIC_SCORE: float in [0, 1]. Floor for the daily
-    # report's photo-picking. Anything outside the range falls back to
-    # the default so a fat-fingered "30" can't suddenly empty the report.
-    try:
-        min_aes = float(config.get("TELEGRAM_MIN_AESTHETIC_SCORE", 0.20))
-    except (TypeError, ValueError):
-        min_aes = 0.20
-    if not (0.0 <= min_aes <= 1.0):
-        min_aes = 0.20
-    config["TELEGRAM_MIN_AESTHETIC_SCORE"] = min_aes
 
     # AESTHETIC_TAG_ENABLED: bool. Coerce loose strings ("true"/"yes"/"1").
     # AESTHETIC_TAG_TIME: HH:MM 24h. Re-uses the same regex as
@@ -1097,13 +1036,15 @@ def get_settings_payload() -> dict[str, Any]:
             source = "env"
         is_internal = key == "VIDEO_SOURCE"
         payload[key] = {
-            "value": cfg.get(key),
+            "value": "" if key == "MQTT_PASSWORD" else cfg.get(key),
             "default": default,
             "source": source,
             "editable": key in RUNTIME_KEYS and not is_internal,
             "restart_required": key in BOOT_KEYS,
             "internal": is_internal,
         }
+        if key == "MQTT_PASSWORD":
+            payload[key]["configured"] = bool(cfg.get(key))
 
     runtime_video = cfg.get("VIDEO_SOURCE", "")
     runtime_mode = (
@@ -1162,6 +1103,14 @@ def validate_runtime_updates(
             valid[key] = coerced
         else:
             errors[key] = "Invalid value"
+    merged = {**get_config(), **valid}
+    if merged.get("MQTT_ENABLED") and any(key.startswith("MQTT_") for key in updates):
+        if not str(merged.get("MQTT_HOST", "")).strip():
+            errors["MQTT_HOST"] = "Broker hostname is required when MQTT is enabled"
+        if not str(merged.get("MQTT_IMAGE_BASE_URL", "")).strip():
+            errors["MQTT_IMAGE_BASE_URL"] = (
+                "Image base URL is required when MQTT is enabled"
+            )
     return valid, errors
 
 
@@ -1178,6 +1127,14 @@ def update_runtime_settings(updates: dict[str, Any]) -> None:
     back to "live" ("Instant" in the UI). Writing every explicit choice
     means the user's intent survives restarts and image rebuilds.
     """
+    from utils.db.connection import closing_connection
+
+    with closing_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _persist_runtime_settings(updates)
+
+
+def _persist_runtime_settings(updates: dict[str, Any]) -> None:
     cfg = get_config()
     output_dir = str(cfg["OUTPUT_DIR"])
     yaml_settings = load_settings_yaml(output_dir)
@@ -1188,6 +1145,20 @@ def update_runtime_settings(updates: dict[str, Any]) -> None:
             continue
         next_yaml_settings[key] = value
         next_cfg[key] = value
+        if key == "LOCATION_DATA":
+            next_cfg["LOCATION_DATA_CONFIGURED"] = True
+    if "AUTOMATIC_DELETION_ENABLED" in updates:
+        from datetime import UTC, datetime
+
+        enabled = _coerce_bool(updates["AUTOMATIC_DELETION_ENABLED"])
+        previously_enabled = yaml_settings.get("AUTOMATIC_DELETION_ENABLED") is True
+        if enabled and (
+            not previously_enabled
+            or not yaml_settings.get("AUTOMATIC_DELETION_ENABLED_AT")
+        ):
+            stamp = datetime.now(UTC).isoformat()
+            next_yaml_settings["AUTOMATIC_DELETION_ENABLED_AT"] = stamp
+            next_cfg["AUTOMATIC_DELETION_ENABLED_AT"] = stamp
     _coerce_config_types(next_cfg)
     save_settings_yaml(next_yaml_settings, output_dir)
     cfg.update(next_cfg)
@@ -1195,40 +1166,67 @@ def update_runtime_settings(updates: dict[str, Any]) -> None:
 
 def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
     if key in (
+        "SPECIES_GEOGRAPHY_ENABLED",
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
-        "INBOX_REQUIRE_EXIF_DATETIME",
-        "INBOX_REQUIRE_EXIF_GPS",
+        "MQTT_ENABLED",
+        "MQTT_TLS",
         "MOTION_DETECTION_ENABLED",
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
         "EXPORT_BURN_IN_METADATA",
         "NON_BIRD_DROP_BELOW_CONFIRM",
+        "AUTOMATIC_DELETION_ENABLED",
         "PTZ_TRACKING_OVERLAY_ENABLED",
-        "RETENTION_ENABLED",
-        "RETENTION_AUTO_ENABLED",
-        "RETENTION_PROTECT_FAVORITES",
-        "RETENTION_PROTECT_UNREVIEWED",
     ):
         return True, _coerce_bool(value)
-    if key == "RETENTION_DAYS":
+    if key == "MQTT_PORT":
         try:
-            days = int(float(value))
+            port = int(value)
         except (TypeError, ValueError):
             return False, None
-        if 1 <= days <= 3650:
-            return True, days
-        return False, None
+        return (1 <= port <= 65535), port
+    if key == "MQTT_HOST":
+        host = str(value or "").strip()
+        return (len(host) <= 253 and not any(c in host for c in "/?#@ \t\r\n")), host
+    if key in ("MQTT_USERNAME", "MQTT_PASSWORD"):
+        value = str(value or "")
+        return len(value) <= 1024, value
+    if key == "MQTT_TOPIC_PREFIX":
+        prefix = str(value or "").strip().strip("/")
+        return (
+            bool(prefix)
+            and len(prefix) <= 128
+            and not any(c in prefix for c in "+#\x00\r\n")
+            and all(prefix.split("/"))
+        ), prefix
+    if key == "MQTT_IMAGE_BASE_URL":
+        base = str(value or "").strip().rstrip("/")
+        if not base:
+            return True, ""
+        try:
+            parts = urlsplit(base)
+            port = parts.port
+        except ValueError:
+            return False, None
+        return (
+            parts.scheme in ("http", "https")
+            and bool(parts.hostname)
+            and (port is None or 1 <= port <= 65535)
+            and not parts.username
+            and not parts.password
+            and not parts.query
+            and not parts.fragment
+            and "\n" not in base
+            and len(base) <= 2048
+        ), base
     if key == "SAVE_THRESHOLD_MODE":
         val = str(value).strip().lower() if value is not None else ""
         if val in ("auto", "manual"):
             return True, val
         return False, None
-    if key == "RETENTION_POSTURE":
-        val = str(value).strip().lower() if value is not None else ""
-        if val in ("off", "conservative", "reclaim"):
-            return True, val
-        return False, None
+    if key == "OLD_BIRD_PHOTOS":
+        return value in ("keep_previews", "delete_all"), value
     if key in (
         "SAVE_THRESHOLD",
         "NON_BIRD_CONFIRM_THRESHOLD",
@@ -1339,15 +1337,6 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
             return False, None
         if 1 <= count <= 100:
             return True, count
-        return False, None
-
-    if key == "TELEGRAM_MIN_AESTHETIC_SCORE":
-        try:
-            v = float(value)
-        except (TypeError, ValueError):
-            return False, None
-        if 0.0 <= v <= 1.0:
-            return True, v
         return False, None
 
     if key == "AESTHETIC_TAG_ENABLED":

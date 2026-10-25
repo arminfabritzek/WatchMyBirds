@@ -1,135 +1,95 @@
-"""Retention settings wired into the runtime config system."""
+from __future__ import annotations
 
-import importlib
+import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from config import get_config, update_runtime_settings, validate_runtime_updates
+from tests.labeling_helpers import _reset_test_config
+from utils.db import connection
+from utils.settings import load_settings_yaml, save_settings_yaml
 
-@pytest.fixture
-def fresh_config(monkeypatch, tmp_path):
-    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_installation_defaults_persist_across_restarts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, existing: bool
+) -> None:
+    output = _reset_test_config(monkeypatch, tmp_path)
+    if existing:
+        sqlite3.connect(output / "images.db").close()
+    save_settings_yaml(
+        {
+            "RETENTION_ENABLED": True,
+            "RETENTION_POSTURE": "reclaim",
+            "RETENTION_AUTO_ENABLED": True,
+        },
+        str(output),
+    )
+    with connection.closing_connection():
+        pass
+    cfg = get_config()
+    assert cfg["AUTOMATIC_DELETION_ENABLED"] is (not existing)
+    assert bool(cfg["AUTOMATIC_DELETION_ENABLED_AT"]) is (not existing)
+    assert cfg["OLD_BIRD_PHOTOS"] == "keep_previews"
+    before = load_settings_yaml(str(output))
+    connection._schema_initialized_paths.clear()
+    with connection.closing_connection():
+        pass
+    assert before == load_settings_yaml(str(output))
+
+
+def test_reenable_gets_new_date_but_saving_enabled_does_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = _reset_test_config(monkeypatch, tmp_path)
+    with connection.closing_connection():
+        pass
+    update_runtime_settings({"AUTOMATIC_DELETION_ENABLED": False})
+    update_runtime_settings(
+        {"AUTOMATIC_DELETION_ENABLED": True, "OLD_BIRD_PHOTOS": "delete_all"}
+    )
+    first = load_settings_yaml(str(output))["AUTOMATIC_DELETION_ENABLED_AT"]
+    update_runtime_settings({"AUTOMATIC_DELETION_ENABLED": True})
+    assert load_settings_yaml(str(output))["AUTOMATIC_DELETION_ENABLED_AT"] == first
+    update_runtime_settings({"AUTOMATIC_DELETION_ENABLED": False})
+    update_runtime_settings({"AUTOMATIC_DELETION_ENABLED": True})
+    saved = load_settings_yaml(str(output))
+    assert datetime.fromisoformat(
+        saved["AUTOMATIC_DELETION_ENABLED_AT"]
+    ) > datetime.fromisoformat(first)
+    assert saved["OLD_BIRD_PHOTOS"] == "delete_all"
+
+
+def test_removed_keys_are_ignored_and_activation_date_is_not_user_editable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = _reset_test_config(monkeypatch, tmp_path)
+    old = {
+        "RETENTION_ENABLED": True,
+        "RETENTION_POSTURE": "reclaim",
+        "RETENTION_AUTO_ENABLED": True,
+        "RETENTION_PROTECT_UNREVIEWED": False,
+        "RETENTION_PROTECT_FAVORITES": False,
+        "RETENTION_DAYS": 1,
+    }
+    save_settings_yaml(old, str(output))
     import config
 
-    importlib.reload(config)
-    config._CONFIG = None
-    return config
-
-
-def test_defaults_present_and_automatic_cleanup_off(fresh_config):
-    cfg = fresh_config.get_config()
-    # Feature ships OFF; protections ON; sane default window.
-    assert cfg["RETENTION_ENABLED"] is False
-    assert cfg["RETENTION_AUTO_ENABLED"] is False
-    assert cfg["RETENTION_DAYS"] == 90
-    assert cfg["RETENTION_PROTECT_FAVORITES"] is True
-    assert cfg["RETENTION_PROTECT_UNREVIEWED"] is True
-
-
-def test_retention_keys_are_runtime_editable(fresh_config):
-    for key in (
-        "RETENTION_ENABLED",
-        "RETENTION_AUTO_ENABLED",
-        "RETENTION_DAYS",
-        "RETENTION_PROTECT_FAVORITES",
-        "RETENTION_PROTECT_UNREVIEWED",
-    ):
-        assert key in fresh_config.RUNTIME_KEYS
-
-
-def test_retention_days_validation_accepts_in_range(fresh_config):
-    ok, coerced = fresh_config._validate_value("RETENTION_DAYS", "120")
-    assert ok is True
-    assert coerced == 120
-
-
-def test_retention_days_validation_rejects_zero_and_negative(fresh_config):
-    assert fresh_config._validate_value("RETENTION_DAYS", 0)[0] is False
-    assert fresh_config._validate_value("RETENTION_DAYS", -5)[0] is False
-
-
-def test_retention_days_validation_rejects_above_max(fresh_config):
-    assert fresh_config._validate_value("RETENTION_DAYS", 4000)[0] is False
-
-
-def test_retention_days_validation_rejects_nonnumeric(fresh_config):
-    assert fresh_config._validate_value("RETENTION_DAYS", "soon")[0] is False
-
-
-def test_retention_bool_validation_coerces(fresh_config):
-    ok, coerced = fresh_config._validate_value("RETENTION_ENABLED", "true")
-    assert ok is True
-    assert coerced is True
-    ok, coerced = fresh_config._validate_value("RETENTION_PROTECT_FAVORITES", "false")
-    assert ok is True
-    assert coerced is False
-
-
-def test_settings_round_trip_through_yaml(fresh_config):
-    fresh_config.update_runtime_settings(
-        {"RETENTION_ENABLED": True, "RETENTION_DAYS": 45}
+    loaded = config._load_config()
+    assert not old.keys() & loaded.keys()
+    assert "AUTOMATIC_DELETION_ENABLED_AT" not in config.RUNTIME_KEYS
+    assert validate_runtime_updates({"OLD_BIRD_PHOTOS": "unknown"})[1]
+    assert (
+        "AUTOMATIC_DELETION_ENABLED_AT"
+        not in validate_runtime_updates(
+            {"AUTOMATIC_DELETION_ENABLED_AT": "2000-01-01"}
+        )[0]
     )
-    yaml_settings = fresh_config.load_settings_yaml(
-        str(fresh_config.get_config()["OUTPUT_DIR"])
-    )
-    assert yaml_settings["RETENTION_ENABLED"] is True
-    assert yaml_settings["RETENTION_DAYS"] == 45
-    # In-memory config reflects the change too.
-    assert fresh_config.get_config()["RETENTION_DAYS"] == 45
 
 
-@pytest.mark.parametrize(
-    ("legacy_enabled", "expected_posture"),
-    [(True, "conservative"), (False, "off")],
-)
-def test_legacy_enabled_without_posture_migrates_on_real_load(
-    fresh_config, legacy_enabled, expected_posture
-):
-    output_dir = str(fresh_config.get_config()["OUTPUT_DIR"])
-    fresh_config.save_settings_yaml({"RETENTION_ENABLED": legacy_enabled}, output_dir)
-    fresh_config._CONFIG = None
-
-    loaded = fresh_config.get_config()
-
-    assert loaded["RETENTION_POSTURE"] == expected_posture
-    assert loaded["RETENTION_ENABLED"] is legacy_enabled
-    assert loaded["RETENTION_AUTO_ENABLED"] is False
-
-
-# --- Posture (V2) ---------------------------------------------------------
-
-
-def test_posture_default_is_off(fresh_config):
-    assert fresh_config.get_config()["RETENTION_POSTURE"] == "off"
-
-
-def test_posture_is_runtime_editable(fresh_config):
-    assert "RETENTION_POSTURE" in fresh_config.RUNTIME_KEYS
-
-
-def test_posture_validation_accepts_known_values(fresh_config):
-    for val in ("off", "conservative", "reclaim"):
-        ok, coerced = fresh_config._validate_value("RETENTION_POSTURE", val)
-        assert ok is True
-        assert coerced == val
-
-
-def test_posture_validation_normalizes_case_and_whitespace(fresh_config):
-    ok, coerced = fresh_config._validate_value("RETENTION_POSTURE", "  Reclaim ")
-    assert ok is True
-    assert coerced == "reclaim"
-
-
-def test_posture_validation_rejects_unknown(fresh_config):
-    assert fresh_config._validate_value("RETENTION_POSTURE", "aggressive")[0] is False
-
-
-def test_retention_polling_recomputes_both_panels_after_every_toggle():
-    template = (Path(__file__).parents[1] / "templates" / "settings.html").read_text(
-        encoding="utf-8"
-    )
+def test_retention_polling_recomputes_both_panels_after_every_toggle() -> None:
+    template = (Path(__file__).parents[1] / "templates/settings.html").read_text()
     assert "requestAnimationFrame(scheduledJobPanelsVisibilityCheck);" in template
-    assert "function scheduledJobPanelsVisibilityCheck()" in template
-    assert "_nightlyPollVisible = Boolean(" in template
-    assert "_retentionPollVisible = Boolean(" in template
     assert "_nightlyPollVisible || _retentionPollVisible" in template

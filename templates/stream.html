@@ -13,7 +13,6 @@
 {% endblock %}
 
 {% block content %}
-{% from 'partials/tile_toolbox.html' import tile_toolbox %}
 {% set can_moderate = session.get('authenticated') %}
 {# Live Stream #}
 <div class="stream-wrapper">
@@ -21,6 +20,12 @@
         <!-- Go2RTC Integration (Junior B) -->
         <!-- Old MJPEG: <img id="video-feed" src="/video_feed" class="stream-video" alt="Live Stream"> -->
         <div class="stream-embed">
+            {% if local_development %}
+            <div class="stream-embed__unavailable" role="status">
+                <strong>Live camera is off in local development</strong>
+                <span>Browse your copied bird visits below. The Pi keeps recording independently.</span>
+            </div>
+            {% else %}
             <canvas id="stream-loading-static" class="stream-embed__loading-static" aria-label="Loading live stream"></canvas>
             <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">Establishing Connection<span aria-hidden="true"></span></div>
             <iframe id="go2rtc-frame" class="stream-embed__frame" src="" allow="autoplay; fullscreen">
@@ -76,6 +81,7 @@
             {% endif %}
 
             {# Detection overlay intentionally disabled in public backport build. #}
+            {% endif %}
         </div>
 
         <script>
@@ -234,10 +240,10 @@
                 }
 
                 function reconnectStream() {
-                    if (document.hidden || !activeTransport) return;
+                    if (document.hidden || document.fullscreenElement || !activeTransport) return;
                     clearTimeout(reconnectTimer);
                     reconnectTimer = setTimeout(function () {
-                        if (document.hidden) return;
+                        if (document.hidden || document.fullscreenElement) return;
                         if (activeTransport === 'go2rtc') {
                             iframe.src = streamUrl;
                         } else if (activeTransport === 'mjpeg') {
@@ -249,7 +255,8 @@
                 }
 
                 document.addEventListener('visibilitychange', function () {
-                    if (!document.hidden) reconnectStream();
+                    // The go2rtc player resumes its own connection without navigating the iframe.
+                    if (!document.hidden && activeTransport === 'mjpeg') reconnectStream();
                 });
                 window.addEventListener('pageshow', function (event) {
                     if (event.persisted) reconnectStream();
@@ -341,7 +348,7 @@
 
     </div>
     <div class="stream-actions" aria-label="Stream actions">
-        {% if can_moderate %}
+        {% if can_moderate and not local_development %}
         <!--
             PTZ controls are always rendered (no `hidden` default). When no
             PTZ camera is bound the buttons go to a disabled state so the
@@ -372,7 +379,7 @@
            startTelegramReportJob() is still defined in this file. #}
     </div>
 
-    {% if can_moderate %}
+    {% if can_moderate and not local_development %}
     <style>
         /* Live auto-PTZ tracking overlay. Inline JS positions it to the
            video letterbox rect; pointer-events:none keeps the joystick
@@ -845,9 +852,12 @@
             }
 
             function fetchStatus() {
+                if (document.hidden) return Promise.resolve();
                 return fetch('/api/v1/ptz/auto/status', { cache: 'no-store' })
                     .then(function (r) { return r.ok ? r.json() : null; })
                     .then(function (data) {
+                        window.wmbPtzStatus = data || {};
+                        window.dispatchEvent(new CustomEvent('wmb:ptz-status', { detail: window.wmbPtzStatus }));
                         const auto = (data && data.auto_ptz) || {};
                         paintExternalPauseBanner(auto.external_pause_reason);
                         cameraId = (typeof auto.camera_id === 'number') ? auto.camera_id : null;
@@ -878,6 +888,8 @@
                         paintStatusPill();
                     })
                     .catch(function () {
+                        window.wmbPtzStatus = {};
+                        window.dispatchEvent(new CustomEvent('wmb:ptz-status', { detail: window.wmbPtzStatus }));
                         autoEnabled = false;
                         settling = false;
                         returnDeadline = 0;
@@ -977,20 +989,37 @@
                 applyVideoRectToOverlay(aimOverlayEl);
             }
 
-            function gotoPreset(token) {
+            async function gotoPreset(token) {
                 if (cameraId === null) return;
                 if (aimArmed) cancelAim();
-                if (overviewPreset && token === overviewPreset) {
-                    settling = false;
-                    returnDeadline = 0;
-                    stopCountdownTicker();
+                let failureMessage = 'Could not confirm the camera preset request. Check the live view before retrying.';
+                try {
+                    const response = await fetch('/api/v1/cameras/' + cameraId + '/ptz/goto', {
+                        method: 'POST',
+                        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ preset_token: token })
+                    });
+                    if (response.status === 401 || isAuthRedirect(response)) {
+                        redirectToLogin();
+                        return;
+                    }
+                    if (!response.ok) {
+                        failureMessage = 'Camera preset request failed (HTTP ' + response.status + '). Check the live view before retrying.';
+                        throw new Error('Preset request failed');
+                    }
+                    const data = await response.json();
+                    if (!data || data.status !== 'success') {
+                        throw new Error('Preset request was not accepted');
+                    }
+                    if (overviewPreset && token === overviewPreset) {
+                        settling = false;
+                        returnDeadline = 0;
+                        stopCountdownTicker();
+                    }
+                    paintStatusPill();
+                } catch (_) {
+                    window.wmToast(failureMessage, 'error', 7000);
                 }
-                paintStatusPill();
-                fetch('/api/v1/cameras/' + cameraId + '/ptz/goto', {
-                    method: 'POST',
-                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify({ preset_token: token })
-                }).catch(function () { /* silent */ });
             }
 
             // Auto-Cam toggle: the appbar button owns the interaction;
@@ -1016,6 +1045,7 @@
                             autoEnabled = !next;
                             paintStatusPill();
                         }
+                        fetchStatus();
                     })
                     .catch(function () {
                         autoEnabled = !next;
@@ -1504,6 +1534,9 @@
             }
             refresh();
             window.setInterval(fetchStatus, STATUS_POLL_MS);
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden) refresh();
+            });
             window.addEventListener('resize', function () {
                 syncOverlayToCanvas();
             });
@@ -1534,116 +1567,7 @@
     <section class="section section--stream-width" id="last24hSummarySection">
 
         {# ── Shared species board macro ──────── #}
-        {% macro render_species_board(board, modal_group, title, title_href=none, all_href=none, all_label=none, extra_style='') %}
-        <div class="quiet-preview best-species-board"{% if extra_style %} style="{{ extra_style }}"{% endif %}>
-            <div class="quiet-preview__head">
-                <h3 class="quiet-preview__title">
-                    {% if title == "Today's Visitors" and today_iso is defined %}
-                    <a class="quiet-preview__title-link" href="{{ url_for('gallery.subgallery', date=today_iso) }}">{{ title }}</a>
-                    {% elif title_href %}
-                    <a class="quiet-preview__title-link" href="{{ title_href }}">{{ title }}</a>
-                    {% else %}
-                    {{ title }}
-                    {% endif %}
-                </h3>
-                {% if all_href %}
-                {% if title == "Today's Visitors" %}
-                <a class="quiet-preview__all" href="/gallery">Gallery</a>
-                {% else %}
-                <a class="quiet-preview__all" href="{{ all_href }}">{{ all_label or 'View All' }}</a>
-                {% endif %}
-                {% endif %}
-            </div>
-
-            {% if board.featured %}
-            <div class="best-species-board__featured">
-                {% for det in board.featured %}
-                {{ _render_species_card(det, modal_group, 'featured') }}
-                {% endfor %}
-            </div>
-            {% endif %}
-
-            {% if board.grid %}
-            <div class="best-species-board__grid">
-                {% for det in board.grid %}
-                {{ _render_species_card(det, modal_group, 'grid') }}
-                {% endfor %}
-            </div>
-            {% endif %}
-        </div>
-        {% endmacro %}
-
-        {% macro _render_species_card(det, modal_group, variant) %}
-        <article class="best-species-card best-species-card--{{ variant }} fade-in-item"
-            {% if det.species_colour is not none %}data-species-colour="{{ det.species_colour }}"
-            style="--cell-species-colour: var(--species-colour-{{ det.species_colour }})"{% endif %}>
-            <span class="quiet-preview__item fade-in-item wm-toolbox-host" hidden aria-hidden="true"></span>
-            <div class="best-species-card__media wm-toolbox-host">
-                {% if modal_group == 'stream-summary' and det.gallery_date %}
-                <a hidden aria-hidden="true" href="{{ url_for('gallery.subgallery', date=today_iso, focus=det.detection_id) }}"></a>
-                {% endif %}
-                <button type="button" class="best-species-card__media-link"
-                    style="border: 0; padding: 0; cursor: pointer;"
-                    data-bs-toggle="modal" data-bs-target="#modal-{{ modal_group }}-{{ det.detection_id }}"
-                    aria-label="Open image: {{ det.common_name }}">
-                    {% if det.display_path %}
-                    <img class="best-species-card__image best-species-card__image--{{ variant }}" loading="lazy"
-                        src="{{ det.display_path }}" alt="{{ det.common_name }}">
-                    {% else %}
-                    <div class="best-species-card__placeholder{% if variant == 'featured' %} best-species-card__placeholder--featured{% endif %}">🐦</div>
-                    {% endif %}
-                </button>
-                {{ tile_toolbox(
-                detection_id=det.detection_id,
-                surface='gallery',
-                is_favorite=det.is_favorite|default(false),
-                can_moderate=can_moderate,
-                current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
-                details_href='/gallery/' ~ det.gallery_date ~ '?focus=' ~ det.detection_id ~ '#detection-' ~ det.detection_id if det.gallery_date else none
-                ) }}
-            </div>
-
-            {% if variant == 'featured' and det.story_frames|length > 1 %}
-            <div class="best-species-card__story-strip">
-                {% for frame in det.story_frames[1:] %}
-                <span class="best-species-card__story-frame wm-toolbox-host">
-                    {% if frame.display_path %}
-                    <button type="button" style="border: 0; padding: 0; cursor: pointer; display: block; width: 100%;"
-                        data-bs-toggle="modal" data-bs-target="#modal-{{ modal_group }}-{{ frame.detection_id }}"
-                        aria-label="Open story frame: {{ det.common_name }}">
-                        <img class="best-species-card__story-image" loading="lazy" src="{{ frame.display_path }}"
-                            alt="{{ det.common_name }} story frame">
-                    </button>
-                    {% else %}
-                    <span class="best-species-card__story-empty">🐦</span>
-                    {% endif %}
-                    {{ tile_toolbox(
-                    detection_id=frame.detection_id,
-                    surface='gallery',
-                    is_favorite=frame.is_favorite|default(false),
-                    can_moderate=can_moderate,
-                    current_species=frame.species_key or frame.manual_species_override or frame.cls_class_name or frame.od_class_name,
-                    details_href='/gallery/' ~ frame.gallery_date ~ '?focus=' ~ frame.detection_id ~ '#detection-' ~ frame.detection_id if frame.gallery_date else none
-                    ) }}
-                </span>
-                {% endfor %}
-            </div>
-            {% endif %}
-
-            <a class="best-species-card__link"
-                href="/species/overview?species_key={{ (det.species_key or det.latin_name or 'Unknown_species') | urlencode }}"
-                aria-label="Open species overview: {{ det.common_name }}">
-                <div class="best-species-card__body{% if variant == 'grid' %} best-species-card__body--compact{% endif %}">
-                    <span class="best-species-card__name">{{ det.common_name }}</span>
-                    <span class="best-species-card__latin">{{ det.latin_name | replace('_', ' ') }}</span>
-                    <div class="best-species-card__facts">
-                        <span class="best-species-card__fact">Nearby {{ det.last_seen_display }}</span>
-                        <span class="best-species-card__fact">{{ det.visit_count }} visit{{ 's' if det.visit_count != 1 }} here</span>
-                    </div>
-                </div>
-            </a>
-        </article>
-        {% endmacro %}
+        {% from 'components/homepage_species_board.html' import render_species_board with context %}
 
         {# ── Today's Visitors ──────── #}
         {% if today_visitors_board.featured or today_visitors_board.grid %}
@@ -1664,17 +1588,15 @@
         </div>
         {% endif %}
 
-        {# ── Best of Species ──────── #}
-        {% if best_species_board.featured or best_species_board.grid %}
-        {{ render_species_board(
-            best_species_board, 'stream-best',
-            title='Best of Species',
-            all_href='/species',
-            all_label='All Species',
-            extra_style='margin-top: 6px;'
-        ) }}
-        {% endif %}
-
+    </section>
+    <section class="section section--stream-width" id="homepageArchive"
+             data-archive-url="{{ url_for('index.homepage_archive_route') }}" aria-busy="true">
+        <div class="quiet-preview best-species-board">
+            <div class="quiet-preview__head"><h3 class="quiet-preview__title">Best of Species</h3></div>
+            <p role="status" data-archive-status>Loading your archive…</p>
+            <button type="button" class="btn btn-secondary" data-archive-retry hidden>Retry</button>
+            <noscript><a href="/species">Browse all species</a></noscript>
+        </div>
     </section>
 
     {% endblock %}
@@ -1691,12 +1613,6 @@
     {{ render_modal(det, 'stream-summary', show_nav=false) }}
     {% endfor %}
     {% endif %}
-    {# Modals for Best of Species detections (covers + story frames) #}
-    {% if best_species_modal_dets %}
-    {% for det in best_species_modal_dets %}
-    {{ render_modal(det, 'stream-best', show_nav=false) }}
-    {% endfor %}
-    {% endif %}
     {# PTZ empirical probe wizard — activated by ?ptz_probe=<camId> URL param.
        Modal lives in stream.html so the operator can keep the live preview
        visible alongside the wizard cards. #}
@@ -1704,14 +1620,15 @@
     {% endblock %}
 
     {% block scripts %}
-    <script src="/assets/js/species_picker.js?v=3"></script>
-    <script src="/assets/js/gallery_utils.js?v=20260820-interactive-labels"></script>
-    <script src="/assets/js/tile_actions.js?v=20260823-full-frame-confirm"></script>
+    <script src="/assets/js/homepage_archive.js?v={{ asset_version }}" defer></script>
+    <script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+    <script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+    <script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
     {% if can_moderate %}
     {# Live auto-PTZ tracking overlay (debug overlay). Controlled by the
        "Live Tracking Overlay" setting; the status endpoint it polls is
        login_required, so it is only included for moderators. #}
-    <script src="/assets/js/tracking_overlay.js?v=20260604-trackoverlay" defer></script>
+    <script src="/assets/js/tracking_overlay.js?v={{ asset_version }}" defer></script>
     {% endif %}
     <script>
         async function startTelegramReportJob(options) {

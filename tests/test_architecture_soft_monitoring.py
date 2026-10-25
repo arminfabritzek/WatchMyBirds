@@ -1,7 +1,7 @@
 """
 Architecture soft monitoring checks.
 
-These checks are intentionally non-blocking and report trend metrics only.
+These checks report non-blocking snapshots without comparing prior runs.
 """
 
 from __future__ import annotations

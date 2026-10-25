@@ -30,7 +30,6 @@ services:
       - GO2RTC_CONFIG_PATH=/output/go2rtc.yaml
       # Paths
       - OUTPUT_DIR=/output
-      - INGEST_DIR=/ingest
       - MODEL_BASE_PATH=/models
       # System
       - PUID=1000
@@ -59,7 +58,6 @@ services:
       - DETECTOR_MODEL_CHOICE=yolo
     volumes:
       - /your_path/output:/output
-      - /your_path/ingest:/ingest
       - /your_path/models:/models
 
 # If you intentionally want to run without go2rtc:

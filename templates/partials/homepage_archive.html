@@ -1,0 +1,18 @@
+{% set can_moderate = session.get('authenticated') %}
+{% from 'components/homepage_species_board.html' import render_species_board with context %}
+{% from 'components/detection_modal.html' import render_modal %}
+<div data-homepage-archive-result data-total-species="{{ dashboard_stats.total_species }}">
+    {% if best_species_board.featured or best_species_board.grid %}
+    {{ render_species_board(best_species_board, 'stream-best', title='Best of Species', all_href='/species', all_label='All Species') }}
+    {% else %}
+    <div class="quiet-preview best-species-board">
+        <div class="quiet-preview__head"><h3 class="quiet-preview__title">Best of Species</h3></div>
+        <p>No species recorded yet.</p>
+    </div>
+    {% endif %}
+</div>
+<div data-homepage-archive-modals>
+    {% for det in best_species_modal_dets %}
+    {{ render_modal(det, 'stream-best', show_nav=false) }}
+    {% endfor %}
+</div>

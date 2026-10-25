@@ -6,8 +6,7 @@ access. No I/O.** This keeps the metrics trivially unit-testable and lets
 the Insights blueprint compose them without hitting SQLite per request.
 
 Numerical conventions:
-    - Shannon entropy uses the natural logarithm (matches the existing
-      `_compute_biodiversity_indices` helper in `utils/db/analytics.py`).
+    - Shannon entropy uses the natural logarithm.
     - Simpson is reported as 1 - Σpᵢ² (Gini-Simpson) for intuitive
       "diversity" reading; the raw concentration index is exposed under
       `simpson_concentration`.

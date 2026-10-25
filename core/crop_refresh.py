@@ -13,6 +13,7 @@ web layer, and this runs on the request path.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from pathlib import Path
 
 import cv2
@@ -107,3 +108,14 @@ def refresh_detection_thumbnail(
             [int(cv2.IMWRITE_WEBP_QUALITY), WEBP_QUALITY],
         )
     )
+
+
+def current_detection_bbox(conn: sqlite3.Connection, detection_id: int) -> tuple | None:
+    from utils.db.detections import effective_bbox_projection_sql
+
+    geometry, join = effective_bbox_projection_sql(conn)
+    row = conn.execute(
+        f"SELECT {', '.join(geometry)} FROM detections d {join} WHERE d.detection_id=?",
+        (detection_id,),
+    ).fetchone()
+    return tuple(row) if row is not None else None

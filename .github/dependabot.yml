@@ -18,6 +18,21 @@ updates:
       prefix: "chore(deps)"
       include: "scope"
 
+  # Telemetry Worker development tools
+  - package-ecosystem: "npm"
+    directory: "/infra/telemetry-worker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

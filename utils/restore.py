@@ -7,6 +7,7 @@ Restore/Import functionality for backup archives.
 Implements safe tar handling, DB merge/replace, and settings import.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -22,7 +23,6 @@ from typing import Any
 import yaml
 
 from utils.db import _get_db_path as get_db_path
-from utils.ingest import calculate_sha256
 from utils.path_manager import PathManager, get_path_manager
 from utils.settings import get_settings_path
 
@@ -59,6 +59,15 @@ SECRET_KEYS = frozenset(
 
 # Global restore lock state
 _restore_lock = {"active": False, "started_at": None, "stage": None}
+
+
+def calculate_sha256(filepath: str) -> str:
+    """Calculates the SHA-256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
 
 
 def is_restore_active() -> bool:
@@ -987,6 +996,8 @@ def _merge_human_label_tables(
     image_mapping: dict[str, str],
     detection_mapping: dict[int, int],
     result: dict[str, Any],
+    subject_mapping: dict[int, int] | None = None,
+    fact_mapping: dict[int, int] | None = None,
 ) -> dict[str, int]:
     """Merge canonical label histories after parent IDs have been mapped.
 
@@ -1024,7 +1035,8 @@ def _merge_human_label_tables(
             "SELECT * FROM backup.label_subjects LIMIT 0"
         ).description
     ]
-    subject_mapping: dict[int, int] = {}
+    subject_mapping = subject_mapping if subject_mapping is not None else {}
+    fact_mapping = fact_mapping if fact_mapping is not None else {}
     imported_subjects = 0
 
     for raw_subject in subjects:
@@ -1127,6 +1139,26 @@ def _merge_human_label_tables(
             (target_subject_id, fact_type),
         ).fetchone()
         if existing_axis is not None:
+            local_facts = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM human_label_facts WHERE subject_id=? AND fact_type=? ORDER BY fact_id",
+                    (target_subject_id, fact_type),
+                )
+            ]
+            ignored = {"fact_id", "subject_id", "supersedes_fact_id"}
+            if len(local_facts) == len(axis_facts) and all(
+                {k: v for k, v in local.items() if k not in ignored}
+                == {k: v for k, v in source.items() if k not in ignored}
+                for local, source in zip(local_facts, axis_facts, strict=True)
+            ):
+                fact_mapping.update(
+                    {
+                        source["fact_id"]: local["fact_id"]
+                        for local, source in zip(local_facts, axis_facts, strict=True)
+                    }
+                )
+                continue
             subject = conn.execute(
                 """
                 SELECT scope, image_filename, detection_id
@@ -1147,7 +1179,6 @@ def _merge_human_label_tables(
             conflicts += 1
             continue
 
-        fact_mapping: dict[int, int] = {}
         pending = list(axis_facts)
         while pending:
             progressed = False
@@ -1208,6 +1239,166 @@ def _merge_human_label_tables(
         "facts": imported_facts,
         "conflicts": conflicts,
     }
+
+
+def _merge_manual_objects(
+    conn: sqlite3.Connection,
+    *,
+    image_mapping: dict[str, str],
+) -> dict[int, int]:
+    exists = conn.execute(
+        "SELECT 1 FROM backup.sqlite_master WHERE name='manual_objects'"
+    ).fetchone()
+    if not exists:
+        return {}
+    mapping: dict[int, int] = {}
+    for raw in conn.execute(
+        "SELECT * FROM backup.manual_objects ORDER BY manual_object_id"
+    ).fetchall():
+        row = dict(raw)
+        target = image_mapping.get(row["image_filename"])
+        if target is None:
+            continue
+        root = conn.execute(
+            "SELECT * FROM backup.manual_object_revisions WHERE manual_object_id=? AND revision=1",
+            (row["manual_object_id"],),
+        ).fetchone()
+        if root is None:
+            raise sqlite3.IntegrityError("Manual object has no initial revision")
+        existing = conn.execute(
+            """SELECT m.manual_object_id FROM manual_objects m
+               JOIN manual_object_revisions r USING(manual_object_id)
+               WHERE m.image_filename=? AND r.revision=1 AND r.installation_id=?
+               AND r.created_at=? AND r.bbox_x=? AND r.bbox_y=? AND r.bbox_w=? AND r.bbox_h=?""",
+            (
+                target,
+                root["installation_id"],
+                root["created_at"],
+                root["bbox_x"],
+                root["bbox_y"],
+                root["bbox_w"],
+                root["bbox_h"],
+            ),
+        ).fetchone()
+        old_id = row.pop("manual_object_id")
+        if existing:
+            mapping[old_id] = existing[0]
+            continue
+        row["image_filename"] = target
+        columns = [
+            "image_filename",
+            "status",
+            "bbox_x",
+            "bbox_y",
+            "bbox_w",
+            "bbox_h",
+            "species_key",
+            "species_state",
+            "revision",
+            "created_at",
+            "updated_at",
+        ]
+        inserted = conn.execute(
+            f"INSERT INTO manual_objects ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+            [row[key] for key in columns],
+        )
+        mapping[old_id] = inserted.lastrowid
+        for revision in conn.execute(
+            "SELECT * FROM backup.manual_object_revisions WHERE manual_object_id=?",
+            (old_id,),
+        ).fetchall():
+            values = dict(revision)
+            values.pop("manual_revision_id")
+            values["manual_object_id"] = inserted.lastrowid
+            columns = [
+                "manual_object_id",
+                "revision",
+                "operation",
+                "asserted_facts",
+                "bbox_x",
+                "bbox_y",
+                "bbox_w",
+                "bbox_h",
+                "species_key",
+                "species_state",
+                "context",
+                "source_kind",
+                "source_ref",
+                "installation_id",
+                "app_version",
+                "created_at",
+            ]
+            conn.execute(
+                f"INSERT INTO manual_object_revisions ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                [values[key] for key in columns],
+            )
+    return mapping
+
+
+def _merge_labeling_exports(
+    conn: sqlite3.Connection,
+    *,
+    image_mapping: dict[str, str],
+    subject_mapping: dict[int, int],
+    fact_mapping: dict[int, int],
+    manual_mapping: dict[int, int],
+) -> None:
+    if not conn.execute(
+        "SELECT 1 FROM backup.sqlite_master WHERE name='labeling_exports'"
+    ).fetchone():
+        return
+    for raw in conn.execute("SELECT * FROM backup.labeling_exports").fetchall():
+        row = dict(raw)
+        media_map = json.loads(row["media_map_json"])
+        bundle = json.loads(row["bundle_json"])
+        media_map = {
+            name: image_mapping.get(
+                media_map.get(name, name), media_map.get(name, name)
+            )
+            for name in bundle["media_filenames"]
+        }
+        existing = conn.execute(
+            "SELECT bundle_json FROM labeling_exports WHERE export_id=?",
+            (row["export_id"],),
+        ).fetchone()
+        if existing and existing[0] != row["bundle_json"]:
+            raise ValueError("Export identity has conflicting snapshots")
+        conn.execute(
+            """INSERT INTO labeling_exports VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(export_id) DO UPDATE SET received_at=COALESCE(labeling_exports.received_at, excluded.received_at)""",
+            (
+                row["export_id"],
+                row["created_at"],
+                row["received_at"],
+                row["bundle_json"],
+                json.dumps(media_map, sort_keys=True),
+            ),
+        )
+        for member in conn.execute(
+            "SELECT * FROM backup.labeling_export_members WHERE export_id=?",
+            (row["export_id"],),
+        ).fetchall():
+            filename = image_mapping.get(member["image_filename"])
+            if filename is None:
+                continue
+            mapping = subject_mapping if member["kind"] == "subject" else manual_mapping
+            object_id = mapping.get(member["object_id"], -member["object_id"])
+            revision = json.loads(member["revision_json"])
+            if member["kind"] == "subject":
+                revision = [
+                    fact_mapping.get(identifier, -identifier) for identifier in revision
+                ]
+                revision.sort()
+            conn.execute(
+                "INSERT OR IGNORE INTO labeling_export_members VALUES (?, ?, ?, ?, ?)",
+                (
+                    row["export_id"],
+                    filename,
+                    member["kind"],
+                    object_id,
+                    json.dumps(revision, separators=(",", ":")),
+                ),
+            )
 
 
 def _merge_database(
@@ -1452,11 +1643,23 @@ def _merge_database(
                 )
 
         result["stats"]["detections_imported"] = detections_imported
+        subject_mapping: dict[int, int] = {}
+        fact_mapping: dict[int, int] = {}
         result["stats"]["human_labels"] = _merge_human_label_tables(
             conn,
             image_mapping=image_mapping,
             detection_mapping=detection_mapping,
             result=result,
+            subject_mapping=subject_mapping,
+            fact_mapping=fact_mapping,
+        )
+        manual_mapping = _merge_manual_objects(conn, image_mapping=image_mapping)
+        _merge_labeling_exports(
+            conn,
+            image_mapping=image_mapping,
+            subject_mapping=subject_mapping,
+            fact_mapping=fact_mapping,
+            manual_mapping=manual_mapping,
         )
 
         conn.commit()

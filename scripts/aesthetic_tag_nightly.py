@@ -2,14 +2,9 @@
 """
 Nightly aesthetic auto-tagger for WatchMyBirds.
 
-Computes a CLIP "facing-camera" score on every new detection from the previous
-day, writes it to detections.aesthetic_score, and optionally sets is_favorite=1
-for the top-N per species per day --- but only for species where the score has
-been validated to track manual judgement.
-
-Pigeons / large birds are intentionally NOT auto-tagged, because validation
-showed clip_facing_camera does not generalize to them (AUC 0.35 on 56-image
-out-of-sample test set).
+Computes a CLIP facing-camera score and selects automatic gallery candidates.
+Object bird-absence answers exclude the object from both steps.
+The score measures composition, not bird presence or species correctness.
 
 In production this runs in-process via the app's daemon-thread scheduler
 (web/services/aesthetic_tag_scheduler.py), so the CLI below is for manual
@@ -24,12 +19,8 @@ Design notes:
   the scheduler actually fires.
 - Skips detections that already have aesthetic_score populated. Idempotent:
   re-runs are no-ops if all data is fresh.
-- Only writes is_favorite=1 (the auto tag) on detections in TAGGABLE_SPECIES.
-  All other detections still get an aesthetic_score (for analytics) but no
-  favorite flag.
-- Existing manual is_favorite=1 (rating_source='manual') is preserved: this
-  job only ever SETS rating_source='auto' on detections that don't already
-  have a manual favorite.
+- Writes is_gallery_eligible for selected candidates; human favorites and
+  rating_source are preserved.
 """
 
 from __future__ import annotations
@@ -41,7 +32,10 @@ import sqlite3
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from core.technical_storage import LOG_BACKUPS, LOG_FILE_BYTES
 
 # Redirect HF cache to a writable location BEFORE huggingface_hub gets
 # imported transitively via open_clip. huggingface_hub.constants reads
@@ -114,7 +108,7 @@ TAG_UNKNOWN_SPECIES = False
 # - 0.10 is calibrated against the current live CLIP-rescore
 #   distribution: every manual-favorited pick scores at or above it,
 #   so the floor doesn't lose preferred picks while still cutting the
-#   candidate pool roughly in half. Should track TELEGRAM_MIN_AESTHETIC_SCORE.
+#   candidate pool roughly in half.
 MIN_SCORE_FOR_TAG = 0.10
 
 # Detections must have passed all upstream Pipeline-Stages before the
@@ -138,9 +132,8 @@ TOP_N_PER_SPECIES_PER_DAY = 3
 # differently (eye-visible side view = good, eye-hidden rear view = bad).
 # Both prompts retain a sharpness term so a sharp 3/4 view ranks above
 # a blurry frontal one. Existing per-species AUCs from earlier validation
-# runs are no longer directly applicable; expect MIN_SCORE_FOR_TAG and
-# TELEGRAM_MIN_AESTHETIC_SCORE to need re-calibration once a few days
-# of fresh picks are in.
+# runs are no longer directly applicable; expect MIN_SCORE_FOR_TAG to need
+# re-calibration once a few days of fresh picks are in.
 CLIP_MODEL_NAME = "ViT-B-32"
 CLIP_PRETRAINED = "laion2b_s34b_b79k"
 CLIP_PROMPT_POSITIVE = "a sharp, well-focused close-up portrait of a bird with its eye visible and its head turned toward the camera"
@@ -168,13 +161,24 @@ def setup_logging(verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
-            logging.FileHandler(LOG_PATH),
+            RotatingFileHandler(
+                LOG_PATH, maxBytes=LOG_FILE_BYTES, backupCount=LOG_BACKUPS
+            ),
             logging.StreamHandler(sys.stdout),
         ],
     )
 
 
 # --- DB helpers ------------------------------------------------------------
+
+
+_NO_HUMAN_BIRD_ABSENCE = """
+AND NOT EXISTS (
+    SELECT 1 FROM current_human_label_facts human
+    WHERE human.fact_type = 'bird_presence' AND human.answer_value = 'absent'
+      AND human.scope = 'object' AND human.detection_id = d.detection_id
+)
+"""
 
 
 def fetch_unscored_detections(
@@ -249,6 +253,7 @@ def fetch_unscored_detections(
             {score_filter}
             AND d.thumbnail_path IS NOT NULL
             AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
+            {_NO_HUMAN_BIRD_ABSENCE}
             AND c.cls_class_name IS NOT NULL
             {" ".join(where_clauses)}
         )
@@ -274,6 +279,7 @@ def fetch_unscored_detections(
           {score_filter}
           AND d.thumbnail_path IS NOT NULL
           AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
+          {_NO_HUMAN_BIRD_ABSENCE}
           {" ".join(where_clauses)}
         ORDER BY d.created_at DESC
         """
@@ -356,6 +362,7 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
         AND d.aesthetic_score IS NOT NULL
         AND d.aesthetic_score >= ?
         AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
+        {_NO_HUMAN_BIRD_ABSENCE}
         {species_clause}
         {decision_clause}
     )
@@ -477,7 +484,7 @@ def pick_device() -> str:
         if torch.cuda.is_available():
             return "cuda"
     except ImportError:
-        # torch is an optional extra; nightly script can still log on CPU.
+        # Leave missing-dependency reporting to the worker's startup check.
         pass
     return "cpu"
 
@@ -596,7 +603,7 @@ def main_with_args(argv: list[str] | None = None) -> int:
         torch_threads = 2
     if torch_threads > 0:
         try:
-            import torch  # noqa: WPS433 — local so the slim-image fallback path stays import-safe
+            import torch
 
             torch.set_num_threads(torch_threads)
             log.info(

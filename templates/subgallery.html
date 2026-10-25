@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from 'components/human_review_progress.html' import render_human_review_progress %}
 
 {% block title %}{{ date }} - Gallery - WatchMyBirds{% endblock %}
 
@@ -53,7 +54,7 @@
             surface='gallery',
             is_favorite=det.is_favorite|default(false),
             can_moderate=can_moderate,
-            current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+            current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
             modal_target='#modal-species-' ~ det.detection_id
             ) }}
 
@@ -107,18 +108,14 @@
     surface='gallery',
     is_favorite=obs.cover_detection.is_favorite|default(false),
     can_moderate=can_moderate,
-    current_species=obs.cover_detection.species_key or obs.cover_detection.manual_species_override or obs.cover_detection.cls_class_name or obs.cover_detection.od_class_name,
+    current_species=obs.cover_detection.species_key or obs.cover_detection.human_species_key or obs.cover_detection.cls_class_name or obs.cover_detection.od_class_name,
     modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ obs.cover_detection.detection_id
     ) }}
     <div class="wm-tile__body">
         <span class="wm-tile__name">{{ obs.common_name }}</span>
         <span class="wm-tile__meta">{{ obs.cover_detection.formatted_time }}{% if obs.duration_sec > 0 %} · {{
             obs.duration_display }}{% endif %}</span>
-        <span class="wm-review-progress wm-review-progress--observation{% if obs.review_progress.complete %} is-complete{% endif %}"
-            aria-label="{{ obs.review_progress.reviewed }} of {{ obs.review_progress.total }} species labels checked">
-            <span class="wm-review-progress__mark" aria-hidden="true">{% if obs.review_progress.complete %}✓{% endif %}</span>
-            <span>{{ obs.review_progress.reviewed }}/{{ obs.review_progress.total }} checked</span>
-        </span>
+        {{ render_human_review_progress(obs.review_progress, observation=true) }}
         {% if obs.photo_count > 1 %}
         <span class="wm-tile__score"><span class="obs-card__expand-hint">▼</span></span>
         {% endif %}
@@ -154,7 +151,7 @@
                 surface='gallery',
                 is_favorite=det.is_favorite|default(false),
                 can_moderate=can_moderate,
-                current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+                current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
                 modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ det.detection_id
                 ) }}
             </div>
@@ -269,10 +266,10 @@ interactive_labels=true
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/species_picker.js?v=3"></script>
-<script src="/assets/js/gallery_utils.js?v=20260820-interactive-labels"></script>
-<script src="/assets/js/tile_actions.js?v=20260823-full-frame-confirm"></script>
-<script src="/assets/js/batch_actions.js?v=1"></script>
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/batch_actions.js?v={{ asset_version }}"></script>
 <script>
     const focusObservationId = {{ focus_observation_id | tojson }};
     const focusDetectionId = {{ focus_detection_id | tojson }};

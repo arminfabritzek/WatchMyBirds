@@ -16,87 +16,41 @@ multi-worker setup ever appears, every worker will hold its own
 cache and the prefix-invalidate decorator must broadcast — that is
 out of scope here and called out in the plan as non-goal.
 
-Co-exists with the older `core.analytics_core._species_summary_cache`
-single-payload cache. That cache is domain-shaped (knows its payload)
-and stays as-is; this service is for the generic `key -> value` shape.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from functools import wraps
 from typing import Any, TypeVar
 
+from core.read_cache import ReadCache
+
 logger = logging.getLogger(__name__)
-
 T = TypeVar("T")
+_cache = ReadCache()
 
 
-@dataclass
-class _Entry:
-    value: Any
-    expires_at: float
-
-
-_store: dict[str, _Entry] = {}
-_lock = threading.Lock()
-
-
-def cached(key: str, ttl_seconds: float, builder: Callable[[], T]) -> T:
-    """Return the cached value for ``key`` or call ``builder`` and store it.
-
-    The builder runs outside the lock so a slow query does not block
-    unrelated keys. A concurrent caller for the same key may run the
-    builder a second time; the last writer wins. We accept that
-    redundancy over holding the lock across the (potentially slow)
-    builder call.
-
-    A non-positive TTL bypasses the cache entirely — the builder runs
-    and the result is returned without being stored.
-    """
-    if ttl_seconds <= 0:
-        return builder()
-
-    now = time.monotonic()
-    with _lock:
-        entry = _store.get(key)
-        if entry is not None and entry.expires_at > now:
-            return entry.value
-
-    value = builder()
-    with _lock:
-        _store[key] = _Entry(value=value, expires_at=time.monotonic() + ttl_seconds)
-    return value
+def cached[T](key: str, ttl_seconds: float, builder: Callable[[], T]) -> T:
+    """Reuse a live value; coalesce concurrent rebuilds of the same key."""
+    return _cache.get(key, ttl_seconds, builder)
 
 
 def invalidate(prefix: str) -> int:
-    """Drop every key starting with ``prefix``. Return the number dropped.
-
-    An empty prefix drops everything — useful in tests.
-    """
-    with _lock:
-        victims = [k for k in _store if k.startswith(prefix)]
-        for k in victims:
-            del _store[k]
-    if victims:
-        logger.debug("cache_service: invalidated %d key(s) under %r", len(victims), prefix)
-    return len(victims)
+    """Drop matching values and prevent in-flight builds from republishing them."""
+    dropped = _cache.invalidate(lambda key: str(key).startswith(prefix))
+    if dropped:
+        logger.debug("cache_service: invalidated %d key(s) under %r", dropped, prefix)
+    return dropped
 
 
 def clear() -> None:
-    """Drop the entire cache. Primarily for tests."""
-    with _lock:
-        _store.clear()
+    _cache.clear()
 
 
 def size() -> int:
-    """Return the current number of cached entries (live or expired)."""
-    with _lock:
-        return len(_store)
+    return _cache.size()
 
 
 def invalidates(*prefixes: str) -> Callable[[Callable[..., T]], Callable[..., T]]:

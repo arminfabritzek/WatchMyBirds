@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from flask import Flask
@@ -11,9 +11,8 @@ def app():
     app.secret_key = "test-secret-key"
 
     from web.blueprints.auth import auth_bp
-    from web.blueprints.onvif_ingest import init_onvif_ingest_bp, onvif_ingest_bp
+    from web.blueprints.onvif_ingest import onvif_ingest_bp
 
-    init_onvif_ingest_bp(detection_manager=MagicMock())
     app.register_blueprint(auth_bp)
     app.register_blueprint(onvif_ingest_bp)
     return app
@@ -58,24 +57,12 @@ def test_onvif_get_stream_uri_success(client):
     assert resp.get_json()["uri"] == "rtsp://10.0.0.5/stream"
 
 
-def test_ingest_start_launches_user_ingest(client):
-    fake_dm = MagicMock()
-    with (
-        patch("web.blueprints.onvif_ingest._detection_manager", fake_dm),
-        patch("os.path.exists", return_value=False),
-    ):
-        resp = client.post("/api/ingest/start")
-    assert resp.status_code == 200
-    assert resp.get_json()["status"] == "success"
-
-
 def test_routes_require_authentication():
     app = Flask(__name__)
     app.secret_key = "k"
     from web.blueprints.auth import auth_bp
-    from web.blueprints.onvif_ingest import init_onvif_ingest_bp, onvif_ingest_bp
+    from web.blueprints.onvif_ingest import onvif_ingest_bp
 
-    init_onvif_ingest_bp(detection_manager=MagicMock())
     app.register_blueprint(auth_bp)
     app.register_blueprint(onvif_ingest_bp)
     with app.test_client() as c:

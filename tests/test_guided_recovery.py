@@ -25,7 +25,7 @@ def _snapshot(root: Path, name: str = "20260915_120000_manual") -> Path:
     original.write_bytes(b"bird")
     (output / "settings.yaml").write_text(
         "EDIT_PASSWORD: old-password\nCAMERA_URL: rtsp://old-camera\n"
-        "TELEGRAM_BOT_TOKEN: source-token\nRETENTION_DAYS: 30\n",
+        "TELEGRAM_BOT_TOKEN: source-token\nOLD_BIRD_PHOTOS: delete_all\n",
         encoding="utf-8",
     )
     (output / "cameras.yaml").write_text("camera: source\n", encoding="utf-8")
@@ -89,7 +89,7 @@ def test_preview_reports_counts_space_source_and_settings_policy(tmp_path, monke
     assert preview["space_ok"] is True
     assert preview["settings_preserved"] == ["CAMERA_URL", "EDIT_PASSWORD"]
     assert preview["settings_excluded"] == ["TELEGRAM_BOT_TOKEN"]
-    assert "RETENTION_DAYS" in preview["settings_restored"]
+    assert "OLD_BIRD_PHOTOS" in preview["settings_restored"]
 
 
 def test_recovery_preserves_current_auth_and_device_settings(tmp_path):
@@ -97,7 +97,7 @@ def test_recovery_preserves_current_auth_and_device_settings(tmp_path):
     destination = tmp_path / "output"
     destination.mkdir()
     (destination / "settings.yaml").write_text(
-        "EDIT_PASSWORD: current-password\nCAMERA_URL: rtsp://current-camera\nRETENTION_DAYS: 90\n",
+        "EDIT_PASSWORD: current-password\nCAMERA_URL: rtsp://current-camera\nOLD_BIRD_PHOTOS: keep_previews\n",
         encoding="utf-8",
     )
     (destination / "cameras.yaml").write_text("camera: current\n", encoding="utf-8")
@@ -109,7 +109,7 @@ def test_recovery_preserves_current_auth_and_device_settings(tmp_path):
     assert restored["EDIT_PASSWORD"] == "current-password"
     assert restored["CAMERA_URL"] == "rtsp://current-camera"
     assert "TELEGRAM_BOT_TOKEN" not in restored
-    assert restored["RETENTION_DAYS"] == 30
+    assert restored["OLD_BIRD_PHOTOS"] == "delete_all"
     assert (destination / "cameras.yaml").read_text() == "camera: current\n"
     assert (destination / "go2rtc.yaml").read_text() == "stream: current\n"
 
@@ -124,7 +124,7 @@ def test_migration_never_imports_source_credentials_or_device_files(tmp_path):
     assert "EDIT_PASSWORD" not in restored
     assert "CAMERA_URL" not in restored
     assert "TELEGRAM_BOT_TOKEN" not in restored
-    assert restored["RETENTION_DAYS"] == 30
+    assert restored["OLD_BIRD_PHOTOS"] == "delete_all"
     assert not (destination / "cameras.yaml").exists()
     assert not (destination / "go2rtc.yaml").exists()
 

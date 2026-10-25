@@ -150,7 +150,7 @@ window.WmBatchActions = (function () {
 
     /**
      * Execute a batch action against the moderation API.
-     * @param {string} endpoint - e.g. '/api/moderation/bulk/reject'
+     * @param {string} endpoint - e.g. '/api/trash/move'
      * @param {Object} payload - { detection_ids, species?, ... }
      * @returns {Promise<Object>} - API response data
      */
@@ -243,16 +243,16 @@ window.WmBatchActions = (function () {
         // Step 3: Execute via moderation API
         var payload = {
             detection_ids: preview.resolved.detection_ids,
-            species: choice.scientific
+            species_identity: 'corrected', species_key: choice.scientific
         };
 
         try {
-            var data = await executeBatchAction('/api/moderation/bulk/relabel', payload);
+            var data = await executeBatchAction('/api/labels/answer', payload);
 
             // Step 4: Toast + Reload
             if (typeof wmToast === 'function') {
                 wmToast(
-                    (data.relabeled || 0) + ' items relabeled to ' + speciesDisplay,
+                    (data.answered || 0) + ' items relabeled to ' + speciesDisplay,
                     'success', 3000
                 );
             }

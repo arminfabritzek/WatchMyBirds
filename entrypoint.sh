@@ -4,7 +4,6 @@
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 OUTPUT_DIR=${OUTPUT_DIR:-/output}
-INGEST_DIR=${INGEST_DIR:-/ingest}
 MODEL_BASE_PATH=${MODEL_BASE_PATH:-/models}
 
 # Create a group with PGID if it doesn't exist
@@ -22,7 +21,6 @@ fi
 [ -d "$OUTPUT_DIR" ] && chown -R $PUID:$PGID "$OUTPUT_DIR"
 chown -R $PUID:$PGID /app/assets || true
 [ -d "$MODEL_BASE_PATH" ] && chown -R $PUID:$PGID "$MODEL_BASE_PATH"
-[ -d "$INGEST_DIR" ] && chown -R $PUID:$PGID "$INGEST_DIR"
 
 # Switch to the user and execute the CMD. --init-groups sets the
 # supplementary groups for PGID; the guard refuses to run as root.

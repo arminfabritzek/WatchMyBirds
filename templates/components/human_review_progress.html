@@ -1,0 +1,9 @@
+{% macro render_human_review_progress(progress, observation=false) %}
+<span class="wm-review-progress{% if observation %} wm-review-progress--observation{% endif %}"
+    title="Human assessments of detected birds: species named or marked unknown; boxes marked fitting or incorrect. Training eligibility is separate."
+    aria-label="Human assessments: species {{ progress.reviewed }} of {{ progress.total }}, boxes {{ progress.boxes_reviewed | default(0) }} of {{ progress.total }}. Training eligibility is separate.">
+    <span>Species {{ progress.reviewed }}/{{ progress.total }}</span>
+    <span aria-hidden="true">·</span>
+    <span>Boxes {{ progress.boxes_reviewed | default(0) }}/{{ progress.total }}</span>
+</span>
+{% endmacro %}

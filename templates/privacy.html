@@ -5,19 +5,25 @@
     <h1 class="mb-4">Privacy</h1>
 
     <p class="lead">
-        WatchMyBirds runs entirely on your Raspberry Pi. Nothing about your bird
-        activity, images, or detections ever leaves the device.
+        WatchMyBirds runs on your Raspberry Pi. Bird activity, images, and
+        detections stay there unless you enable an outbound integration such
+        as Telegram or MQTT. MQTT sends detection metadata and an image URL
+        to your configured broker; a consumer that can reach WatchMyBirds can
+        fetch the image.
     </p>
 
+    <p>The web interface serves scripts and styles from your installation and uses
+        system fonts. Opening a page does not request assets from Google Fonts or a CDN.
+        External links, such as Wikipedia and GitHub, connect to those sites when opened.</p>
+
     <p>
-        There is exactly <strong>one</strong> piece of optional outbound
-        traffic: a voluntary daily heartbeat that helps us understand installation
-        activity and software adoption. <strong>It is off by default</strong>, and you can enable it during initial password setup or in <a href="/settings">Settings → Privacy</a>.
+        The separate optional traffic to the WatchMyBirds operator is a
+        voluntary installation report, with a separate choice for usage and diagnostic summaries. <strong>It is off by default</strong>, and you can enable it during initial password setup or in <a href="/settings">Settings → Privacy</a>.
     </p>
 
     <hr class="my-4">
 
-    <h2>What we send (only when you opt in)</h2>
+    <h2>Basic reports (only when you opt in)</h2>
 
     <p>One small JSON payload, once per UTC day, to
        <code>watchmybirds-telemetry.wmb-infra.workers.dev</code>:</p>
@@ -39,6 +45,27 @@
        hostname. The stable ID lets us recognize repeat reports from the same
        installation; the data is pseudonymous, not fully anonymous.</p>
 
+    <h2 class="mt-4">Optional usage and diagnostics</h2>
+    <p>A separate, initially unchecked choice enables consent version 2. Existing consent
+       never enables it automatically. All features work when you decline.</p>
+    <p>The additional fields are schema and consent version (2), UTC report date, deployment type
+       (container, Raspberry Pi or source), and bounded daily metrics:</p>
+    <ul>
+        <li>Flags for password setup completion, decoded camera frames and camera recovery,
+            detector readiness and initialization errors, successful inference and inference errors.</li>
+        <li>Flags for authenticated Review, correction and export use, and web server errors.</li>
+        <li>Longest observed process uptime: under 1 hour, 1–6 hours, 6–24 hours,
+            1–7 days, 7–30 days, or at least 30 days.</li>
+        <li>Slowest successful inference: under 50, 50–100, 100–250,
+            250–1000, 1000–5000, or at least 5000 milliseconds.</li>
+    </ul>
+    <p>These are flags and ranges, not event counts. Missing values mean unknown.
+       Setup completion does not prove the camera works; export use does not prove receipt or sharing.
+       Source versions may include a Git tag/commit and a marker for local changes.</p>
+    <p>Daily summaries refresh at most hourly. A local queue holds today and up to seven previous UTC dates
+       for retries; version and deployment describe the runtime when sent. Failed writes are retried with backoff.
+       Turning sharing off or choosing basic reports clears pending diagnostics. Settings shows delivery status.</p>
+
     <h2 class="mt-4">What the heartbeat does not include</h2>
 
     <ul>
@@ -57,10 +84,19 @@
     <h2 class="mt-4">Training-data exports</h2>
 
     <p>
-        The Export page offers a bundle of your reviewed birds — a ZIP built on
-        this device, containing selected images and the labels you confirmed.
-        It stays here. WatchMyBirds never sends it anywhere; only you can do
-        that, by hand.
+        The Export page streams a ZIP of answered photos to your browser without
+        writing an archive on this device. Each selected photo includes every
+        object and image statement on it, manual objects, answer history and model
+        proposal context. Sample IDs include the stable local labeling installation
+        ID, separate from the optional heartbeat ID.
+    </p>
+    <p>
+        The device records the export date, answer revisions and your “Export received”
+        confirmation date. Unconfirmed exports can be downloaded again with their
+        original context; changed answers wait again. WatchMyBirds does not upload
+        this bundle or send species counts to a server. Sharing requires your own
+        manual transfer. A later optional upload would need its own explanation and
+        per-station opt-in before implementation.
     </p>
 
     <p>
@@ -91,16 +127,15 @@
        we do not include it in the heartbeat payload or store it in our telemetry database.</p>
 
     <h2 class="mt-4">Storage and retention</h2>
-
-    <p>Cloudflare's scheduled daily job at 04:30 UTC aggregates the previous day's
-       heartbeats and removes raw rows from earlier dates. This is a daily cleanup,
-       not a guaranteed 24-hour deletion deadline.</p>
-
-    <p>The maintainer also keeps a local history of installation IDs, report dates,
-       versions, and the technical fields listed above. This history is used to
-       count returning installations, follow version adoption, and prioritize
-       compatibility work. It currently has no automatic expiry. Aggregated counts
-       contain no installation IDs and are also retained for trend analysis.</p>
+    <p>Cloudflare D1 retains individual reports and diagnostics for today and the preceding 89 UTC dates.
+       The 04:30 UTC job updates aggregate installation counts and deletes expired reports atomically.
+       The maintainer's local reporting cache follows the same window and expires rows when it runs.
+       Collection and cloud history do not depend on that computer being online.</p>
+    <p>Reporting queries exclude expired dates. Physical cloud deletion is delayed if the scheduled job fails;
+       cleanup success is recorded for monitoring. Daily installation/cohort counts without IDs remain for trends;
+       diagnostic details expire. Small cohorts can still be distinctive.</p>
+    <p>Provider recovery backups have separate retention. A restored database must run cleanup before reporting
+       resumes. Operator-managed backups of an installation's data directory may include its diagnostic queue.</p>
 
     <h2 class="mt-4">Your controls</h2>
 
@@ -116,14 +151,14 @@
         <li><strong>Rotate ID</strong> — if you want the next opt-in to be
             counted as a fresh install, click the "Rotate ID" button. This
             wipes your current ID and generates a new one. Future reports use the new ID. Rotation does not delete
-            previously received reports or the local history.</li>
+            previously received reports; these expire under the 90-day policy. Pending diagnostics are cleared.</li>
         <li><strong>Block at the firewall</strong> — the heartbeat hostname
             is deliberately separate from any other WMB endpoint, so you can
             firewall-block <code>watchmybirds-telemetry.wmb-infra.workers.dev</code> without
             breaking anything else in the app.</li>
         <li><strong>Override the endpoint</strong> — set
             <code>telemetry_endpoint</code> in <code>settings.yaml</code> to
-            point at any URL you control (or
+            point at an HTTPS URL you control (HTTP is allowed only for loopback; redirects are refused) (or
             <code>http://localhost/discard</code>). The toggle's
             "on" state then sends to wherever you said.</li>
     </ul>
@@ -134,8 +169,7 @@
        GitHub stars and clones don't tell us if anyone actually runs the app —
        only if they bookmarked it. A daily heartbeat lets us see whether the
        project is being used, which informs decisions about what to fix, what
-       to build next, and whether continuing is worth the time. That's the
-       entire purpose of this feature.</p>
+       to build next, and whether continuing is worth the time. Optional diagnostics helps identify setup problems, release regressions, performance issues and feature use.</p>
 
     <h2 class="mt-4">Questions or concerns</h2>
 

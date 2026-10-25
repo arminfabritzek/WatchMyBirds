@@ -1,7 +1,7 @@
 """
 Tests for detectors.services.scoring_pipeline — the single source of truth
 for composite score, agreement, bbox quality, unknown score, decision
-evaluation, temporal smoothing, and version tagging.
+evaluation and version tagging.
 """
 
 import pytest
@@ -11,7 +11,6 @@ from detectors.services.bbox_quality_service import compute_bbox_quality
 from detectors.services.capability_registry import build_default_registry
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
-from detectors.services.temporal_decision_service import TemporalDecisionService
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -36,11 +35,6 @@ def decision_policy() -> DecisionPolicyService:
 
 
 @pytest.fixture()
-def temporal_service() -> TemporalDecisionService:
-    return TemporalDecisionService()
-
-
-@pytest.fixture()
 def capability_registry():
     return build_default_registry()
 
@@ -54,7 +48,6 @@ def test_happy_path_full_topk(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """With cls_conf > 0 and top-k available, the score equals cls_conf
@@ -63,12 +56,11 @@ def test_happy_path_full_topk(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="Parus_major",
     )
 
     assert isinstance(result, ScoringResult)
@@ -89,7 +81,6 @@ def test_no_classification_fallback(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """When cls_conf == 0, score == od_conf, agreement == od_conf,
@@ -98,12 +89,11 @@ def test_no_classification_fallback(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.7,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="unknown",
     )
 
     assert result.score == pytest.approx(0.7)
@@ -122,7 +112,6 @@ def test_single_class_topk_fallback(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """When top_k_confidences is None but cls_conf > 0,
@@ -131,12 +120,11 @@ def test_single_class_topk_fallback(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.85,
         top_k_confidences=None,  # no top-k provided
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="Parus_major",
     )
 
     assert result.score == pytest.approx(0.85)  # = cls_conf
@@ -165,7 +153,6 @@ def test_score_formula(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     od_conf,
     cls_conf,
@@ -176,12 +163,11 @@ def test_score_formula(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=od_conf,
+        species_key="Parus_major",
         cls_conf=cls_conf,
         top_k_confidences=[cls_conf, 0.01],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="test_species",
     )
 
     assert result.score == pytest.approx(expected_score)
@@ -196,7 +182,6 @@ def test_score_formula(
 def test_bbox_quality_matches_direct_call(
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """The pipeline must produce the same bbox_quality as a direct call
@@ -208,12 +193,11 @@ def test_bbox_quality_matches_direct_call(
         bbox=bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="test",
     )
 
     assert result.bbox_quality == pytest.approx(expected_q)
@@ -228,90 +212,39 @@ def test_version_tag_non_empty(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="test",
     )
 
     assert result.policy_version
     assert "+" in result.policy_version or result.policy_version != "none"
 
 
-# ---------------------------------------------------------------------------
-# T2: ENABLE_DECISION_POLICY=false → no decision state
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def policy_disabled_registry():
-    """Registry with ENABLE_DECISION_POLICY explicitly disabled."""
-    from detectors.services.capability_registry import build_default_registry
-
-    return build_default_registry(
-        config={"ENABLE_DECISION_POLICY": "false", "ENABLE_TEMPORAL_SMOOTHING": "false"}
-    )
-
-
-def test_policy_disabled_returns_no_decision_state(
-    good_bbox,
-    hd_frame_shape,
-    decision_policy,
-    temporal_service,
-    policy_disabled_registry,
-):
-    """When ENABLE_DECISION_POLICY=false, decision_state must be None
-    and decision_reasons_json must be empty '[]'."""
-    result = compute_detection_signals(
-        bbox=good_bbox,
-        frame_shape=hd_frame_shape,
-        od_conf=0.9,
-        cls_conf=0.8,
-        top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
-        decision_policy=decision_policy,
-        temporal_service=temporal_service,
-        capability_registry=policy_disabled_registry,
-        species_key="Parus_major",
-    )
-
-    assert result.decision_state is None
-    assert result.decision_reasons_json == "[]"
-    # Signals must still be computed for diagnostics
-    assert result.score == pytest.approx(0.8)  # = cls_conf (species trust)
-    assert result.agreement_score == pytest.approx(0.8)
-    assert result.bbox_quality is not None
-    assert result.unknown_score is not None
-    assert result.policy_version  # version tag still present
-
-
 def test_policy_enabled_returns_confirmed(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
-    """Default (policy enabled) produces CONFIRMED for good signals — byte-for-byte
-    equivalent to pre-T2 behavior."""
+    """Good signals produce a confirmed decision with no doubt reasons."""
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="Parus_major",
     )
 
     assert result.decision_state == DecisionState.CONFIRMED

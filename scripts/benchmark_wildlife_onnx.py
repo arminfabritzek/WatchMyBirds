@@ -6,14 +6,18 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 from benchmark_wildlife_detector import _images, _threshold_rows
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from utils.onnx_runtime import onnxruntime as ort
 
 
 def _letterbox(image: np.ndarray, size: int) -> np.ndarray:

@@ -17,6 +17,7 @@ import cv2
 
 from config import get_config
 from core.ptz_tracking_core import empty_ptz_snapshot
+from core.storage_pressure import StoragePressure
 from detectors.interfaces.persistence import (
     DetectionData,
     DetectionPersistenceResult,
@@ -145,10 +146,13 @@ class PersistenceService(PersistenceInterface):
         self._db_conn = get_connection()
         self._crop_service = CropService()
         self._ptz_controller = ptz_controller
+        self.storage_pressure = StoragePressure(self._output_dir)
 
     def close(self) -> None:
         """Close owned resources."""
         try:
+            if hasattr(self, "storage_pressure"):
+                self.storage_pressure.close()
             if self._db_conn:
                 self._db_conn.close()
         except Exception as e:
@@ -188,6 +192,9 @@ class PersistenceService(PersistenceInterface):
         Returns:
             ImagePersistenceResult with paths and success status.
         """
+        if not self.storage_pressure.allow_save(int(frame.nbytes) * 3 + 1024**2):
+            return ImagePersistenceResult(success=False)
+
         # Generate filenames
         timestamp_str = capture_time.strftime("%Y%m%d_%H%M%S_%f")
         base_filename = f"{timestamp_str}.jpg"
@@ -342,8 +349,14 @@ class PersistenceService(PersistenceInterface):
                     "policy_version": detection.policy_version,
                     "decision_level": detection.decision_level,
                     "raw_species_name": detection.raw_species_name,
+                    "geography_json": getattr(detection, "geography_json", None),
                     "species_source": (
-                        "model_top1" if detection.cls_class_name else "unknown"
+                        "geographic"
+                        if getattr(detection, "geography_json", None)
+                        and detection.cls_class_name != detection.raw_species_name
+                        else "model_top1"
+                        if detection.cls_class_name
+                        else "unknown"
                     ),
                 },
             )

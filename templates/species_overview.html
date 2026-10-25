@@ -15,7 +15,7 @@
     </div>
     <div class="page-control-bar__center">
         {% set show_sort = false %}
-        {% include 'partials/filter_bar.html' %}
+        {% include 'partials/station_filters.html' %}
     </div>
     <div class="page-control-bar__meta">
         Page {{ page }} of {{ total_pages }} ({{ total_items }} detections)
@@ -35,13 +35,15 @@
 <div class="species-grid" id="species-overview-grid">
     {% for det in detections %}
     <div class="wm-tile fade-in-item" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}"
-        data-batch-target="detection">
+        {% if not det.manual_object_id %}data-batch-target="detection"{% endif %}>
         <div class="wm-tile__media">
             {% set source_url = wikipedia_species_url(det.common_name, det.species_key or det.cls_class_name or det.od_class_name) %}
             <button type="button" class="wm-tile__button wm-tile__button--fill" data-bs-toggle="modal"
                 data-bs-target="#modal-species_overview-{{ det.detection_id }}">
+                {% if det.media_placeholder %}<span class="station-media-placeholder" role="img" aria-label="No stored image available">No stored image available</span>{% else %}
                 <img class="wm-tile__image" loading="lazy" src="{{ det.display_path }}" alt="{{ det.common_name }}"
                     data-thumb-src="{{ det.display_path }}" data-full-src="{{ det.full_path }}">
+                {% endif %}
             </button>
             {% if source_url %}
             <a class="source-link-badge" title="Open source page for {{ det.common_name }}"
@@ -55,15 +57,18 @@
         surface='species',
         is_favorite=det.is_favorite|default(false),
         can_moderate=can_moderate,
-        current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+        current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
         modal_target='#modal-species_overview-' ~ det.detection_id
         ) }}
 
         <div class="wm-tile__body">
             <span class="wm-tile__name">{{ det.common_name }}</span>
-            {% if det.cls_class_name or det.od_class_name %}
-            <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
+            {% if det.species_key and det.species_key != 'Unknown_species' %}
+            <span class="wm-tile__latin">{{ det.species_key | replace('_', ' ') }}</span>
             {% endif %}
+            {% if det.warning %}<span class="station-card-meta">{{ det.warning }}</span>{% endif %}
+            <span class="station-card-status">{% if det.answer == 'wrong' %}Species proposal refuted · Answered{% elif det.answer == 'unknown' %}Bird · species unknown · Answered{% elif det.origin == 'human' %}User confirmed{% elif det.origin == 'legacy' %}Earlier assignment{% elif det.species_key != 'Unknown_species' %}Automatically identified{% else %}Detection unclear{% endif %}</span>
+            <span class="station-card-meta">{{ det.formatted_date }} {{ det.formatted_time }} · {{ 'Imported image' if det.source_type in ['folder_upload', 'import', 'folder'] else 'Camera' if det.source_type in ['ipcam', 'webcam', 'rtsp', 'camera'] else 'Source unknown' }}{% if det.media_status %} · {{ det.media_status }}{% endif %}{% if det.media_placeholder %} · No image available{% endif %}</span>
         </div>
     </div>
     {% endfor %}
@@ -81,7 +86,7 @@
     <ul class="pagination">
         {% if page > 1 %}
         <li><a
-                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page - 1 }}&min_score={{ current_threshold }}{{ favorites_query }}">«</a>
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page - 1 }}&min_score={{ current_threshold }}&{{ selection | urlencode }}">«</a>
         </li>
         {% endif %}
 
@@ -92,14 +97,14 @@
         <li class="active"><span>{{ p }}</span></li>
         {% else %}
         <li><a
-                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ p }}&min_score={{ current_threshold }}{{ favorites_query }}">{{
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ p }}&min_score={{ current_threshold }}&{{ selection | urlencode }}">{{
                 p }}</a>
         </li>
         {% endif %}
         {% endfor %}
 
         {% if page < total_pages %} <li><a
-                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page + 1 }}&min_score={{ current_threshold }}{{ favorites_query }}">»</a>
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page + 1 }}&min_score={{ current_threshold }}&{{ selection | urlencode }}">»</a>
             </li>
             {% endif %}
     </ul>
@@ -111,8 +116,10 @@
     window.INLINE_EDIT_FILTER_CONTEXT = {
         surface: 'species_overview',
         species_key: '{{ species_key }}',
-        min_score: '{{ current_threshold }}',
-        favorites_only: {{ favorites_only | tojson }},
+        min_score: 0,
+        favorites_only: false,
+        start: {{ selection.start | tojson }},
+        end: {{ selection.end | tojson }},
         bulk_trash_success_url: '/species'
     };
 </script>
@@ -128,8 +135,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/species_picker.js?v=3"></script>
-<script src="/assets/js/gallery_utils.js?v=20260820-interactive-labels"></script>
-<script src="/assets/js/tile_actions.js?v=20260823-full-frame-confirm"></script>
-<script src="/assets/js/batch_actions.js?v=1"></script>
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/batch_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/station_browse.js?v={{ asset_version }}"></script>
 {% endblock %}

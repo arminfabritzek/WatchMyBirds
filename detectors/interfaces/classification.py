@@ -6,6 +6,7 @@ Defines the contract for classifying bird species from image crops.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 
 import numpy as np
@@ -40,7 +41,8 @@ class ClassificationResult:
             configured classifiers that fall back to genus level it is
             the genus token (e.g. "Sylvia_sp."). Empty string when the
             decision layer rejects the prediction.
-        confidence: Classification confidence (0.0 to 1.0). When the
+        confidence: Selected label's original image probability (0.0 to 1.0).
+            Geographic weighting never turns its ranking score into confidence. When the
             decision level is ``genus``, this is the summed probability
             mass over sibling species, not the top-1 probability.
         model_id: Identifier of the model used.
@@ -55,6 +57,9 @@ class ClassificationResult:
             regardless of what decision level was chosen. Useful for
             logging / debugging even when the shown label is genus or
             empty.
+        geography_json: Optional geographic ranking and original image predictions.
+        storage_alternatives: Raw candidates excluding the selected label, so
+            persistence can store the selected rank 1 without duplicating it.
     """
 
     class_name: str
@@ -64,6 +69,8 @@ class ClassificationResult:
     top_k_confidences: list[float] = field(default_factory=list)
     decision_level: str = "species"
     raw_species_name: str = ""
+    geography_json: str | None = None
+    storage_alternatives: list[tuple[str, float]] | None = None
 
 
 def compute_unknown_score(top_k_confidences: list[float]) -> float:
@@ -118,7 +125,13 @@ class ClassificationInterface(ABC):
     """
 
     @abstractmethod
-    def classify(self, crop: np.ndarray) -> ClassificationResult:
+    def classify(
+        self,
+        crop: np.ndarray,
+        *,
+        observed_at: datetime | None = None,
+        location: dict[str, float] | None = None,
+    ) -> ClassificationResult:
         """
         Classifies a bird species from an image crop.
 
@@ -131,7 +144,13 @@ class ClassificationInterface(ABC):
         pass
 
     @abstractmethod
-    def classify_from_bgr(self, crop: np.ndarray) -> ClassificationResult:
+    def classify_from_bgr(
+        self,
+        crop: np.ndarray,
+        *,
+        observed_at: datetime | None = None,
+        location: dict[str, float] | None = None,
+    ) -> ClassificationResult:
         """
         Classifies a bird species from a BGR image crop.
 

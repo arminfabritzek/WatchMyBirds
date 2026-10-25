@@ -22,42 +22,11 @@ def _read(rel: str) -> str:
 
 
 def _conn() -> sqlite3.Connection:
+    from utils.db.connection import _init_schema
+
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            review_status TEXT DEFAULT 'confirmed_bird',
-            downloaded_timestamp TEXT,
-            ptz_origin TEXT,
-            original_present INTEGER DEFAULT 1
-        );
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY,
-            image_filename TEXT NOT NULL,
-            status TEXT DEFAULT 'active',
-            created_at TEXT,
-            bbox_x REAL, bbox_y REAL, bbox_w REAL, bbox_h REAL,
-            od_class_name TEXT, od_confidence REAL, score REAL,
-            thumbnail_path TEXT,
-            manual_species_override TEXT, species_source TEXT,
-            raw_species_name TEXT,
-            decision_state TEXT DEFAULT 'confirmed',
-            decision_level TEXT,
-            bbox_quality REAL, unknown_score REAL, decision_reasons TEXT,
-            rating INTEGER, rating_source TEXT, is_favorite INTEGER DEFAULT 0,
-            is_gallery_eligible INTEGER DEFAULT 1, aesthetic_score REAL,
-            quality_gallery_ok INTEGER DEFAULT 1
-        );
-        CREATE TABLE classifications (
-            classification_id INTEGER PRIMARY KEY,
-            detection_id INTEGER, cls_class_name TEXT, cls_confidence REAL,
-            rank INTEGER DEFAULT 1, status TEXT DEFAULT 'active'
-        );
-        """
-    )
+    _init_schema(conn)
     return conn
 
 
@@ -68,9 +37,7 @@ def _seed(conn, filename, *, original_present):
         (filename, filename[:15], original_present),
     )
     conn.execute(
-        "INSERT INTO detections (image_filename, status, created_at, score, "
-        "decision_state, od_confidence, is_gallery_eligible) "
-        "VALUES (?, 'active', ?, 0.9, 'confirmed', 0.9, 1)",
+        """INSERT INTO detections (decision_level, od_class_name, image_filename, status, created_at, score, decision_state, od_confidence, is_gallery_eligible) VALUES ('species', 'Parus_major', ?, 'active', ?, 0.9, 'confirmed', 0.9, 1)""",
         (filename, filename[:15]),
     )
     conn.commit()
@@ -150,9 +117,16 @@ def test_detection_view_dict_defaults_original_present_for_legacy_payloads():
 
 
 def test_detection_modal_renders_preview_download_for_retired_original():
-    app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates"))
+    from web import view_helpers
+
+    app = Flask(
+        __name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates")
+    )
     app.secret_key = "test"
     app.jinja_env.globals["wikipedia_species_url"] = lambda *_args: None
+    app.jinja_env.globals["build_current_detection_payload"] = (
+        view_helpers.build_current_detection_payload
+    )
     det = {
         "detection_id": 3795,
         "species_key": "Poecile_palustris",
@@ -211,9 +185,7 @@ def test_review_queue_row_carries_original_present():
         "VALUES ('20260101_120000_r.jpg', '20260101_120000', 'untagged', 0)"
     )
     conn.execute(
-        "INSERT INTO detections (image_filename, status, created_at, score, "
-        "decision_state, od_confidence) VALUES "
-        "('20260101_120000_r.jpg', 'active', '20260101_120000', 0.2, 'uncertain', 0.2)"
+        """INSERT INTO detections (decision_level, od_class_name, image_filename, status, created_at, score, decision_state, od_confidence) VALUES ('species', 'Parus_major', '20260101_120000_r.jpg', 'active', '20260101_120000', 0.2, 'uncertain', 0.2)"""
     )
     conn.commit()
     rows = fetch_review_queue_images(conn)
@@ -231,9 +203,7 @@ def test_review_modal_detection_carries_retired_state_and_optimized():
         "VALUES ('20260101_120000_m.jpg', '20260101_120000', 'untagged', 0)"
     )
     conn.execute(
-        "INSERT INTO detections (image_filename, status, created_at, score, "
-        "decision_state, od_confidence) VALUES "
-        "('20260101_120000_m.jpg', 'active', '20260101_120000', 0.2, 'uncertain', 0.2)"
+        """INSERT INTO detections (decision_level, od_class_name, image_filename, status, created_at, score, decision_state, od_confidence) VALUES ('species', 'Parus_major', '20260101_120000_m.jpg', 'active', '20260101_120000', 0.2, 'uncertain', 0.2)"""
     )
     conn.commit()
     row = next(
@@ -264,8 +234,3 @@ def test_detection_modal_uses_optimized_path_with_full_path_fallback():
     content = _read("templates/components/detection_modal.html")
     assert "det.optimized_path" in content
     assert "det.full_path" in content  # gallery fallback (full_path == optimized)
-
-
-def test_orphan_modal_gates_action_bar_on_retired():
-    content = _read("templates/components/orphan_modal.html")
-    assert "original_retired=" in content

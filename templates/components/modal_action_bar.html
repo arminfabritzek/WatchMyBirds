@@ -25,7 +25,8 @@ show_download=true,
 gallery_date=none,
 in_header=false,
 show_maximize=false,
-show_close=true
+show_close=true,
+show_more=true
 ) %}
 <div class="modal-action-bar{% if in_header %} modal-action-bar--in-header{% endif %}">
     {% if show_nav %}
@@ -40,6 +41,7 @@ show_close=true
     {% endif %}
 
     <div class="modal-action-bar__group modal-action-bar__utilities">
+        {% if show_more %}
         <div class="wm-toolbox__menu modal-action-bar__menu" role="group" aria-label="More viewer actions">
             <button type="button"
                 class="btn btn--secondary btn--sm modal-action-bar__icon modal-action-bar__more wm-toolbox__more"
@@ -87,6 +89,7 @@ show_close=true
                 {% endif %}
             </div>
         </div>
+        {% endif %}
 
         {% if show_close %}
         <button type="button" class="btn btn--secondary btn--sm modal-action-bar__icon modal-action-bar__close"

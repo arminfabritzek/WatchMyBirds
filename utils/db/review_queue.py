@@ -7,14 +7,18 @@ orphan images, review status updates, and queue management.
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from utils.db.detections import (
     UNKNOWN_SPECIES_KEY,
     effective_bbox_projection_sql,
     effective_species_sql_for_columns,
+    human_bbox_verdict_sql,
+    human_species_source_sql,
+    object_review_pending_sql,
     table_columns,
 )
+from utils.db.observations import fact_sql, identity_sql
 
 
 def _detection_column_sql(
@@ -64,7 +68,7 @@ def _ex_unclear_reason_case_sql(
 def _queue_where_clauses(
     detection_columns: set[str],
     *,
-    exclude_deep_scanned: bool = False,
+    conn: sqlite3.Connection,
     filename: str | None = None,
 ) -> tuple[list[str], list[object], list[str], list[object]]:
     """Build the orphan/detection WHERE fragments for the review queue.
@@ -79,10 +83,8 @@ def _queue_where_clauses(
     where the lists are AND-joinable WHERE fragments and their bound params
     in order. The detection fragment binds ``gallery_threshold`` first.
     """
-    ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
-
     orphan_where = [
-        "(i.review_status IS NULL OR i.review_status = 'untagged')",
+        "1",
         "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)",
         "i.filename IS NOT NULL",
     ]
@@ -90,26 +92,11 @@ def _queue_where_clauses(
 
     detection_where = [
         "COALESCE(d.status, 'active') = 'active'",
-        "(i.review_status IS NULL OR i.review_status = 'untagged')",
-        f"""(
-            (
-                COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
-                AND (
-                    COALESCE(d.score, 0.0) < ?
-                    OR d.decision_state IN ('uncertain', 'unknown')
-                )
-            )
-            OR {ex_unclear_predicate}
-        )""",
+        "1",
+        object_review_pending_sql(detection_columns, conn=conn),
         "i.filename IS NOT NULL",
     ]
     detection_params: list[object] = []
-
-    if exclude_deep_scanned:
-        orphan_where.append(
-            "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename AND d.od_model_id LIKE 'deep_scan_%')"
-        )
-        detection_where.append("COALESCE(d.od_model_id, '') NOT LIKE 'deep_scan_%'")
 
     if filename:
         orphan_where.append("i.filename = ?")
@@ -174,7 +161,6 @@ def fetch_orphan_count(conn: sqlite3.Connection) -> int:
 def fetch_review_queue_images(
     conn: sqlite3.Connection,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
     filename: str | None = None,
 ) -> list[sqlite3.Row]:
     """
@@ -191,17 +177,17 @@ def fetch_review_queue_images(
         if "original_present" in image_columns
         else "1"
     )
-    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    species_sql = identity_sql(
+        conn, effective_species_sql_for_columns("d", detection_columns)
+    )
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
         detection_columns, "is_gallery_eligible", "0"
     )
-    manual_species_sql = _detection_column_sql(
-        detection_columns, "manual_species_override"
-    )
-    species_source_sql = _detection_column_sql(detection_columns, "species_source")
-    manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
+    manual_species_sql = fact_sql(conn, "species_identity", "species_key")
+    species_source_sql = human_species_source_sql(conn)
+    manual_bbox_sql = human_bbox_verdict_sql(conn)
     frame_width_sql = _detection_column_sql(detection_columns, "frame_width")
     frame_height_sql = _detection_column_sql(detection_columns, "frame_height")
     ex_unclear_predicate_ds = _ex_unclear_predicate_sql(detection_columns, "ds")
@@ -210,7 +196,7 @@ def fetch_review_queue_images(
     orphan_where, orphan_params, detection_where, detection_params = (
         _queue_where_clauses(
             detection_columns,
-            exclude_deep_scanned=exclude_deep_scanned,
+            conn=conn,
             filename=filename,
         )
     )
@@ -228,11 +214,12 @@ def fetch_review_queue_images(
             i.filename,
             i.filename as source_image_filename,
             i.timestamp,
-            i.review_status,
+            NULL AS review_status,
             {original_present_sql} as original_present,
             NULL as max_score,
             NULL as best_detection_id,
             NULL as active_detection_id,
+            NULL as thumbnail_path,
             NULL as bbox_x,
             NULL as bbox_y,
             NULL as bbox_w,
@@ -246,9 +233,9 @@ def fetch_review_queue_images(
             NULL as cls_class_name,
             NULL as cls_confidence,
             NULL as species_key,
-            NULL as manual_species_override,
-            NULL as species_source,
-            NULL as manual_bbox_review,
+            NULL as human_species_key,
+            NULL as human_species_source,
+            NULL as human_bbox_verdict,
             0 as sibling_detection_count,
             0 as is_favorite,
             0 as is_gallery_eligible,
@@ -265,11 +252,12 @@ def fetch_review_queue_images(
             i.filename,
             i.filename as source_image_filename,
             i.timestamp,
-            i.review_status,
+            NULL AS review_status,
             {original_present_sql} as original_present,
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
+            {_detection_column_sql(detection_columns, "thumbnail_path")} as thumbnail_path,
             {bbox_sql[0]} AS bbox_x,
             {bbox_sql[1]} AS bbox_y,
             {bbox_sql[2]} AS bbox_w,
@@ -302,9 +290,9 @@ def fetch_review_queue_images(
                 LIMIT 1
             ) as cls_confidence,
             {species_sql} as species_key,
-            {manual_species_sql} as manual_species_override,
-            {species_source_sql} as species_source,
-            {manual_bbox_sql} as manual_bbox_review,
+            {manual_species_sql} as human_species_key,
+            {species_source_sql} as human_species_source,
+            {manual_bbox_sql} as human_bbox_verdict,
             (
                 SELECT COUNT(*)
                 FROM detections ds
@@ -333,7 +321,6 @@ def fetch_review_queue_images(
 def fetch_review_queue_summary_rows(
     conn: sqlite3.Connection,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
 ) -> list[sqlite3.Row]:
     """Lean review-queue projection for the cleanup preview/run path.
 
@@ -351,14 +338,14 @@ def fetch_review_queue_summary_rows(
     they don't render a list.
     """
     detection_columns = table_columns(conn, "detections")
-    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    species_sql = identity_sql(
+        conn, effective_species_sql_for_columns("d", detection_columns)
+    )
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
 
     orphan_where, orphan_params, detection_where, detection_params = (
-        _queue_where_clauses(
-            detection_columns, exclude_deep_scanned=exclude_deep_scanned
-        )
+        _queue_where_clauses(detection_columns, conn=conn)
     )
     detection_params = [gallery_threshold, *detection_params]
 
@@ -407,7 +394,6 @@ def fetch_review_queue_summary_rows(
 def fetch_review_queue_summary(
     conn: sqlite3.Connection,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
 ) -> dict[str, int]:
     """Count-only review-queue summary for the cleanup preview.
 
@@ -420,9 +406,7 @@ def fetch_review_queue_summary(
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
 
     orphan_where, orphan_params, detection_where, detection_params = (
-        _queue_where_clauses(
-            detection_columns, exclude_deep_scanned=exclude_deep_scanned
-        )
+        _queue_where_clauses(detection_columns, conn=conn)
     )
     detection_params = [gallery_threshold, *detection_params]
 
@@ -457,13 +441,11 @@ def fetch_review_queue_image(
     conn: sqlite3.Connection,
     filename: str,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
 ) -> sqlite3.Row | None:
     """Return the first review-queue row for a filename, or ``None`` if absent."""
     rows = fetch_review_queue_images(
         conn,
         gallery_threshold=gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
         filename=filename,
     )
     return rows[0] if rows else None
@@ -488,17 +470,17 @@ def fetch_review_queue_item_by_identity(
         if "original_present" in image_columns
         else "1"
     )
-    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    species_sql = identity_sql(
+        conn, effective_species_sql_for_columns("d", detection_columns)
+    )
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
         detection_columns, "is_gallery_eligible", "0"
     )
-    manual_species_sql = _detection_column_sql(
-        detection_columns, "manual_species_override"
-    )
-    species_source_sql = _detection_column_sql(detection_columns, "species_source")
-    manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
+    manual_species_sql = fact_sql(conn, "species_identity", "species_key")
+    species_source_sql = human_species_source_sql(conn)
+    manual_bbox_sql = human_bbox_verdict_sql(conn)
     ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
     ex_unclear_predicate_ds = _ex_unclear_predicate_sql(detection_columns, "ds")
     ex_unclear_reason_case = _ex_unclear_reason_case_sql(detection_columns)
@@ -511,11 +493,12 @@ def fetch_review_queue_item_by_identity(
             i.filename,
             i.filename as source_image_filename,
             i.timestamp,
-            i.review_status,
+            NULL AS review_status,
             {original_present_sql} as original_present,
             NULL as max_score,
             NULL as best_detection_id,
             NULL as active_detection_id,
+            NULL as thumbnail_path,
             NULL as bbox_x,
             NULL as bbox_y,
             NULL as bbox_w,
@@ -529,14 +512,14 @@ def fetch_review_queue_item_by_identity(
             NULL as cls_class_name,
             NULL as cls_confidence,
             NULL as species_key,
-            NULL as manual_species_override,
-            NULL as species_source,
-            NULL as manual_bbox_review,
+            NULL as human_species_key,
+            NULL as human_species_source,
+            NULL as human_bbox_verdict,
             0 as sibling_detection_count,
             0 as is_favorite,
             0 as is_gallery_eligible
         FROM images i
-        WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
+        WHERE 1
           AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
           AND i.filename = ?
         LIMIT 1
@@ -550,11 +533,12 @@ def fetch_review_queue_item_by_identity(
             i.filename,
             i.filename as source_image_filename,
             i.timestamp,
-            i.review_status,
+            NULL AS review_status,
             {original_present_sql} as original_present,
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
+            {_detection_column_sql(detection_columns, "thumbnail_path")} as thumbnail_path,
             {bbox_sql[0]} AS bbox_x,
             {bbox_sql[1]} AS bbox_y,
             {bbox_sql[2]} AS bbox_w,
@@ -587,9 +571,9 @@ def fetch_review_queue_item_by_identity(
                 LIMIT 1
             ) as cls_confidence,
             {species_sql} as species_key,
-            {manual_species_sql} as manual_species_override,
-            {species_source_sql} as species_source,
-            {manual_bbox_sql} as manual_bbox_review,
+            {manual_species_sql} as human_species_key,
+            {species_source_sql} as human_species_source,
+            {manual_bbox_sql} as human_bbox_verdict,
             (
                 SELECT COUNT(*)
                 FROM detections ds
@@ -606,7 +590,7 @@ def fetch_review_queue_item_by_identity(
         JOIN images i ON i.filename = d.image_filename
         {bbox_join_sql}
         WHERE COALESCE(d.status, 'active') = 'active'
-          AND (i.review_status IS NULL OR i.review_status = 'untagged')
+          AND 1
           AND (
               (
                   COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
@@ -696,17 +680,17 @@ def fetch_review_cluster_context(
     window_max = _shift_review_timestamp(raw_max, minutes=int(context_window_minutes))
 
     detection_columns = table_columns(conn, "detections")
-    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    species_sql = identity_sql(
+        conn, effective_species_sql_for_columns("d", detection_columns)
+    )
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
         detection_columns, "is_gallery_eligible", "0"
     )
-    manual_species_sql = _detection_column_sql(
-        detection_columns, "manual_species_override"
-    )
-    species_source_sql = _detection_column_sql(detection_columns, "species_source")
-    manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
+    manual_species_sql = fact_sql(conn, "species_identity", "species_key")
+    species_source_sql = human_species_source_sql(conn)
+    manual_bbox_sql = human_bbox_verdict_sql(conn)
     # Pull one extra row so we can detect when we hit the cap exactly.
     fetch_limit = int(max_context_rows) + 1
 
@@ -717,10 +701,11 @@ def fetch_review_cluster_context(
         i.filename,
         i.filename as source_image_filename,
         i.timestamp,
-        i.review_status,
+        NULL AS review_status,
         d.score as max_score,
         d.detection_id as best_detection_id,
         d.detection_id as active_detection_id,
+            {_detection_column_sql(detection_columns, "thumbnail_path")} as thumbnail_path,
         {bbox_sql[0]} AS bbox_x,
         {bbox_sql[1]} AS bbox_y,
         {bbox_sql[2]} AS bbox_w,
@@ -748,9 +733,9 @@ def fetch_review_cluster_context(
             LIMIT 1
         ) as cls_confidence,
         {species_sql} as species_key,
-        {manual_species_sql} as manual_species_override,
-        {species_source_sql} as species_source,
-        {manual_bbox_sql} as manual_bbox_review,
+        {manual_species_sql} as human_species_key,
+        {species_source_sql} as human_species_source,
+        {manual_bbox_sql} as human_bbox_verdict,
         0 as sibling_detection_count,
         COALESCE({is_favorite_sql}, 0) as is_favorite,
         COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
@@ -758,7 +743,7 @@ def fetch_review_cluster_context(
     JOIN images i ON i.filename = d.image_filename
     {bbox_join_sql}
     WHERE COALESCE(d.status, 'active') = 'active'
-      AND i.review_status = 'confirmed_bird'
+      AND (d.decision_state='confirmed' OR {fact_sql(conn, "species_identity")} IN ('confirmed','corrected'))
       AND i.timestamp IS NOT NULL
       AND i.timestamp >= ?
       AND i.timestamp <= ?
@@ -787,7 +772,9 @@ def fetch_recent_review_species(
 ) -> list[sqlite3.Row]:
     """Return recently common active species for review quick-picks."""
     detection_columns = table_columns(conn, "detections")
-    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    species_sql = identity_sql(
+        conn, effective_species_sql_for_columns("d", detection_columns)
+    )
     cutoff = (datetime.now() - timedelta(days=max(1, lookback_days))).strftime(
         "%Y%m%d_%H%M%S"
     )
@@ -826,7 +813,7 @@ def fetch_review_queue_count(
         (
             SELECT COUNT(*)
             FROM images i
-            WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
+            WHERE 1
               AND NOT EXISTS (
                   SELECT 1 FROM detections d WHERE d.image_filename = i.filename
               )
@@ -838,7 +825,7 @@ def fetch_review_queue_count(
             FROM detections d
             JOIN images i ON i.filename = d.image_filename
             WHERE COALESCE(d.status, 'active') = 'active'
-              AND (i.review_status IS NULL OR i.review_status = 'untagged')
+              AND 1
               AND (
                   (
                       COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
@@ -854,105 +841,3 @@ def fetch_review_queue_count(
     """
     row = conn.execute(query, (gallery_threshold,)).fetchone()
     return row["review_count"] if row else 0
-
-
-def restore_no_bird_images(conn: sqlite3.Connection, filenames: Iterable[str]) -> int:
-    """
-    Restores 'no_bird' images back to 'untagged' (returns them to Review Queue).
-    Returns: number of rows updated.
-    """
-    names = list(filenames)
-    if not names:
-        return 0
-
-    updated_at = datetime.now().isoformat()
-
-    placeholders = ",".join("?" for _ in names)
-    params = [updated_at] + names
-
-    cur = conn.execute(
-        f"""
-        UPDATE images
-        SET review_status = 'untagged', review_updated_at = ?
-        WHERE filename IN ({placeholders})
-        AND review_status = 'no_bird';
-        """,
-        params,
-    )
-    conn.commit()
-    return cur.rowcount
-
-
-def delete_no_bird_images(
-    conn: sqlite3.Connection,
-    filenames: Iterable[str] | None = None,
-    delete_all: bool = False,
-) -> int:
-    """
-    Permanently deletes 'no_bird' images from the database.
-    File deletion must be handled separately.
-
-    Args:
-        filenames: Specific files to delete (if None and delete_all=True, deletes all)
-        delete_all: If True and filenames is None, deletes ALL no_bird images
-
-    Returns: number of rows deleted.
-    """
-    if not filenames and not delete_all:
-        return 0
-
-    if filenames:
-        names = list(filenames)
-        placeholders = ",".join("?" for _ in names)
-        cur = conn.execute(
-            f"DELETE FROM images WHERE filename IN ({placeholders}) AND review_status = 'no_bird'",
-            names,
-        )
-    else:
-        # Delete all no_bird images
-        cur = conn.execute("DELETE FROM images WHERE review_status = 'no_bird'")
-
-    conn.commit()
-    return cur.rowcount
-
-
-def update_review_status(
-    conn: sqlite3.Connection,
-    filenames: Iterable[str],
-    new_status: str,
-    updated_at: str | None = None,
-    *,
-    commit: bool = True,
-) -> int:
-    """
-    Updates review_status for specified images.
-    Only updates images that are currently 'untagged' (no way back).
-
-    new_status: 'confirmed_bird' | 'no_bird'
-    Returns: number of rows updated.
-    """
-    names = list(filenames)
-    if not names:
-        return 0
-
-    if new_status not in ("confirmed_bird", "no_bird"):
-        raise ValueError(f"Invalid review status: {new_status}")
-
-    if updated_at is None:
-        updated_at = datetime.now(UTC).isoformat()
-
-    placeholders = ",".join("?" for _ in names)
-    params = [new_status, updated_at] + names
-
-    cur = conn.execute(
-        f"""
-        UPDATE images
-        SET review_status = ?, review_updated_at = ?
-        WHERE filename IN ({placeholders})
-        AND (review_status IS NULL OR review_status = 'untagged');
-        """,
-        params,
-    )
-    if commit:
-        conn.commit()
-    return cur.rowcount

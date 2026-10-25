@@ -8,7 +8,10 @@ of from each other.
 from __future__ import annotations
 
 import math
+import os
+import time
 from datetime import datetime
+from functools import lru_cache
 
 
 def ts_to_epoch(ts: str) -> float:
@@ -20,6 +23,15 @@ def ts_to_epoch(ts: str) -> float:
     """
     if not ts or len(ts) < 15:
         return 0.0
+    # Several objects and grouping passes reuse the same capture second. Local
+    # datetime.timestamp() is expensive on macOS; retain its DST semantics while
+    # bounding reuse and separating changes made through TZ/tzset().
+    zone = (os.environ.get("TZ"), time.tzname, time.timezone, time.altzone)
+    return _timestamp_for_zone(ts[:15], zone)
+
+
+@lru_cache(maxsize=8192)
+def _timestamp_for_zone(ts: str, zone: tuple) -> float:
     try:
         return datetime(
             int(ts[0:4]),

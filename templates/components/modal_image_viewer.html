@@ -27,10 +27,11 @@ interactive_labels (bool): Render accessible species controls for offered boxes.
     data-bbox-h="{{ bbox.h }}"
     {% endif %}{% if siblings %}
     data-siblings='{{ siblings | tojson }}'
+    {% endif %}{% if current_detection %}
+    data-current-detection='{{ current_detection | tojson }}'
     {% endif %}{% if interactive_labels %}
     data-interactive-labels="true"
     data-can-moderate="{{ 'true' if can_moderate else 'false' }}"
-    data-current-detection='{{ (current_detection or {}) | tojson }}'
     {% endif %}>
     <img class="wm-image-viewer__img bbox-base-image"
         src="{{ placeholder_src if defer_src else image_url }}"
@@ -40,6 +41,11 @@ interactive_labels (bool): Render accessible species controls for offered boxes.
         aria-label="Close" title="Click to close" {% endif %}>
 
     <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
+
+    {% if current_detection %}
+    <div class="wm-bird-editor__layer" data-bird-editor-layer
+        aria-label="Bird boxes"></div>
+    {% endif %}
 
     {% if interactive_labels %}
     <div class="wm-bbox-label-layer" aria-label="Species labels for detected birds"></div>

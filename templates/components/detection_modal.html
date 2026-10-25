@@ -12,14 +12,13 @@ nav_index (int|None): Optional index within nav_scope
 #}
 {% from "components/modal_image_viewer.html" import render_image_viewer %}
 {% from "components/modal_action_bar.html" import render_action_bar %}
-{% from "components/modal_detection_info.html" import render_detection_info, render_review_status_text %}
-{% from "partials/tile_toolbox.html" import tile_toolbox %}
+{% from "components/modal_detection_info.html" import render_review_status_text %}
+{% from "components/bird_editor_toolbar.html" import render_bird_editor_toolbar %}
 
 {% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}
-{% set can_moderate = session.get('authenticated') %}
+{% set can_moderate = session.get('authenticated') and not det.retracted_manual %}
 {% set show_nav = kwargs.show_nav if kwargs.show_nav is defined else true %}
-{% set interactive_labels = kwargs.interactive_labels if kwargs.interactive_labels is defined else false %}
-<div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
+<div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.modal_key | default(det.detection_id) }}" tabindex="-1"
     aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}"
     {% if interactive_labels %}data-human-review-state="{{ det.human_review_state | default('unreviewed') }}"{% endif %}
     {% if nav_scope %}data-nav-scope="{{ nav_scope }}"{% endif %}
@@ -34,48 +33,53 @@ nav_index (int|None): Optional index within nav_scope
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
-                    {% set has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override %}
-                    {% set has_manual_review_approval = has_manual_species_review and (det.review_status == 'confirmed_bird') %}
-                    {% set is_trusted = has_manual_species_review or (det.decision_state == 'confirmed') or (det.decision_state is none) %}
-                    {% set title_species = det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name %}
-                    {% set ai_status_label = '🤖 AI unknown' %}
-                    {% if has_manual_review_approval %}
-                    {% set ai_status_label = '🧑👍 manually confirmed' %}
-                    {% elif det.decision_state == 'confirmed' %}
-                    {% set ai_status_label = '🤖 AI confirmed' %}
-                    {% elif det.decision_state == 'uncertain' %}
-                    {% set ai_status_label = '🤖 AI uncertain' %}
-                    {% endif %}
+                    {# A human "species unknown" answer clears human_species_key, so an
+                       explicit unknown and a never-answered box both arrive with an empty
+                       override. The fact-derived source separates them and the
+                       only one present on every detail entrance. #}
+                    {% set _species_source = det.human_species_source | default('', true) %}
+                    {% set has_human_unknown_species = (_species_source in ['manual_unknown', 'manual_wrong']) or (det.human_review_state | default('', true) == 'reviewed_unknown') %}
+                    {% set has_manual_species_review = (_species_source == 'manual') and det.human_species_key %}
+                    {% set is_trusted = has_manual_species_review or has_human_unknown_species or (det.decision_state == 'confirmed') or (det.decision_state is none) %}
+                    {% set title_species = none if has_human_unknown_species or det.species_key == 'Unknown_species' else (det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name) %}
                     {% set review_status_text = render_review_status_text(det, "font-size: 0.7rem; opacity: 0.8;") %}
-                    {% set wiki_url = wikipedia_species_url(det.common_name, title_species) %}
+                    {# No species to look up: the unknown label is not a search term. #}
+                    {% set wiki_url = none if has_human_unknown_species else wikipedia_species_url(det.common_name, title_species) %}
                     {% if wiki_url %}
-                    <a class="wm-modal__title-text" href="{{ wiki_url }}" target="_blank"
+                    <a class="wm-modal__title-text" data-editor-title-link href="{{ wiki_url }}" target="_blank"
                         rel="noopener noreferrer nofollow external"
                         title="Open Wikipedia (new tab): {{ det.common_name }}"
                         aria-label="Open Wikipedia (new tab): {{ det.common_name }}" {% if not is_trusted
-                        %}style="opacity: 0.65;" {% endif %}><em>{% if not is_trusted %}~ {% endif %}{{ det.common_name
-                            }}</em>
+                        %}style="opacity: 0.65;" {% endif %}><em data-editor-title-name>{% if not is_trusted %}~ {% endif %}{{ det.common_name }}</em>
                         <span aria-hidden="true">↗</span></a>
                     {% else %}
-                    <span class="wm-modal__title-text" {% if not is_trusted %}style="opacity: 0.65;" {% endif %}><em>{%
+                    <span class="wm-modal__title-text" data-editor-title-link {% if not is_trusted %}style="opacity: 0.65;" {% endif %}><em data-editor-title-name>{%
                             if not is_trusted %}~ {% endif %}{{ det.common_name }}</em></span>
                     {% endif %}
                     {# Subtitle absorbs the OD/CLS confidence numbers (87% / 70%)
                        and the AI-status badge. #}
-                    {% set _has_cls = det.cls_class_name is defined and det.cls_class_name %}
+                    {# CLS confidence may only sit beside the species it was scored for.
+                       Once a human has overridden or withdrawn the species, the number is
+                       evidence about the original prediction, not the current identity. #}
+                    {% set _has_cls = det.cls_class_name is defined and det.cls_class_name and not has_manual_species_review and not has_human_unknown_species %}
                     <span class="wm-modal__title-sub">
-                        {{ det.formatted_date }} {{ det.formatted_time }}{% if title_species %} · <em>{{ title_species | replace('_', ' ') }}</em>{% endif %}
+                        <span data-editor-title-date>{{ det.formatted_date }} {{ det.formatted_time }}</span>{% if title_species %} · <em data-editor-title-species>{{ title_species | replace('_', ' ') }}</em>{% else %}<em data-editor-title-species></em>{% endif %}
                         {% if det.od_confidence is defined and det.od_confidence is not none %}
-                        · <span class="wm-modal__title-conf">{{ "%.0f"|format(det.od_confidence * 100) }}%{% if _has_cls and det.cls_confidence is not none %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}</span>
+                        · <span class="wm-modal__title-conf" data-editor-title-confidence>OD {{ "%.0f"|format(det.od_confidence * 100) }}%{% if _has_cls and det.cls_confidence is not none %} / CLS {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}</span>
+                        {% else %}
+                        <span class="wm-modal__title-conf" data-editor-title-confidence></span>
                         {% endif %}
-                        {% if review_status_text|trim %} · {{ review_status_text }}{% endif %}
+                        {% if has_human_unknown_species and det.cls_class_name %}
+                        · <span class="wm-modal__title-conf" data-editor-title-original-ai>Original AI: {{ det.cls_class_name | replace('_', ' ') }}{% if det.cls_confidence is not none %} CLS {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}</span>
+                        {% endif %}
+                        <span data-editor-title-provenance>{% if _species_source == 'manual_wrong' %} · Species proposal refuted{% elif has_human_unknown_species %} · Bird · species unknown · Answered{% elif det.human_review_state | default('', true) == 'confirmed' %} · Human confirmed{% elif has_manual_species_review %} · Manually identified{% elif review_status_text|trim %} · {{ review_status_text }}{% endif %}</span>
                     </span>
                 </div>
                 <div class="wm-modal__header-actions">
                     {{ render_action_bar(
                     detection_id=det.detection_id,
                     original_url=det.original_path,
-                    original_retired=(det.original_present is defined and det.original_present == 0),
+                    original_retired=((det.original_present is defined and det.original_present == 0) or det.original_available is sameas false),
                     optimized_url=(det.optimized_path if det.optimized_path is defined and det.optimized_path else det.full_path),
                     bbox={
                     'x': det.bbox_x,
@@ -91,12 +95,14 @@ nav_index (int|None): Optional index within nav_scope
                     show_download=true,
                     gallery_date=det.gallery_date,
                     in_header=true,
-                    show_maximize=true,
-                    show_close=true
+                    show_maximize=false,
+                    show_close=true,
+                    show_more=false
                     ) }}
                 </div>
             </div>
 
+            {% if det.media_status %}<p class="station-media-status" role="note">{{ det.media_status }}{% if det.media_placeholder %} · No stored image available. The placeholder is not image evidence.{% endif %}</p>{% endif %}
             <div class="wm-modal__body">
                 <div class="wm-modal__image wm-toolbox-host">
                     {{ render_image_viewer(
@@ -107,40 +113,13 @@ nav_index (int|None): Optional index within nav_scope
                     siblings=det.siblings,
                     dismissable=true,
                     defer_src=true,
-                    show_view_mode=true,
-                    interactive_labels=interactive_labels,
+                    show_view_mode=false,
+                    interactive_labels=false,
                     can_moderate=can_moderate,
-                    current_detection={
-                    'detection_id': det.detection_id,
-                    'image_filename': det.image_filename,
-                    'species_key': det.human_species_key or det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
-                    'common_name': det.human_common_name or det.common_name,
-                    'human_review_state': det.human_review_state | default('unreviewed'),
-                    'species_colour': det.species_colour | default(none)
-                    }
-                    ) }}
-                    {{ tile_toolbox(
-                    detection_id=det.detection_id,
-                    filename=det.image_filename,
-                    surface='detail_modal',
-                    is_favorite=det.is_favorite,
-                    can_moderate=can_moderate,
-                    current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name
+                    current_detection=build_current_detection_payload(det)
                     ) }}
                 </div>
-                {% if det.sibling_count and det.sibling_count > 1 and det.siblings %}
-                {# Multi-bird only: slim sibling-selector strip below the image.
-                   Click switches active detection; per-card action buttons
-                   live in the header action group now. #}
-                <div class="wm-modal__sibling-strip">
-                    {{ render_detection_info(
-                    det=det,
-                    siblings=det.siblings,
-                    sibling_count=det.sibling_count,
-                    can_moderate=can_moderate
-                    ) }}
-                </div>
-                {% endif %}
+                {{ render_bird_editor_toolbar(det, can_moderate=can_moderate) }}
             </div>
 
         </div>

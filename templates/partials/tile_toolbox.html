@@ -6,11 +6,10 @@ Appears on hover (desktop) or tap (mobile).
 
 Parameters:
 detection_id (int|None): If set, enables detection-level actions (relabel, reject).
-filename (str|None): Image filename, required for the no-bird and deep-scan actions.
+filename (str|None): Image filename, required for the no-bird action.
 surface (str): One of 'gallery', 'species', 'review', 'trash', 'detail_modal'.
 is_favorite (bool): Current favorite state.
 can_moderate (bool): Whether destructive actions are available.
-review_reason (str|None): 'orphan' | 'low_confidence' | None — gates Deep Scan.
 modal_target (str|None): CSS selector for the detail modal (e.g. '#modal-species-42').
 details_href (str|None): Fallback navigation target for details when no modal exists.
 current_species (str|None): Current species key for relabel/change-species flows.
@@ -25,7 +24,6 @@ filename=none,
 surface='gallery',
 is_favorite=false,
 can_moderate=false,
-review_reason=none,
 modal_target=none,
 details_href=none,
 current_species=none,
@@ -48,7 +46,6 @@ allow_review_no_bird=true
 {% set show_correction_details = detection_id and filename and surface == 'detail_modal' %}
 {% set show_move_to_trash = detection_id and surface != 'trash' and allow_move_to_trash %}
 {% set show_restore = surface == 'trash' %}
-{% set show_deep_scan = surface == 'review' and review_reason == 'orphan' and filename %}
 {#View Details renders as primary on hobby browse-surfaces.
    Stream uses surface='gallery'; Subgallery/Species use 'gallery'/'species'.
    The detail_modal surface is already the detail view — View Details does not
@@ -187,7 +184,6 @@ allow_review_no_bird=true
         or (show_correct_bbox and not correct_bbox_is_primary)
         or (show_move_to_trash and not move_to_trash_is_primary)
         or (show_restore and not restore_is_primary)
-        or show_deep_scan
         or show_correction_details
         or show_no_bird_in_overflow %}
     <div class="wm-toolbox__menu" role="group" aria-label="More actions">
@@ -246,14 +242,6 @@ allow_review_no_bird=true
                 {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
                 aria-label="Move to trash">
                 🗑️ <span>Move to Trash</span>
-            </button>
-            {% endif %}
-
-            {# Review-specific: Deep Scan (orphan only) #}
-            {% if show_deep_scan %}
-            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="deep-scan"
-                data-filename="{{ filename }}" aria-label="Deep Scan this image">
-                🔍 <span>Deep Scan</span>
             </button>
             {% endif %}
 

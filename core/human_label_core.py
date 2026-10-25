@@ -1,8 +1,7 @@
 """Canonical, append-only human label facts.
 
 This core module owns semantic validation and transaction-neutral writes. It
-does not commit: callers can combine one explicit human action with temporary
-legacy compatibility projections in a single transaction.
+does not commit: callers own the transaction for each explicit human action.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ import math
 import sqlite3
 import uuid
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 
@@ -22,6 +21,7 @@ class HumanLabelError(ValueError):
 LABEL_SOURCE_KINDS_V1 = frozenset(
     {
         "watchmybirds_ui",
+        "watchmybirds_migration",
         "watchmybirds_bulk_moderation",
     }
 )
@@ -94,6 +94,7 @@ class HumanAnswer:
     species_identity: str | None = None
     species_key: str | None = None
     detector_miss: bool = False
+    retract_bbox_quality: bool = False
 
 
 def object_training_readiness(
@@ -164,47 +165,111 @@ def get_or_create_labeling_installation_id(output_dir: str) -> str:
     return installation_id
 
 
+DERIVED_FROM_SPECIES_ANSWER = "derived:species-answer-implies-bird"
+
+
+def species_review_state(
+    answer_value: str,
+    species_key: str | None,
+    proposal_species_key: str | None,
+) -> str:
+    """Classify a human species answer against the immutable proposal."""
+    if (
+        answer_value not in {"confirmed", "corrected"}
+        or not species_key
+        or not proposal_species_key
+    ):
+        return answer_value
+    return "confirmed" if species_key == proposal_species_key else "corrected"
+
+
+def _derived_source_ref(source_ref: str | None) -> str:
+    base = (source_ref or "").strip()
+    return (
+        f"{base}|{DERIVED_FROM_SPECIES_ANSWER}" if base else DERIVED_FROM_SPECIES_ANSWER
+    )
+
+
 def record_human_answer(
     conn: sqlite3.Connection,
     answer: HumanAnswer,
     provenance: LabelProvenance,
 ) -> list[int]:
-    """Persist one explicit action and its legacy projections atomically.
+    """Persist the independent facts from one explicit action.
 
     The caller owns commit/rollback. Each non-``None`` answer is stored as an
     independent fact; omitted axes stay unknown.
     """
+    if not str(provenance.source_ref or "").startswith("answer:"):
+        provenance = replace(
+            provenance,
+            source_ref="answer:"
+            + uuid.uuid4().hex
+            + "|"
+            + (provenance.source_ref or ""),
+        )
     filename = answer.image_filename.strip()
     if not filename:
         raise HumanLabelError("image filename is required")
 
+    if answer.retract_bbox_quality and answer.bbox_quality is not None:
+        raise HumanLabelError("bbox quality cannot be set and cleared together")
+
     fact_ids: list[int] = []
     image_subject_id: int | None = None
     object_subject_id: int | None = None
-    action_at = provenance.values()[-1]
+    proposal_species_key: str | None = None
 
     if answer.image_bird_presence is not None or answer.detector_miss:
         image_subject_id = ensure_image_subject(conn, filename)
 
+    # A wrong species proposal says nothing about whether the object is a bird.
+    object_bird_presence = answer.object_bird_presence
+    if object_bird_presence is None and answer.species_identity in {
+        "confirmed",
+        "corrected",
+        "unknown",
+    }:
+        object_bird_presence = "present"
+
     object_axes_present = any(
         value is not None
         for value in (
-            answer.object_bird_presence,
+            object_bird_presence,
             answer.bbox_quality,
             answer.bbox_correction,
             answer.species_identity,
         )
     )
-    if object_axes_present:
+    if object_axes_present or answer.retract_bbox_quality:
         if answer.detection_id is None:
             raise HumanLabelError("object facts require detection_id")
         object_subject_id = ensure_object_subject(conn, answer.detection_id)
-        subject_filename = conn.execute(
-            "SELECT image_filename FROM label_subjects WHERE subject_id = ?",
+        subject = conn.execute(
+            "SELECT image_filename, proposal_species_key FROM label_subjects WHERE subject_id = ?",
             (object_subject_id,),
-        ).fetchone()[0]
-        if subject_filename != filename:
+        ).fetchone()
+        if subject[0] != filename:
             raise HumanLabelError("detection does not belong to image")
+        proposal_species_key = subject[1]
+
+    if answer.image_bird_presence == "absent":
+        require_no_manual_birds(conn, filename)
+        for row in conn.execute(
+            "SELECT detection_id FROM detections WHERE image_filename=? ORDER BY detection_id",
+            (filename,),
+        ).fetchall():
+            fact_ids.extend(
+                record_human_answer(
+                    conn,
+                    HumanAnswer(
+                        filename,
+                        detection_id=int(row[0]),
+                        object_bird_presence="absent",
+                    ),
+                    provenance,
+                )
+            )
 
     if answer.image_bird_presence is not None:
         fact_ids.append(
@@ -215,19 +280,6 @@ def record_human_answer(
                 answer_value=answer.image_bird_presence,
                 provenance=provenance,
             )
-        )
-        review_status = (
-            "confirmed_bird"
-            if answer.image_bird_presence == "present"
-            else "no_bird"
-        )
-        conn.execute(
-            """
-            UPDATE images
-            SET review_status = ?, review_updated_at = ?
-            WHERE filename = ?
-            """,
-            (review_status, action_at, filename),
         )
 
     if answer.detector_miss:
@@ -241,24 +293,25 @@ def record_human_answer(
             )
         )
 
-    if answer.object_bird_presence is not None:
+    if object_bird_presence is not None:
+        # A derived fact is tagged in source_ref so a later reader can tell it
+        # apart from one the person answered directly.
+        presence_provenance = (
+            provenance
+            if answer.object_bird_presence is not None
+            else replace(
+                provenance,
+                source_ref=_derived_source_ref(provenance.source_ref),
+            )
+        )
         fact_ids.append(
             append_fact(
                 conn,
                 subject_id=_required_subject(object_subject_id),
                 fact_type="bird_presence",
-                answer_value=answer.object_bird_presence,
-                provenance=provenance,
+                answer_value=object_bird_presence,
+                provenance=presence_provenance,
             )
-        )
-        status = "active" if answer.object_bird_presence == "present" else "rejected"
-        conn.execute(
-            "UPDATE detections SET status = ? WHERE detection_id = ?",
-            (status, answer.detection_id),
-        )
-        conn.execute(
-            "UPDATE classifications SET status = ? WHERE detection_id = ?",
-            (status, answer.detection_id),
         )
 
     if answer.bbox_quality is not None:
@@ -270,17 +323,6 @@ def record_human_answer(
                 answer_value=answer.bbox_quality,
                 provenance=provenance,
             )
-        )
-        legacy_bbox_state = (
-            "correct" if answer.bbox_quality == "suitable" else "wrong"
-        )
-        conn.execute(
-            """
-            UPDATE detections
-            SET manual_bbox_review = ?, bbox_reviewed_at = ?
-            WHERE detection_id = ?
-            """,
-            (legacy_bbox_state, action_at, answer.detection_id),
         )
 
     if answer.bbox_correction is not None:
@@ -296,50 +338,130 @@ def record_human_answer(
         )
 
     if answer.species_identity is not None:
+        stored_species_identity = species_review_state(
+            answer.species_identity,
+            answer.species_key,
+            proposal_species_key,
+        )
         fact_ids.append(
             append_fact(
                 conn,
                 subject_id=_required_subject(object_subject_id),
                 fact_type="species_identity",
-                answer_value=answer.species_identity,
+                answer_value=stored_species_identity,
                 species_key=answer.species_key,
                 provenance=provenance,
             )
         )
-        if answer.species_identity in {"confirmed", "corrected"}:
-            conn.execute(
-                """
-                UPDATE detections
-                SET manual_species_override = ?,
-                    species_source = 'manual',
-                    species_updated_at = ?,
-                    decision_state = 'confirmed',
-                    decision_level = 'species'
-                WHERE detection_id = ?
-                """,
-                (answer.species_key, action_at, answer.detection_id),
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE detections
-                SET manual_species_override = NULL,
-                    species_source = ?,
-                    species_updated_at = ?,
-                    decision_state = 'unknown',
-                    decision_level = NULL
-                WHERE detection_id = ?
-                """,
-                (
-                    f"manual_{answer.species_identity}",
-                    action_at,
-                    answer.detection_id,
-                ),
-            )
+    if answer.retract_bbox_quality:
+        retracted = retract_bbox_quality(
+            conn,
+            image_filename=filename,
+            detection_id=answer.detection_id,
+            provenance=provenance,
+        )
+        if retracted is not None:
+            fact_ids.append(retracted)
 
-    if not fact_ids:
+    if not fact_ids and not answer.retract_bbox_quality:
         raise HumanLabelError("answer contains no facts")
     return fact_ids
+
+
+def retract_answer(
+    conn: sqlite3.Connection,
+    *,
+    image_filename: str,
+    detection_id: int | None,
+    fact_type: str,
+    provenance: LabelProvenance,
+) -> list[int]:
+    if fact_type not in {
+        "bird_presence",
+        "species_identity",
+        "bbox_quality",
+        "bbox_correction",
+        "detector_miss",
+    }:
+        raise HumanLabelError("answer type is invalid")
+    if (
+        detection_id is not None
+        and not conn.execute(
+            "SELECT 1 FROM detections WHERE detection_id=? AND image_filename=?",
+            (detection_id, image_filename),
+        ).fetchone()
+    ):
+        raise HumanLabelError("detection does not belong to image")
+    scope = "image" if detection_id is None else "object"
+    current = conn.execute(
+        """SELECT * FROM current_human_label_facts WHERE image_filename=?
+        AND scope=? AND detection_id IS ? AND fact_type=?""",
+        (image_filename, scope, detection_id, fact_type),
+    ).fetchone()
+    if current is None:
+        return []
+    current = dict(current)
+    source_ref = str(current["source_ref"] or "").split("|derived:")[0]
+    if source_ref.startswith("answer:"):
+        rows = conn.execute(
+            "SELECT * FROM current_human_label_facts WHERE source_ref=? OR source_ref=?",
+            (source_ref, _derived_source_ref(source_ref)),
+        ).fetchall()
+    else:
+        rows = [current]
+        if fact_type == "species_identity" and current["answer_value"] in {
+            "confirmed",
+            "corrected",
+            "unknown",
+        }:
+            derived = conn.execute(
+                """SELECT * FROM current_human_label_facts WHERE subject_id=?
+                AND fact_type='bird_presence' AND source_ref=? AND fact_id=(SELECT MAX(fact_id) FROM human_label_facts WHERE subject_id=? AND fact_type='bird_presence' AND fact_id<?)""",
+                (
+                    current["subject_id"],
+                    _derived_source_ref(source_ref),
+                    current["subject_id"],
+                    current["fact_id"],
+                ),
+            ).fetchone()
+            if derived is not None:
+                rows.append(derived)
+    if scope == "image" and fact_type == "bird_presence":
+        rows = (
+            list(rows)
+            + conn.execute(
+                "SELECT * FROM current_human_label_facts WHERE source_ref=?",
+                (f"migration:image-absence:{current['fact_id']}",),
+            ).fetchall()
+        )
+    return [
+        append_fact(
+            conn,
+            subject_id=row["subject_id"],
+            fact_type=row["fact_type"],
+            answer_value=None,
+            assertion_state="retracted",
+            provenance=provenance,
+        )
+        for row in rows
+    ]
+
+
+def retract_species_identity(
+    conn: sqlite3.Connection,
+    *,
+    image_filename: str,
+    detection_id: int,
+    provenance: LabelProvenance,
+) -> int | None:
+    ids = retract_answer(
+        conn,
+        image_filename=image_filename,
+        detection_id=detection_id,
+        fact_type="species_identity",
+        provenance=provenance,
+    )
+    return ids[0] if ids else None
 
 
 def retract_bbox_quality(
@@ -349,55 +471,33 @@ def retract_bbox_quality(
     detection_id: int,
     provenance: LabelProvenance,
 ) -> int | None:
-    """Retract a canonical bbox-quality answer and clear its legacy projection.
-
-    Legacy-only rows have no fact to retract. They are cleared without
-    synthesizing history from ambiguous pre-migration state.
-    """
-    row = conn.execute(
-        """
-        SELECT d.image_filename, s.subject_id
-        FROM detections d
-        LEFT JOIN label_subjects s
-          ON s.scope = 'object' AND s.detection_id = d.detection_id
-        WHERE d.detection_id = ?
-        """,
-        (int(detection_id),),
-    ).fetchone()
-    if row is None:
-        raise HumanLabelError("detection does not exist")
-    if str(row[0]) != image_filename.strip():
-        raise HumanLabelError("detection does not belong to image")
-
-    fact_id: int | None = None
-    if row[1] is not None:
-        current = conn.execute(
-            """
-            SELECT fact_id
-            FROM current_human_label_facts
-            WHERE subject_id = ? AND fact_type = 'bbox_quality'
-            """,
-            (int(row[1]),),
-        ).fetchone()
-        if current is not None:
-            fact_id = append_fact(
-                conn,
-                subject_id=int(row[1]),
-                fact_type="bbox_quality",
-                answer_value=None,
-                assertion_state="retracted",
-                provenance=provenance,
-            )
-
-    conn.execute(
-        """
-        UPDATE detections
-        SET manual_bbox_review = NULL, bbox_reviewed_at = NULL
-        WHERE detection_id = ?
-        """,
-        (int(detection_id),),
+    ids = retract_answer(
+        conn,
+        image_filename=image_filename,
+        detection_id=detection_id,
+        fact_type="bbox_quality",
+        provenance=provenance,
     )
-    return fact_id
+    return ids[0] if ids else None
+
+
+def require_no_manual_birds(conn: sqlite3.Connection, filename: str) -> None:
+    count = conn.execute(
+        "SELECT COUNT(*) FROM manual_objects WHERE image_filename=? AND status='active'",
+        (filename,),
+    ).fetchone()[0]
+    if count:
+        noun = "bird" if count == 1 else "birds"
+        raise HumanLabelError(f"Remove the {count} {noun} you added by hand first")
+
+
+def require_no_image_absence(conn: sqlite3.Connection, filename: str) -> None:
+    if conn.execute(
+        """SELECT 1 FROM current_human_label_facts WHERE image_filename=?
+        AND scope='image' AND fact_type='bird_presence' AND answer_value='absent'""",
+        (filename,),
+    ).fetchone():
+        raise HumanLabelError("Withdraw No birds in full image before adding a bird")
 
 
 def _required_subject(subject_id: int | None) -> int:
@@ -667,6 +767,7 @@ def _reject_presence_conflict(
         return
 
     if scope == "image" and answer_value == "absent":
+        require_no_manual_birds(conn, image_filename)
         conflict = conn.execute(
             """
             SELECT 1
@@ -697,3 +798,20 @@ def _reject_presence_conflict(
 
     if conflict is not None:
         raise HumanLabelError("bird-presence conflict requires explicit resolution")
+
+
+def original_model_proposal(
+    conn: sqlite3.Connection, *, image_filename: str, detection_id: int | None
+) -> dict[str, str | None] | None:
+    if detection_id is None:
+        return None
+    row = conn.execute(
+        """SELECT d.raw_species_name, c.cls_class_name
+           FROM detections d LEFT JOIN classifications c
+             ON c.detection_id = d.detection_id AND c.rank = 1
+           WHERE d.detection_id = ? AND d.image_filename = ? LIMIT 1""",
+        (detection_id, image_filename),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"raw_species_key": row[0], "classifier_species_key": row[1]}

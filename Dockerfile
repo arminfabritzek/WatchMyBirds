@@ -21,7 +21,6 @@ ENV XDG_CACHE_HOME=/tmp/fontconfig \
     DEBUG_MODE=False \
     VIDEO_SOURCE=0 \
     OUTPUT_DIR=/output \
-    INGEST_DIR=/ingest \
     MODEL_BASE_PATH=/models
 
 # Set the working directory
@@ -47,10 +46,8 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Install the aesthetic-tagger stack (torch CPU-only, open_clip).
-# Kept as a separate pip invocation so the index pin doesn't interfere
-# with the main resolver run. Adds ~900 MB to the image; if you want a
-# slim variant without the tagger, comment this RUN out and the
-# in-app scheduler will skip itself when the imports fail.
+# A separate invocation confines the PyTorch index configuration to this
+# stack. Both requirement files are installed in every standard image.
 RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu \
     --extra-index-url https://pypi.org/simple \
@@ -73,7 +70,7 @@ COPY go2rtc.yaml.example ./
 
 # Copy analytics build
 # Create runtime directories (no model/output copy at build time)
-RUN mkdir -p /models /output /ingest
+RUN mkdir -p /models /output
 
 # Persist build metadata as runtime-readable files. Use ${VAR:-unknown}
 # fallbacks so that an empty build-arg never produces an empty file --
@@ -103,7 +100,6 @@ EXPOSE 8050
 
 # Set runtime path defaults to match Docker mount convention
 ENV OUTPUT_DIR="/output"
-ENV INGEST_DIR="/ingest"
 ENV MODEL_BASE_PATH="/models"
 
 # Use entrypoint script to handle user permissions

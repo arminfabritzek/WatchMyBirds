@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import io
+from pathlib import Path
 
 import pytest
 from PIL import Image
 
 import config
 from core.event_metadata import EventMetadata, SpeciesEntry
+from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
 from utils import path_manager
 from utils.db import connection as db_connection
 from utils.db import insert_classification, insert_detection, insert_image
@@ -173,6 +175,19 @@ def _seed(
                 "created_at": timestamp,
             },
         )
+    if override:
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename=filename,
+                detection_id=det_id,
+                species_identity="corrected",
+                species_key=override,
+            ),
+            LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui"
+            ),
+        )
     conn.commit()
     return det_id
 
@@ -202,9 +217,17 @@ def test_core_resolves_effective_species_and_relabel(db_env):
 
     # relabel via manual override → next copy reflects it
     with db_connection.closing_connection() as conn:
-        conn.execute(
-            "UPDATE detections SET manual_species_override = ? WHERE detection_id = ?",
-            ("Cyanistes_caeruleus", det_id),
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename=fn,
+                detection_id=det_id,
+                species_identity="corrected",
+                species_key="Cyanistes_caeruleus",
+            ),
+            LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui"
+            ),
         )
         conn.commit()
     copy2 = core.produce_copy_bytes(fn)
@@ -283,31 +306,31 @@ def test_burn_in_toggle_reads_config(db_env, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# Rating / favorite / provenance (schema v2)
+# Favorite / provenance (schema v3)
 # --------------------------------------------------------------------------
 
 
-def test_core_favorite_maps_to_rating_five_and_label(db_env):
+def test_core_favorite_keeps_label_without_rating(db_env: Path) -> None:
     from core import metadata_export_core as core
 
     output_dir = db_env
     fn = "20260602_110000_cam.jpg"
     ts = "20260602_110000"
     with db_connection.closing_connection() as conn:
-        # detection is a favorite AND has a 3-star rating; favorite must win
         _seed(conn, filename=fn, timestamp=ts, is_favorite=1, rating=3)
     _write_original(output_dir, fn)
 
     meta = core.build_event_metadata(fn)
     assert meta.is_favorite is True
-    assert meta.xmp_rating() == 5
     xmp = build_xmp_packet(meta)
-    assert "<xmp:Rating>5</xmp:Rating>" in xmp
+    assert "xmp:Rating" not in xmp
+    assert "wmb:rating" not in xmp
+    assert "<wmb:metadataSchemaVersion>3</wmb:metadataSchemaVersion>" in xmp
     assert "<xmp:Label>Favorite</xmp:Label>" in xmp
     assert "<wmb:isFavorite>true</wmb:isFavorite>" in xmp
 
 
-def test_core_rating_without_favorite(db_env):
+def test_core_legacy_rating_is_not_exported(db_env: Path) -> None:
     from core import metadata_export_core as core
 
     output_dir = db_env
@@ -319,9 +342,9 @@ def test_core_rating_without_favorite(db_env):
 
     meta = core.build_event_metadata(fn)
     assert meta.is_favorite is False
-    assert meta.xmp_rating() == 4
     xmp = build_xmp_packet(meta)
-    assert "<xmp:Rating>4</xmp:Rating>" in xmp
+    assert "xmp:Rating" not in xmp
+    assert "wmb:rating" not in xmp
     assert "xmp:Label" not in xmp
 
 
@@ -336,7 +359,6 @@ def test_core_no_rating_no_favorite_emits_no_rating_tag(db_env):
     _write_original(output_dir, fn)
 
     meta = core.build_event_metadata(fn)
-    assert meta.xmp_rating() is None
     xmp = build_xmp_packet(meta)
     assert "xmp:Rating" not in xmp
 
@@ -355,8 +377,8 @@ def test_core_provenance_creator_tool_and_review_status(db_env):
     # Fixed app attribution, independent of DEVICE_NAME.
     assert meta.creator_tool == "WatchMyBirds"
     assert meta.creator == "WatchMyBirds"
-    assert meta.review_status == "confirmed_bird"
+    assert meta.review_status is None
     xmp = build_xmp_packet(meta)
     assert "<xmp:CreatorTool>WatchMyBirds</xmp:CreatorTool>" in xmp
     assert "<dc:creator><rdf:Seq><rdf:li>WatchMyBirds</rdf:li>" in xmp
-    assert "<wmb:reviewStatus>confirmed_bird</wmb:reviewStatus>" in xmp
+    assert "<wmb:reviewStatus>" not in xmp

@@ -15,15 +15,25 @@ WatchMyBirds uses a **two-layer configuration model**:
 
 ### Runtime Settings
 - Stored in `OUTPUT_DIR/settings.yaml`
-- Editable via the Settings UI without restart
-- Applied immediately
+- Editable via the Settings UI and persisted without editing `.env`.
+- Runtime editability controls persistence; when a value takes effect depends
+  on its consumer and must be checked per setting. For example,
+  `STREAM_WIDTH_OUTPUT_RESIZE` is captured by
+  `web/blueprints/stream.py` at import and requires a restart.
+- `config.RUNTIME_KEYS` controls generic editability. Telemetry uses a
+  dedicated settings endpoint and explicit YAML loading. The generic
+  `restart_required` flag currently derives from `BOOT_KEYS` and does not
+  describe every restart-dependent consumer.
 
 ### Merge Order
 ```
-defaults → environment variables → settings.yaml
+defaults → environment variables → supported settings.yaml overrides
 ```
 
 Runtime edits update `settings.yaml` only — the `.env` file is never mutated.
+The loader accepts runtime keys and dedicated telemetry overrides, rather
+than applying arbitrary YAML keys. Legacy key migrations and type coercion
+run as part of loading; inspect `config._load_config` when changing precedence.
 
 ---
 
@@ -37,7 +47,6 @@ Set these in your `.env` file, `docker-compose.yml`, or system environment.
 |----------|---------|-------------|
 | `DEBUG_MODE` | `False` | Enable verbose logging and debug behavior |
 | `OUTPUT_DIR` | `/output` | Base directory for images and `images.db` |
-| `INGEST_DIR` | `/ingest` | Directory for bulk image ingestion |
 | `MODEL_BASE_PATH` | `/models` | Base directory for AI model files |
 
 ### Camera Source Resolution
@@ -103,9 +112,57 @@ changes.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOCATION_DATA` | `52.516, 13.377` | GPS lat/lon for EXIF metadata (`"lat, lon"`) |
+| `LOCATION_DATA` | `52.516, 13.377` | GPS lat/lon for EXIF metadata and geographic species weighting (`"lat, lon"`); set the actual camera location explicitly |
+| `SPECIES_GEOGRAPHY_ENABLED` | `True` | Weight species candidates by local seasonal occurrence; requires an explicitly saved location or complete photo EXIF |
 | `DAY_AND_NIGHT_CAPTURE` | `True` | Enable daylight gating for detections |
 | `DAY_AND_NIGHT_CAPTURE_LOCATION` | `Berlin` | City name for Astral daylight check |
+
+Geographic weighting uses the same policy for every installation and classifier
+backend. Set your actual coordinates in Settings or through `LOCATION_DATA` in
+the environment/settings.yaml. The built-in Berlin fallback alone does not
+activate weighting. `DAY_AND_NIGHT_CAPTURE_LOCATION` does not set coordinates.
+Disable weighting with `SPECIES_GEOGRAPHY_ENABLED=False` in the environment or
+settings.yaml; the settings API also accepts this runtime key.
+
+For a species-level image prediction, existing candidates are ranked by
+`image_score * sqrt(max(0.001, seasonal_occurrence))`. BirdNET's occurrence score
+depends on latitude, longitude and the capture date (48 seasonal bins per year).
+The finite floor retains rare species. Scientific names are matched using exact
+names and a bundled GBIF synonym reference. Case, spaces and underscores do not
+change identity. Only unique, documented species-level matches are used; names
+are never guessed from a shared epithet or common name. If any bird candidate
+cannot be resolved (including ambiguous splits, unsupported subspecies and
+hybrids), the entire original candidate order and scores remain unchanged.
+Background/non-bird classes do not require a geographic species match.
+No species is added, and no personal correction history,
+habitat rule or blacklist is used. Genus, review-only and rejected classifier
+decisions retain their existing behavior.
+
+The selected species becomes the downstream prediction. Its confidence remains
+that species's original image probability; the geographic ranking score is not
+a calibrated confidence. A changed selection can therefore fall below existing
+confidence thresholds and require review. Original image candidates, scores and
+their order are retained in `detections.geography_json` with model provenance,
+the synonym-reference hash, name matches and whether weighting was applied;
+`raw_species_name` retains the original top choice. Human answers remain
+authoritative. Existing detections are not rewritten automatically.
+
+Live capture uses the capture time and configured camera location.
+Existing detections retain their stored predictions and geographic evidence.
+
+The first eligible prediction downloads the fixed BirdNET Geomodel v3.0.4 FP16
+model and labels (about 8.6 MB total) into
+`MODEL_BASE_PATH/species_geography/`. Downloads are atomic and SHA256-checked.
+Inference runs locally on one CPU thread with cached occurrence scores; no GPU,
+extra Python package or new nightly job is needed. Failed downloads, invalid
+context or model errors retain the image prediction and retry later. Coordinates
+and images are never sent to the model host; the public download uses GitHub.
+The bundled synonym reference also works offline, without a runtime taxonomy
+service. It covers documented synonyms rather than every possible scientific
+name; unresolved candidates use the unchanged-image fallback described above.
+The model is licensed under Apache-2.0; see the
+[BirdNET Geomodel repository](https://github.com/birdnet-team/geomodel) and its
+[model license](https://github.com/birdnet-team/geomodel/blob/main/LICENSE-MODELS.md).
 
 ### Notifications
 
@@ -113,8 +170,83 @@ changes.
 |----------|---------|-------------|
 | `TELEGRAM_ENABLED` | `False` | Enable Telegram notifications |
 | `TELEGRAM_COOLDOWN` | `5` | Cooldown (seconds) between alerts |
-| `TELEGRAM_BOT_TOKEN` | — | Bot token (env-only, never in settings.yaml) |
+| `TELEGRAM_BOT_TOKEN` | — | Bot token (environment default or persisted runtime setting; treat settings.yaml as sensitive) |
 | `TELEGRAM_CHAT_ID` | — | Chat ID for notifications |
+
+### MQTT detection events
+
+MQTT is off by default and independent of Telegram. Configure it in
+**Settings → Notifications**. These are runtime settings in
+`OUTPUT_DIR/settings.yaml`; environment variables with the same names can
+provide boot defaults. The Settings UI never echoes the saved MQTT password.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `MQTT_ENABLED` | `False` | Publish alert-eligible, classified bird detections |
+| `MQTT_HOST` | empty | Broker hostname or IP, as seen by WatchMyBirds |
+| `MQTT_PORT` | `1883` | Broker TCP port (often `8883` with TLS) |
+| `MQTT_USERNAME` | empty | Optional broker username |
+| `MQTT_PASSWORD` | empty | Optional broker password; blank UI field keeps saved value, checkbox clears it |
+| `MQTT_TLS` | `False` | TLS with system certificate validation |
+| `MQTT_TOPIC_PREFIX` | `watchmybirds` | Topic path prefix; no MQTT wildcards |
+| `MQTT_IMAGE_BASE_URL` | empty | HTTP(S) base URL that Node-RED can reach, e.g. `http://192.168.1.20:8050` |
+
+Enabling MQTT requires a broker host and image base URL. If WatchMyBirds is
+behind a reverse proxy with a path prefix, include that path in the base URL.
+The image route itself is public; grant network access only to clients that
+should fetch bird images. Check an actual event URL from the consumer's
+network. `localhost` or a Docker-only hostname usually points to the wrong
+machine there.
+
+Each successfully saved, catalog-known bird detection publishes one JSON
+event on `<MQTT_TOPIC_PREFIX>/detection` only if it passes the same visibility
+policy as the Gallery (including the normal gallery score threshold).
+Review-only detections, such as `species_review` or `uncertain`, do not publish.
+Example (illustrative):
+
+```json
+{
+  "event": "bird_detection",
+  "event_type": "bird_detection",
+  "detection_id": 1234,
+  "species": "Great Tit",
+  "scientific_name": "Parus major",
+  "confidence": 0.94,
+  "timestamp": "2026-09-19T09:42:03+00:00",
+  "image_url": "http://192.168.1.20:8050/uploads/derivatives/thumbs/2026-09-19/20260919_114203_000000_crop_0.webp"
+}
+```
+
+`confidence` is the combined detection/classification score stored with the
+detection. `timestamp` is capture time converted to UTC. `detection_id`
+identifies the local database row; consumers can pair it with a unique topic
+prefix per station to discard possible QoS 1 duplicates. A `station` field is
+included only when `STATION_NAME` is configured. No image bytes are sent over
+MQTT. The URL points to a regenerable bird crop.
+
+Events use QoS 1 and are not retained. They are best-effort: broker outages,
+a full queue, or process shutdown can lose an event; QoS 1 may duplicate one.
+The app does not replay historical detections. Broker networking runs off the
+detection thread with reconnect delays. V1 has no Last Will/online-status
+topic or Home Assistant discovery. Home Assistant can use an MQTT trigger or
+a manually configured MQTT Event entity (`event_type`); Node-RED can subscribe
+to the topic directly.
+
+Subscribe from the consumer machine with Mosquitto clients:
+
+```sh
+mosquitto_sub -h BROKER_HOST -p 1883 -t 'watchmybirds/detection' -v
+```
+
+Supply `-u USER -P PASSWORD` and TLS options if required. After an eligible
+bird detection, open the received `image_url` from the Node-RED host (for
+example, `curl -I URL`). HTTP 200 confirms that the consumer can fetch it.
+
+The MQTT transport accepts generic topic/payload messages; only the outbound
+bird producer is wired in V1. Future MQTT sensor input can add a subscriber
+and domain mapping without changing Telegram or the detection event format.
+Sensor storage, Home Assistant discovery, PTZ control, and internal messaging
+are outside this release.
 
 ### Security
 
@@ -131,52 +263,79 @@ changes.
 |----------|---------|-------------|
 | `CPU_LIMIT` | `0` | CPU affinity cap (`0` disables affinity; `1+` pins to first N available CPUs) |
 
-### Deep Scan Stability
+### Photo deletion
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `DEEP_SCAN_GATE_ENABLED` | `True` | When `True`, live detection and classification loops pause while a Deep Scan job runs (prevents resource contention on RPi). Set `False` to allow concurrent Deep Scan + live detection. Runtime-changeable via Settings UI. |
+| `AUTOMATIC_DELETION_ENABLED` | On for new databases; off for existing databases | One runtime switch for all photo deadlines, including expired trash and manual cleanup requests. |
+| `OLD_BIRD_PHOTOS` | `keep_previews` | Keep bird previews and thumbnails, or `delete_all` to expire them too. |
 
-### Storage Retention
+The database's existence is checked before schema initialization. Startup saves
+these defaults once; old retention keys in YAML are ignored. On every off-to-on
+transition, the app writes `AUTOMATIC_DELETION_ENABLED_AT` alongside the switch.
+This timestamp is internal, not an editable runtime key. Saving an already-on
+switch preserves its date. Open cases and model non-birds expire no earlier than
+14 days after the latest activation, even when their capture is much older.
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `RETENTION_POSTURE` | `off` | `off`, `conservative`, or `reclaim`; controls which old originals are eligible. |
-| `RETENTION_AUTO_ENABLED` | `False` | Explicit opt-in for one automatic run per UTC day, independent of whether detection pauses at night. |
-| `RETENTION_DAYS` | `90` | Originals at or below this age are retained. |
-| `RETENTION_PROTECT_FAVORITES` | `True` | Keep favourites even when their originals are otherwise eligible. |
+`core/deletion_plan.py` supplies both the preview and the deletion job. Its ordered
+rules cover trash, favorites, pending training, answers, admitted birds and other
+photos. Trash expires 30 days after moving it; favorites and pending training
+stay. Answer rows and admitted bird rows stay after their files expire. The
+constants in `DeletionSettings` are 30 days for bird originals, 180 days for bird
+previews with `delete_all`, 14 days for other photos, and a 256 MiB reserve.
+These are age ceilings, not guaranteed availability: low free space triggers
+earlier removal through the same planner, in the order open/model non-bird files
+and rows, answered/admitted originals, then previews only with `delete_all`.
+Favorites and pending training files stay protected. The normal activation grace
+can be shortened by low free space. Off prevents every automatic photo deletion.
 
-Retention removes full-resolution originals only. Derivatives, database rows,
-statistics, favourites, and export-relevant images continue to use storage, so
-this feature does not impose a fixed upper bound on total storage growth.
+Saving requires the reserve plus twice the estimated frame budget (three times
+raw frame bytes plus 1 MiB). Free space is checked at most once per two seconds,
+and each admitted frame subtracts its budget from the cache. Recovery runs outside
+capture, targets four frame budgets above the reserve, and retries at most once a
+minute. Saving waits for an active recovery pass to finish, so incomplete new photos
+cannot be mistaken for objectless photos by early deletion. Insufficient space
+pauses new photo and detection persistence; live view and inference continue. Unsaved frames produce
+no ticker, Telegram detection alert or MQTT event. Pending alerts and reports about
+existing observations can still send. Saving resumes when space is available.
+Authenticated pages show the saving stop and early-cleanup status without scanning.
+
+The age choices were sized from measured snapshot media for a nominal 16 GiB card
+at 130 captures/day (about 12 GiB for 30 days of originals and 180 days of previews),
+then exercised under pressure on a bounded 512 MiB APFS image. Keep previews can
+eventually exhaust a card; saving then pauses without deleting retained bird
+previews. Very busy stations retain observation rows permanently; database growth
+still needs capacity planning. These local measurements do not establish physical
+SD-card throughput or endurance.
+The reserve covers 17.6 MB of technical samples at their row caps, 51 MiB of
+diagnostic file caps, two measured 32.6 MiB frame budgets and a normal 4 MiB WAL
+allowance. Adding 50% margin and rounding to the next power of two gives 256 MiB.
+
+Technical storage limits apply even with automatic photo deletion off:
+
+- Runtime samples: 90 days and at most 129,600 rows; weather: 90 days and 4,320 rows.
+  Enforced at startup and by each writer. Freed SQLite pages are reused; no VACUUM.
+- App and aesthetic logs: 5 MiB per file, three rotated backups each.
+  Vital-sign CSV: 5 MiB plus one backup; FD dumps: 1 MiB.
+- Disposable restore uploads, temporary database snapshots, report images and
+  atomic-write remnants: 48 hours; stale log and visual-PTZ debug files: 14 days.
+  The effort monitor checks files at startup/first sample and hourly thereafter.
+  Media, retained backup snapshots, recovery checkpoints and settings are excluded.
+
+The daily job uses bounded photo batches and rechecks a photo under a write
+transaction before removing files, then rows. It requires the completed human
+answer migration. Missing retained previews are regenerated before an original
+is removed. Settings and Storage usage show upcoming counts and bytes for the
+next 14 days and the last cleanup result. Storage measurements are dated
+snapshots and should be refreshed after settings or data change.
 
 ---
 
 ## Important Notes
 
-### Inbox Import Requirements (EXIF Date/Time + GPS)
-
-Inbox imports (files uploaded/copied into the Inbox) can be configured to require
-EXIF metadata before a file is ingested into the main database.
-
-If enabled, the app will **skip** inbox files unless they contain:
-- EXIF capture timestamp: `DateTimeOriginal` (preferred) or `DateTimeDigitized`
-- EXIF GPS coordinates: `GPSLatitude` and `GPSLongitude`
-
-Runtime settings:
-- `INBOX_REQUIRE_EXIF_DATETIME` (default: `True`)
-- `INBOX_REQUIRE_EXIF_GPS` (default: `True`)
-
-Skipped files are moved to `inbox/skipped/YYYYMMDD/`.
-
-### Ingest vs. Live Operation
-
-| Mode | Behavior |
-|------|----------|
-| **Live Mode** | Only saves images with valid detections (filtered by `SAVE_THRESHOLD`) |
-| **Ingest Tool** | Saves **every** image to ensure hash idempotency and reproducibility |
-
-The Ingest behavior is intentionally different to prevent re-ingest loops.
+Image import is no longer available. Existing imported photos remain in the
+archive. Legacy `INGEST_DIR` values, `/ingest` Docker mounts, and removed Inbox
+settings are ignored; existing Docker configurations need no changes.
 
 ### Threshold Interaction
 
@@ -217,7 +376,6 @@ The Ingest behavior is intentionally different to prevent re-ingest loops.
 ```bash
 # Core
 OUTPUT_DIR=/data/watchmybirds/output
-INGEST_DIR=/data/watchmybirds/ingest
 MODEL_BASE_PATH=/data/watchmybirds/models
 
 # Camera
@@ -248,38 +406,6 @@ TELEGRAM_CHAT_ID=987654321
 
 Set `TELEGRAM_ENABLED=True` only after `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` are configured.
-
----
-
-## Inbox (Web Upload)
-
-The Inbox feature allows uploading images through the web UI for later processing.
-
-### Directory Structure
-
-```
-OUTPUT_DIR/
-└── inbox/
-    ├── pending/           # Uploaded files waiting for processing
-    ├── processed/YYYYMMDD/  # Successfully ingested files
-    ├── skipped/YYYYMMDD/    # Duplicate files (by SHA-256 hash)
-    └── error/               # Files that failed to process
-```
-
-### Upload Limits
-
-| Limit | Value |
-|-------|-------|
-| Max files per upload | 20 |
-| Max file size | 50 MB |
-| Allowed formats | `.jpg`, `.jpeg`, `.png` |
-
-### Processing Policy
-
-- **Detection must be stopped** before processing inbox files
-- Processing is manual (button click required)
-- A snapshot of `pending/` is taken at start; new uploads during processing remain for next run
-- Duplicates are detected by SHA-256 hash and moved to `skipped/`
 
 ---
 
@@ -331,3 +457,15 @@ are likewise preserved from the destination or left unset on a fresh device.
 - [Architecture](ARCHITECTURE.md) — System design overview
 - [Invariants](INVARIANTS.md) — Core rules
 - [Security Policy](../SECURITY.md) — Hardening measures
+
+## Telemetry consent
+
+`telemetry_enabled` remains false by default. `telemetry_consent_version` is 0
+(no recorded choice), 1 (basic reports), or 2 (usage/diagnostics explicitly accepted).
+Only literal true plus integer version 2 enables diagnostic instrumentation.
+`telemetry_consent_at` records the latest choice locally. Old enabled settings without
+a consent version continue basic reports only. Settings and initial password setup
+explain both choices; declining never restricts functionality.
+`telemetry_endpoint` accepts HTTPS or HTTP loopback for local testing; redirects are
+refused. `telemetry_metrics.json` holds a bounded retry queue beside settings.yaml.
+See [Privacy](PRIVACY.md) for fields, cadence, expiry and backup considerations.

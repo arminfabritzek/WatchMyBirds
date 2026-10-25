@@ -5,7 +5,8 @@ Defines the contract for sending detection notifications.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -24,6 +25,7 @@ class SpeciesInfo:
     common_name: str
     score: float
     image_path: str
+    cover_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class NotificationInterface(ABC):

@@ -24,11 +24,6 @@ def get_derivative_path(output_dir: str, filename: str, derivative_type: str) ->
     return path_core.get_derivative_path(output_dir, filename, derivative_type)
 
 
-def get_inbox_pending_path(output_dir: str) -> Path:
-    """Get the path to the inbox/pending directory."""
-    return path_core.get_inbox_pending_path(output_dir)
-
-
 def get_restore_upload_path(filename: str) -> Path:
     """Get the path for a restore upload file."""
     return path_core.get_restore_upload_path(filename)

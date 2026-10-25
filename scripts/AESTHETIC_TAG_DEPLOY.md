@@ -13,8 +13,8 @@ identically. An earlier design ran the tagger from a systemd timer
 against a separate venv; that path was removed once the in-process
 scheduler became the single production path on both targets.
 
-Zero-touch deploy: `pip install -r requirements.txt -r requirements-aesthetic.txt`
-and start the app — the scheduler initialises, daemon thread polls
+Install `requirements.txt` and then `requirements-aesthetic.txt` in separate
+pip invocations, and start the app — the scheduler initialises, daemon thread polls
 once per 30 s, fires `aesthetic_tag_nightly.main_with_args([])` once
 per day at the configured `AESTHETIC_TAG_TIME` (default 02:10).
 
@@ -27,14 +27,19 @@ separate image.
 
 ### Why two requirement files
 
-The split exists for **CPU-index isolation**, not because the tagger
-is optional. `torch` / `torchvision` must resolve from the PyTorch CPU
-index (`--index-url https://download.pytorch.org/whl/cpu`); a bare
-`pip install torchvision` on PyPI drags ~3.8 GB of CUDA wheels onto the
-CPU-only Pi. Keeping that index directive in a separate `-r` file with
-its own header means the main `requirements.txt` resolver run is never
-forced through the PyTorch index. Merging the files would gain nothing
-(aesthetic ships everywhere regardless) and lose that isolation.
+The separate pip invocation confines the PyTorch index configuration to
+the aesthetic stack. Both files are required for a standard installation:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-aesthetic.txt
+```
+
+Pip considers the PyTorch CPU index and PyPI without source priority.
+Exact `+cpu` pins select CPU builds of `torch` and `torchvision` on Linux
+and Windows; macOS uses the matching native wheels. These pins prevent
+the resolver from substituting CUDA builds. Recheck CPU wheel availability
+for Python 3.12 and Docker's Python version when updating the pair.
 
 If the packages are genuinely absent (a hand-stripped venv), the
 scheduler logs a single warning and stays idle; the app boots normally
@@ -46,8 +51,7 @@ without the tagger. This is a safety net, not a shipped "slim" build.
 > idle despite the flag being on. Only a fresh image build and the OTA
 > updater (`rpi/update.sh`) install aesthetic deps automatically. After
 > adding an aesthetic dependency, install it explicitly into the target
-> venv with the CPU index
-> (`pip install --index-url https://download.pytorch.org/whl/cpu ...`)
+> venv using `pip install -r requirements-aesthetic.txt`
 > and verify the imported version — don't trust the pip success line
 > alone on a root-owned venv.
 
@@ -133,16 +137,16 @@ tagger runs at 02:10 when traffic is expected to be low.
 
 ## First-time deploy
 
-**Pi (image-based)**: the image build runs `pip install -r requirements.txt
--r requirements-aesthetic.txt` against the app venv. After flash, the
+**Pi (image-based)**: the image build installs both requirement files into
+the app venv in separate steps. After flash, the
 scheduler is automatically active when the app boots — no manual setup.
 
 **Docker**: the Dockerfile installs both requirement files in two RUN
 steps. After `docker pull && docker run`, the scheduler is active.
 
-**Dev machine**: `pip install --index-url https://download.pytorch.org/whl/cpu
---extra-index-url https://pypi.org/simple -r requirements-aesthetic.txt`
-adds the optional stack to your existing venv.
+**Dev machine**: `pip install -r requirements.txt` followed by
+`pip install -r requirements-aesthetic.txt` installs the standard application
+dependencies into your venv.
 
 The CLIP model (~340 MB) downloads on the first scheduler fire and is
 then cached. To pre-warm so the first run doesn't stall, run the
