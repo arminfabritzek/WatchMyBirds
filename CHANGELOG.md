@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Changed
+
+- Detection and species classification use separate CPU thread budgets,
+  configurable at startup, with conservative defaults for shared hardware.
+- Pipeline logs report stage timings, frame age, queue delays and save counts.
+- The README brings setup, review, privacy and model limitations together with
+  a data-flow diagram and clearer navigation.
+
+### Fixed
+
+- Detection processes each decoded frame at most once, skips stale frames and
+  carries decoder receipt time through to saved observations.
+- Duplicate detections, classifier rejects and failed saves no longer consume
+  burst capacity; unsaved detections do not trigger live events or alerts.
+
 ## 0.5.10 - 2026-10-25
 
 - Station reports summarize observations and species, keep results stable while
