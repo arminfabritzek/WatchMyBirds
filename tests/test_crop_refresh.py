@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
@@ -73,3 +75,38 @@ def test_missing_original_is_reported_not_raised(tmp_path):
 
 def test_degenerate_box_is_rejected():
     assert square_crop_box((100, 100, 100, 100), 2560, 1920) is None
+
+
+@pytest.mark.parametrize("failure", ["encode", "write", "replace"])
+def test_failed_refresh_preserves_existing_preview(
+    frame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    original, _ = frame
+    original_bytes = original.read_bytes()
+    thumb = tmp_path / "thumbs" / "crop.webp"
+    thumb.parent.mkdir()
+    cv2.imwrite(str(thumb), np.zeros((256, 256, 3), dtype=np.uint8))
+    previous = thumb.read_bytes()
+
+    def failed_write(path: str, *_args: object) -> bool:
+        Path(path).write_bytes(b"incomplete preview")
+        if failure == "write":
+            raise OSError("disk full")
+        return False
+
+    def failed_replace(*_args: object) -> None:
+        raise OSError("replacement refused")
+
+    if failure == "replace":
+        monkeypatch.setattr("core.crop_refresh.os.replace", failed_replace)
+    else:
+        monkeypatch.setattr("core.crop_refresh.cv2.imwrite", failed_write)
+
+    assert not refresh_detection_thumbnail(
+        original_path=original,
+        thumbnail_path=thumb,
+        bbox_norm=(0.469, 0.365, 0.117, 0.156),
+    )
+    assert thumb.read_bytes() == previous
+    assert original.read_bytes() == original_bytes
+    assert list(thumb.parent.iterdir()) == [thumb]

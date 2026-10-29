@@ -25,6 +25,13 @@ def resize_model_input(
     return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
 
 
+def resize_square_crop(crop: np.ndarray, size: int) -> np.ndarray:
+    """Resize a square crop to ``size``, shrinking or enlarging smoothly."""
+    # INTER_AREA enlarges like nearest-neighbour, which makes small birds blocky.
+    interpolation = cv2.INTER_AREA if crop.shape[0] >= size else cv2.INTER_CUBIC
+    return cv2.resize(crop, (size, size), interpolation=interpolation)
+
+
 def create_square_crop(
     image: np.ndarray,
     bbox: tuple[int, int, int, int],

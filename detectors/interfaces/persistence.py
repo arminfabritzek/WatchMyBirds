@@ -165,7 +165,7 @@ class PersistenceInterface(ABC):
         frame: np.ndarray,
         bbox: tuple[int, int, int, int],
         output_path: Path,
-        size: int = 256,
+        size: int = 512,
     ) -> bool:
         """
         Generates a square thumbnail from a detection bbox.

@@ -13,14 +13,18 @@ web layer, and this runs on the request path.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import tempfile
 from pathlib import Path
 
 import cv2
 
+from utils.image_ops import resize_square_crop
+
 logger = logging.getLogger(__name__)
 
-THUMBNAIL_SIZE = 256
+THUMBNAIL_SIZE = 512
 EXPANSION_PERCENT = 0.50
 WEBP_QUALITY = 80
 
@@ -99,15 +103,29 @@ def refresh_detection_thumbnail(
     if crop.size == 0:
         return False
 
-    resized = cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
+    resized = resize_square_crop(crop, size)
     thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
-    return bool(
-        cv2.imwrite(
-            str(thumbnail_path),
+    temporary_path = None
+    try:
+        # Preserve the usable preview until its replacement is fully encoded.
+        with tempfile.NamedTemporaryFile(
+            dir=thumbnail_path.parent, suffix=".webp", delete=False
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        if not cv2.imwrite(
+            str(temporary_path),
             resized,
             [int(cv2.IMWRITE_WEBP_QUALITY), WEBP_QUALITY],
-        )
-    )
+        ):
+            return False
+        os.replace(temporary_path, thumbnail_path)
+        return True
+    except (OSError, cv2.error):
+        logger.warning("crop refresh: replacement failed (%s)", thumbnail_path.name)
+        return False
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def current_detection_bbox(conn: sqlite3.Connection, detection_id: int) -> tuple | None:

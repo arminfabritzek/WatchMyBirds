@@ -9,9 +9,18 @@
 - Pipeline logs report stage timings, frame age, queue delays and save counts.
 - The README brings setup, review, privacy and model limitations together with
   a data-flow diagram and clearer navigation.
+- Bird crops are stored at 512 px instead of 256 px, so species, gallery and
+  review tiles stay sharp on large and high-density screens. Small birds are
+  enlarged smoothly instead of pixelated.
+- A nightly job re-renders older crops at the new size while their original
+  photo is still stored; crops whose original has expired keep their size.
+  Failed replacement writes preserve the existing preview.
+- Review crop tiles can be enlarged to 520 px with the tile-size control.
 
 ### Fixed
 
+- Nightly crop upgrades preserve newer box corrections and skip observations
+  deleted during rendering. Only final publication holds a database write lock.
 - Detection processes each decoded frame at most once, skips stale frames and
   carries decoder receipt time through to saved observations.
 - Duplicate detections, classifier rejects and failed saves no longer consume

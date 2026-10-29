@@ -18,16 +18,16 @@
      * naturally as the slider moves.
      *
      * The slider range depends on the current view mode because the crop
-     * source is only 256×256 —
-     * anything beyond ~320px would be visibly upscaled. We split
+     * source is 512×512 —
+     * anything beyond ~520px would be visibly upscaled. We split
      * the range by mode and persist per-mode positions:
-     *   crop mode  → 120..320 px,  default 320
+     *   crop mode  → 120..520 px,  default 320
      *   full mode  → 120..1200 px, default 640
      * Storage keys are mode-suffixed so switching back keeps the
      * size the operator last picked in that mode.
      * ---------------------------------------------------------- */
     const SIZE_STEP = 40;
-    const CROP_MAX = 320;
+    const CROP_MAX = 520;
     const FULL_MAX = 1200;
     const SIZE_MIN = 120;
     const CROP_DEFAULT = 320;

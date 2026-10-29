@@ -8,7 +8,7 @@ Pure image math - no filesystem, database, or network operations.
 import cv2
 import numpy as np
 
-from utils.image_ops import create_square_crop
+from utils.image_ops import create_square_crop, resize_square_crop
 
 
 class CropService:
@@ -28,7 +28,7 @@ class CropService:
     """
 
     DEFAULT_CLASSIFICATION_SIZE = 512
-    DEFAULT_THUMBNAIL_SIZE = 256
+    DEFAULT_THUMBNAIL_SIZE = 512
     DEFAULT_EXPANSION_PERCENT = 0.50
     DEFAULT_MARGIN_PERCENT = 0.1
 
@@ -95,7 +95,7 @@ class CropService:
         Args:
             frame: BGR image (from cv2).
             bbox: Bounding box as (x1, y1, x2, y2) in pixels.
-            size: Target output size (square, default 256).
+            size: Target output size (square, default 512).
             expansion_percent: Extra expansion around bbox (default 10%).
 
         Returns:
@@ -141,12 +141,7 @@ class CropService:
             if thumb_crop.size == 0:
                 return None
 
-            # Resize to target size
-            return cv2.resize(
-                thumb_crop,
-                (size, size),
-                interpolation=cv2.INTER_AREA,
-            )
+            return resize_square_crop(thumb_crop, size)
 
         except Exception:
             return None

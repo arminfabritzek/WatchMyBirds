@@ -404,7 +404,7 @@ class PersistenceService(PersistenceInterface):
         frame: "np.ndarray",  # np.ndarray
         bbox: tuple[int, int, int, int],
         output_path: Path,
-        size: int = 256,
+        size: int = CropService.DEFAULT_THUMBNAIL_SIZE,
     ) -> bool:
         """
         Generates a square thumbnail from a detection bbox.

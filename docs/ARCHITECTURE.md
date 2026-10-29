@@ -47,6 +47,14 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 *   **Responsibility:** Keep in-memory transformations functional. Explicit file helpers such as `generate_preview_thumbnail` also read/write images and create their output directory; the module as a whole is not pure.
 *   **NOTE:** "All image manipulation already flows through `utils.image_ops`" is no longer a factual invariant — see `O-04 OBSOLETE` in `INVARIANTS.md`. Add new transforms here; don't duplicate inline.
 
+### `core/crop_resolution.py`
+Nightly upgrades render small crops to temporary files beside their destination.
+Image decoding and encoding hold no database write lock. Before atomic replacement,
+the worker rechecks the observation's image, thumbnail reference and effective box
+under `BEGIN IMMEDIATE`, skipping deleted observations and newer corrections.
+The worker owns these short transactions and requires an idle connection.
+Originals and the previous thumbnail survive failed rendering or publication.
+
 ### `detectors/detection_manager.py`
 *   **Target:** Orchestrate capture, detection, classification, scoring, persistence, and notifications through specialized services.
 *   **Current composition:** The manager constructs `ImageClassifier`, wraps the selected backend in `ClassificationService`, initializes capture and database context, and coordinates the scoring pipeline. Classifier construction is not a forbidden inference path; classification work belongs in the service.

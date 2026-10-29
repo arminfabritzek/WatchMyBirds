@@ -216,7 +216,8 @@ def _create_runtime():
         logger.warning(f"Aesthetic tag scheduler failed to start: {e}")
 
     # Start the Nightly Job Hub (generic registry for night-only batch
-    # work). Aesthetic-tagger, retention, and sharpness scoring register here
+    # work). Aesthetic-tagger, retention, sharpness scoring and crop upgrades
+    # register here
     # so the Settings UI has one place to inspect / trigger / stop them.
     # The daily-fire loop fires registered jobs once per UTC night;
     # operators can also click "Run now" any time.
@@ -227,6 +228,7 @@ def _create_runtime():
         )
         from web.services.nightly_jobs import (
             AestheticTaggerJob,
+            CropResolutionJob,
             RetentionJob,
             SharpnessJob,
         )
@@ -234,6 +236,7 @@ def _create_runtime():
         register_job(AestheticTaggerJob())
         register_job(RetentionJob())
         register_job(SharpnessJob())
+        register_job(CropResolutionJob())
 
         # Resource-heavy jobs wait for OD's night pause. Maintenance jobs
         # such as retention opt out of that gate and still receive one daily
