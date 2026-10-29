@@ -978,6 +978,7 @@ def fetch_daily_covers(
     *,
     start_date: str | None = None,
     end_date: str | None = None,
+    rotate_favorites: bool = False,
 ) -> list[sqlite3.Row | dict[str, Any]]:
     """
     Returns each day's cover using the shared photo-quality order.
@@ -1001,7 +1002,7 @@ def fetch_daily_covers(
                         AND f.fact_type = 'bbox_quality' AND f.answer_value IN ('suitable', 'unsuitable')))
                     OVER (PARTITION BY substr(REPLACE(timestamp, '-', ''), 1, 8)) AS boxes_reviewed_count,
                 ROW_NUMBER() OVER (PARTITION BY substr(REPLACE(timestamp, '-', ''), 1, 8)
-                    ORDER BY {cover_order_sql()}, detection_id DESC, object_key) AS rn
+                    ORDER BY {cover_order_sql(rotate_favorites=rotate_favorites)}, detection_id DESC, object_key) AS rn
             FROM current_observations WHERE species_key != 'Unknown_species' AND {where}
         ) SELECT * FROM ranked WHERE rn = 1 ORDER BY day DESC
         """,
@@ -1492,8 +1493,10 @@ def fetch_species_covers(
     min_score: float = 0,
     favorites_only: bool = False,
     selection: dict[str, str] | None = None,
+    rotate_favorites: bool = False,
 ) -> list[dict]:
     summaries = {row["species_key"]: row for row in species_summaries(conn, selection)}
+    order = cover_order_sql(rotate_favorites=rotate_favorites)
     where, params = selection_sql(selection)
     rows = [
         dict(row)
@@ -1506,7 +1509,7 @@ def fetch_species_covers(
             SELECT *, MAX(in_period) OVER (PARTITION BY species_key) AS has_period
             FROM selected
         ), ranked AS (SELECT *, ROW_NUMBER() OVER (
-            PARTITION BY species_key ORDER BY {cover_order_sql()}, object_key
+            PARTITION BY species_key ORDER BY {order}, object_key
         ) AS rn FROM candidates WHERE in_period = has_period)
         SELECT * FROM ranked WHERE rn = 1
     """,
@@ -1553,6 +1556,7 @@ def fetch_gallery_days(
         conn,
         start_date=f"{days[-1][:4]}-{days[-1][4:6]}-{days[-1][6:8]}",
         end_date=f"{days[0][:4]}-{days[0][4:6]}-{days[0][6:8]}",
+        rotate_favorites=True,
     )
     for row in selected:
         row["review_progress"] = {

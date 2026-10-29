@@ -101,7 +101,10 @@ veto admission or send a confident bird to Review. All group covers use
 `utils.cover_selection`: favorite, sharpness (`quality_gallery_ok != 0`, with
 NULL treated as sharp), PTZ close-up (`preset` / `manual_drive`), AI eligibility,
 aesthetic score, detection score, box quality, then recency. Exact ties retain
-the selector's existing random or stable choice. Standard Gallery applies no
+the selector's existing random or stable choice. Species-page and Gallery-day
+covers may opt into `rotate_favorites`: a random favorite wins before the
+remaining quality criteria, while unstarred photos retain the shared order.
+Reports keep the default order. Standard Gallery applies no
 second score floor. Human answers bypass automatic thresholds. Refutations affect
 their own object; historical hints do not blacklist a species or reopen Review.
 Excluded automatic records expose the persisted decision reason. Open Review and

@@ -220,3 +220,50 @@ def test_live_alert_uses_saved_cover_metadata(
         service._pending_species["Parus_major"]["image_path"]
         == f"/photo-{favorite}.jpg"
     )
+
+
+@pytest.mark.parametrize("query", ["species", "day"])
+def test_rotation_draws_only_from_favorites(
+    conn: sqlite3.Connection, query: str
+) -> None:
+    favorites = {
+        seed(conn, i, is_favorite=1, quality_gallery_ok=0, score=0.1 + i / 10)
+        for i in range(1, 4)
+    }
+    best_unstarred = seed(conn, 9, quality_gallery_ok=1, is_gallery_eligible=1)
+
+    def cover(rotate: bool) -> int:
+        rows = (
+            fetch_species_covers(conn, rotate_favorites=rotate)
+            if query == "species"
+            else fetch_daily_covers(conn, rotate_favorites=rotate)
+        )
+        return int(rows[0]["detection_id"])
+
+    drawn = {cover(True) for _ in range(60)}
+
+    assert drawn == favorites
+    assert best_unstarred not in drawn
+    assert len({cover(False) for _ in range(10)}) == 1
+
+
+def test_rotation_keeps_quality_order_without_favorites(
+    conn: sqlite3.Connection,
+) -> None:
+    seed(conn, 1, score=0.4)
+    best = seed(conn, 2, score=0.9)
+
+    for _ in range(10):
+        assert (
+            fetch_species_covers(conn, rotate_favorites=True)[0]["detection_id"] == best
+        )
+        assert (
+            fetch_daily_covers(conn, rotate_favorites=True)[0]["detection_id"] == best
+        )
+
+
+def test_rotation_is_off_unless_requested() -> None:
+    assert "RANDOM()" not in cover_order_sql()
+    assert cover_order_sql(rotate_favorites=True).index("RANDOM()") < cover_order_sql(
+        rotate_favorites=True
+    ).index("quality_gallery_ok")

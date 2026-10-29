@@ -172,10 +172,17 @@ def regenerate_derivative(
 
 
 def get_species_covers(
-    *, min_score: float, favorites_only: bool, selection: dict[str, str] | None = None
+    *,
+    min_score: float,
+    favorites_only: bool,
+    selection: dict[str, str] | None = None,
+    rotate_favorites: bool = False,
 ) -> list[dict]:
     return gallery_core.get_species_covers(
-        min_score=min_score, favorites_only=favorites_only, selection=selection
+        min_score=min_score,
+        favorites_only=favorites_only,
+        selection=selection,
+        rotate_favorites=rotate_favorites,
     )
 
 

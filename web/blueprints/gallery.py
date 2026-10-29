@@ -288,6 +288,7 @@ def species_route():
         min_score=current_threshold,
         favorites_only=favorites_only,
         selection=selection,
+        rotate_favorites=True,
     )
     species_groups = {view_helpers.get_species_key(det): det for det in covers}
 

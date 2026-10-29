@@ -999,7 +999,11 @@ def regenerate_derivative(
 
 
 def get_species_covers(
-    *, min_score: float, favorites_only: bool, selection: dict[str, str] | None = None
+    *,
+    min_score: float,
+    favorites_only: bool,
+    selection: dict[str, str] | None = None,
+    rotate_favorites: bool = False,
 ) -> list[dict]:
     from utils.db.detections import fetch_species_covers
 
@@ -1012,6 +1016,7 @@ def get_species_covers(
                 min_score=min_score,
                 favorites_only=favorites_only,
                 selection=selection,
+                rotate_favorites=rotate_favorites,
             )
         ]
 

@@ -16,6 +16,8 @@
   photo is still stored; crops whose original has expired keep their size.
   Failed replacement writes preserve the existing preview.
 - Review crop tiles can be enlarged to 520 px with the tile-size control.
+- The species page and gallery day covers randomly choose a favorite on each
+  reload when a species or day has several; reports stay unchanged.
 
 ### Fixed
 

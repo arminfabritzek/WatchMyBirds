@@ -1,4 +1,7 @@
-"""One photo-quality order for SQL readers and in-memory cover selection."""
+"""One photo-quality order for SQL readers and in-memory cover selection.
+
+Every consumer and its tie-breakers are listed in docs/COVER_SELECTION.md.
+"""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -55,13 +58,24 @@ def cover_sort_key(row: Mapping[str, Any]) -> tuple[int | float | str, ...]:
 
 
 def cover_order_sql(
-    columns: Mapping[str, str] | None = None, *, alias: str = ""
+    columns: Mapping[str, str] | None = None,
+    *,
+    alias: str = "",
+    rotate_favorites: bool = False,
 ) -> str:
-    """Return descending ORDER BY terms for trusted column expressions."""
+    """Return descending ORDER BY terms for trusted column expressions.
+
+    ``rotate_favorites`` shuffles favorites among themselves on every query;
+    photos without a star keep the quality order.
+    """
     expressions = (
         {criterion.column: f"{alias}.{criterion.column}" for criterion in _CRITERIA}
         if alias
         else {}
     )
     expressions.update(columns or {})
-    return ", ".join(f"{criterion.sql(expressions)} DESC" for criterion in _CRITERIA)
+    terms = [f"{criterion.sql(expressions)} DESC" for criterion in _CRITERIA]
+    if rotate_favorites:
+        favorite = _CRITERIA[0].sql(expressions)
+        terms.insert(1, f"CASE WHEN {favorite} THEN RANDOM() END DESC")
+    return ", ".join(terms)

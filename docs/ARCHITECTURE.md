@@ -79,6 +79,10 @@ image/detection saving, notification sending and processing totals are separate.
 Each timing reports its own count, average, minimum and maximum; skipped crops
 are not classifier samples. These summaries are not uploaded as telemetry.
 
+### `utils/cover_selection.py`
+*   **MUST:** Be the single photo-quality order for every cover, gallery, report and notification pick. Surfaces may restrict candidates and add a tie-breaker, never reorder criteria. The one exception is `rotate_favorites`: the species page and gallery day covers draw a random favorite on each load; every other surface keeps the order deterministic.
+*   **NOTE:** The order, its inputs and every surface are documented in [COVER_SELECTION.md](COVER_SELECTION.md); update it with any change to `_CRITERIA` or a cover query.
+
 ### `utils/file_gc.py`
 *   **MUST:** Handle safe deletion of files and database records.
 *   **MUST:** Operate exclusively on ABSOLUTE paths resolved via `PathManager`.
