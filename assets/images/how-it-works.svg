@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="t d">
+<title id="t">How WatchMyBirds works</title>
+<desc id="d">The camera feeds a bird detector, then a species classifier, then a local database with images, then the web app where you review and correct. In parallel, go2rtc relays the camera as a low-latency live stream to the web app. Everything runs on your own device.</desc>
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+    <path d="M1 1L8 5L1 9" fill="none" stroke="#8a8466" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #23312a; }
+  .title { font-size: 22px; font-weight: 700; }
+  .note { font-size: 15px; fill: #4f6b58; }
+  .label { font-size: 16px; font-weight: 600; text-anchor: middle; }
+  .sub { font-size: 13.5px; fill: #6b7368; text-anchor: middle; }
+  .node { fill: #ffffff; stroke: #ddd5ba; stroke-width: 1.5; }
+  .icon { fill: none; stroke: #2f7d4f; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .flow { fill: none; stroke: #8a8466; stroke-width: 2; marker-end: url(#a); }
+</style>
+
+<rect x="1" y="1" width="1198" height="358" rx="20" fill="#faf8f0" stroke="#e7e1cc" stroke-width="2"/>
+
+<text x="25" y="52" class="title">From camera to confirmed sighting</text>
+<g transform="translate(905 34)">
+  <rect x="2" y="8" width="14" height="11" rx="2" class="icon"/>
+  <path d="M5 8V5a4 4 0 0 1 8 0v3" class="icon"/>
+</g>
+<text x="1175" y="52" class="note" text-anchor="end">Everything runs on your own device</text>
+
+<!-- Camera -->
+<rect x="25" y="85" width="150" height="125" rx="16" class="node"/>
+<g transform="translate(86 108)" class="icon">
+  <rect x="2" y="7" width="24" height="17" rx="3"/><circle cx="14" cy="15.5" r="5"/><path d="M9 7l2-3h6l2 3"/>
+</g>
+<text x="100" y="168" class="label">Camera</text>
+<text x="100" y="190" class="sub">RTSP · ONVIF</text>
+
+<!-- Bird detector -->
+<rect x="225" y="85" width="150" height="125" rx="16" class="node"/>
+<g transform="translate(286 108)" class="icon">
+  <path d="M2 8V2h6M20 2h6v6M26 20v6h-6M8 26H2v-6"/><circle cx="14" cy="14" r="4.5"/>
+</g>
+<text x="300" y="168" class="label">Bird detector</text>
+<text x="300" y="190" class="sub">locates birds</text>
+
+<!-- Species classifier -->
+<rect x="425" y="85" width="150" height="125" rx="16" class="node"/>
+<g transform="translate(486 108)" class="icon">
+  <path d="M3 3h11l11 11-11 11L3 14z"/><circle cx="9" cy="9" r="2"/>
+</g>
+<text x="500" y="168" class="label">Species classifier</text>
+<text x="500" y="190" class="sub">964 bird taxa</text>
+
+<!-- Database -->
+<rect x="625" y="85" width="150" height="125" rx="16" class="node"/>
+<g transform="translate(686 108)" class="icon">
+  <ellipse cx="14" cy="6" rx="10" ry="4"/><path d="M4 6v16q0 4 10 4t10-4V6M4 14q0 4 10 4t10-4"/>
+</g>
+<text x="700" y="168" class="label">Local storage</text>
+<text x="700" y="190" class="sub">SQLite + images</text>
+
+<!-- Web app -->
+<rect x="825" y="85" width="150" height="125" rx="16" class="node"/>
+<g transform="translate(886 108)" class="icon">
+  <rect x="2" y="4" width="24" height="20" rx="3"/><path d="M2 10h24"/><path d="M6 7h.01M9.5 7h.01"/>
+</g>
+<text x="900" y="168" class="label">Web app</text>
+<text x="900" y="190" class="sub">in your browser</text>
+
+<!-- You -->
+<rect x="1025" y="85" width="150" height="125" rx="16" fill="#2f7d4f"/>
+<g transform="translate(1086 108)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="14" cy="14" r="11"/><path d="M9 14.5l3.5 3.5 7-8"/>
+</g>
+<text x="1100" y="168" class="label" style="fill:#ffffff">You</text>
+<text x="1100" y="190" class="sub" style="fill:#d6eadb">review &amp; correct</text>
+
+<!-- Detection flow -->
+<path d="M178 147H219" class="flow"/>
+<path d="M378 147H419" class="flow"/>
+<path d="M578 147H619" class="flow"/>
+<path d="M778 147H819" class="flow"/>
+<path d="M978 147H1019" class="flow"/>
+
+<!-- Live stream path -->
+<path d="M100 213V275q0 20 20 20H419" class="flow"/>
+<rect x="425" y="265" width="350" height="60" rx="14" class="node"/>
+<g transform="translate(445 281)" class="icon">
+  <circle cx="14" cy="14" r="11"/><path d="M11.5 9.5L19 14l-7.5 4.5z"/>
+</g>
+<text x="487" y="292" style="font-size:17px;font-weight:600">go2rtc</text>
+<text x="487" y="312" style="font-size:13.5px;fill:#6b7368">low-latency live stream</text>
+<path d="M778 295H880q20 0 20-20V216" class="flow"/>
+</svg>
