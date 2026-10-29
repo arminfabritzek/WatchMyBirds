@@ -163,6 +163,8 @@ DEFAULTS = {
     "GALLERY_QUALITY_BOTTOM_PCT": 15,
     "GALLERY_QUALITY_MIN_SCORED": 200,
     "CPU_LIMIT": 0,
+    "OD_NUM_THREADS": 2,
+    "CLS_NUM_THREADS": 1,
     "TELEGRAM_COOLDOWN": 3600.0,
     "EDIT_PASSWORD": "watchmybirds",
     "TELEGRAM_ENABLED": False,
@@ -398,8 +400,9 @@ def _load_config() -> dict[str, Any]:
         config["EXIF_GPS_ENABLED"] = os.getenv("EXIF_GPS_ENABLED")
     if os.getenv("TELEGRAM_ENABLED") is not None:
         config["TELEGRAM_ENABLED"] = os.getenv("TELEGRAM_ENABLED")
-    if os.getenv("CPU_LIMIT") is not None:
-        config["CPU_LIMIT"] = os.getenv("CPU_LIMIT")
+    for key in ("CPU_LIMIT", "OD_NUM_THREADS", "CLS_NUM_THREADS"):
+        if os.getenv(key) is not None:
+            config[key] = os.getenv(key)
 
     # Telegram Credentials from ENV
     if os.getenv("TELEGRAM_BOT_TOKEN") is not None:
@@ -469,8 +472,11 @@ def _load_config() -> dict[str, Any]:
     # would silently drop telemetry_enabled=true from YAML, so the scheduler
     # logged "started" but never actually sent).
     for key in (
-        "telemetry_enabled", "telemetry_endpoint", "telemetry_installation_id",
-        "telemetry_consent_version", "telemetry_consent_at",
+        "telemetry_enabled",
+        "telemetry_endpoint",
+        "telemetry_installation_id",
+        "telemetry_consent_version",
+        "telemetry_consent_at",
     ):
         if key in yaml_settings:
             config[key] = yaml_settings[key]
@@ -820,6 +826,16 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
     except Exception:
         config["CPU_LIMIT"] = 0
 
+    for key in ("OD_NUM_THREADS", "CLS_NUM_THREADS"):
+        value = config.get(key, DEFAULTS[key])
+        if value is None:
+            config[key] = DEFAULTS[key]
+            continue
+        try:
+            config[key] = max(0, int(value))
+        except (TypeError, ValueError, OverflowError):
+            config[key] = DEFAULTS[key]
+
     # Numeric values
     for key in (
         "SAVE_THRESHOLD",
@@ -886,7 +902,9 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         config["TELEGRAM_REPORT_TIME"] = DEFAULTS.get("TELEGRAM_REPORT_TIME", "21:00")
 
     # Derive MAX_FPS_DETECTION
-    interval = config.get("DETECTION_INTERVAL_SECONDS", 2.0)
+    interval = config.get(
+        "DETECTION_INTERVAL_SECONDS", DEFAULTS["DETECTION_INTERVAL_SECONDS"]
+    )
     if interval < 0.01:
         interval = 0.01  # Prevent division by zero
     config["MAX_FPS_DETECTION"] = 1.0 / interval

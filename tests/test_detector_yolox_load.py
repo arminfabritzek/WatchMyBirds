@@ -33,7 +33,9 @@ onnx = pytest.importorskip("onnx")
 from onnx import TensorProto, helper, numpy_helper  # noqa: E402
 
 
-def _build_synthetic_yolox_onnx(path: Path, num_classes: int = 5, num_anchors: int = 8400):
+def _build_synthetic_yolox_onnx(
+    path: Path, num_classes: int = 5, num_anchors: int = 8400
+):
     """Create a minimal ONNX that returns a constant (1, num_anchors, 5+num_classes) tensor.
 
     Graph: input 'images' (1,3,640,640) -> unused; output 'output' = Constant tensor.
@@ -45,7 +47,7 @@ def _build_synthetic_yolox_onnx(path: Path, num_classes: int = 5, num_anchors: i
     # Anchor 0: centred bird box
     data[0, 0, 0:4] = [320.0, 320.0, 100.0, 100.0]  # xywh
     data[0, 0, 4] = 0.95  # obj
-    data[0, 0, 5] = 0.9   # bird prob
+    data[0, 0, 5] = 0.9  # bird prob
     # Anchor 1: different location, squirrel
     data[0, 1, 0:4] = [100.0, 100.0, 80.0, 80.0]
     data[0, 1, 4] = 0.90
@@ -125,6 +127,24 @@ def test_local_override_loads_synthetic_yolox(synthetic_yolox_dir):
     assert model.conf_threshold_default == pytest.approx(0.15)
     assert model.iou_threshold_default == pytest.approx(0.50)
     assert model.model_id.startswith("local:")
+
+
+@pytest.mark.parametrize("threads", [0, 1, 2])
+def test_od_thread_budget_preserves_detection_output(
+    synthetic_yolox_dir: Path, monkeypatch: pytest.MonkeyPatch, threads: int
+) -> None:
+    from detectors import detector
+
+    monkeypatch.setitem(detector.config, "OD_NUM_THREADS", threads)
+    monkeypatch.setitem(detector.config, "CLS_NUM_THREADS", 4)
+    model = ONNXDetectionModel()
+
+    options = model.session.get_session_options()
+    assert options.intra_op_num_threads == threads
+    if threads:
+        assert options.inter_op_num_threads == 1
+    results = model.detect(np.zeros((640, 640, 3), dtype=np.uint8), 0.15)
+    assert sorted(item["class_name"] for item in results) == ["bird", "squirrel"]
 
 
 def test_local_override_detect_produces_bird_and_squirrel(synthetic_yolox_dir):

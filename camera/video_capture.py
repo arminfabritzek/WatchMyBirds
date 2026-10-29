@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 import weakref
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from threading import Event
@@ -30,6 +31,19 @@ import numpy as np
 from logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class CapturedFrame:
+    """A decoded frame with process-local identity and decoder receipt times.
+
+    Receipt time does not include the camera or network buffering delay.
+    """
+
+    frame: np.ndarray
+    frame_id: int
+    received_at: float
+    received_monotonic: float
 
 
 class VideoCapture:
@@ -45,6 +59,7 @@ class VideoCapture:
     _instances = weakref.WeakSet()
     _shutdown_hooks_registered = False
     _ffmpeg_version_cache = None
+    _frame_ids = itertools.count(1)
 
     def __init__(
         self, source: str | int, debug: bool = False, auto_start: bool = False
@@ -61,7 +76,7 @@ class VideoCapture:
         self.ffmpeg_pid = None
         self.stream_width = None
         self.stream_height = None
-        self.frame_queue = queue.Queue(maxsize=1)
+        self.frame_queue: queue.Queue[CapturedFrame] = queue.Queue(maxsize=1)
         self.reader_thread = None
         self.last_frame_time = time.time()
         self.health_check_thread = None
@@ -901,7 +916,9 @@ class VideoCapture:
                 # 2. Read Frame (with optimization: skip decode if possible)
                 try:
                     frame = self._read_frame(decode=should_decode)
-                    duration = time.time() - start_read
+                    received_at = time.time()
+                    received_monotonic = time.monotonic()
+                    duration = received_at - start_read
                     read_counter += 1
 
                     if not should_decode:
@@ -942,7 +959,7 @@ class VideoCapture:
                         metrics.record("camera_frame")
 
                         # We have a real decoded frame, enqueue it
-                        self.last_enqueued_time = time.time()
+                        self.last_enqueued_time = received_at
 
                         # Apply Clock Overlay for visual reference and sync check (P1)
                         try:
@@ -973,8 +990,14 @@ class VideoCapture:
                             # the un-stamped frame is still useful.
                             pass
 
+                        sample = CapturedFrame(
+                            frame=frame,
+                            frame_id=next(self._frame_ids),
+                            received_at=received_at,
+                            received_monotonic=received_monotonic,
+                        )
                         try:
-                            self.frame_queue.put(frame, block=False)
+                            self.frame_queue.put(sample, block=False)
                         except queue.Full:
                             try:
                                 self.frame_queue.get_nowait()
@@ -982,7 +1005,7 @@ class VideoCapture:
                                 # Drained between Full and get; nothing to drop.
                                 pass
                             try:
-                                self.frame_queue.put(frame, block=False)
+                                self.frame_queue.put(sample, block=False)
                             except queue.Full:
                                 # Still full after one drop; skip this frame.
                                 pass
@@ -1424,11 +1447,8 @@ class VideoCapture:
         finally:
             self.reinit_lock.release()
 
-    def get_frame(self):
-        """
-        Returns the most recent frame, dropping any older frames in the queue.
-        Ensures consumers always see the latest frame and do not build backlog.
-        """
+    def get_frame_sample(self) -> CapturedFrame | None:
+        """Drain the buffer to the latest decoded frame and its receipt times."""
         latest = None
         try:
             while True:
@@ -1436,6 +1456,10 @@ class VideoCapture:
         except queue.Empty:
             pass
         return latest
+
+    def get_frame(self) -> np.ndarray | None:
+        sample = self.get_frame_sample()
+        return sample.frame if sample is not None else None
 
     def stop(self):
         """Stops the video stream and releases resources."""

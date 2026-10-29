@@ -44,6 +44,9 @@ class WMBOnnxClassifierBackend(ClassifierBackend):
             top_k_confidences=[float(value) for value in confidences],
             decision_level=decision_level,
             raw_species_name=str(decision.get("raw_species", class_name)),
+            stage_timings_ms=dict(
+                getattr(self.classifier, "last_stage_timings_ms", {})
+            ),
         )
 
     def get_model_id(self) -> str:

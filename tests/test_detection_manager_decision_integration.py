@@ -236,8 +236,8 @@ def test_notification_database_error_does_not_stop_processing(
     }
     manager.processing_queue.put(job)
     manager.processing_queue.put(job)
-    manager._burst_admit = lambda: True
-    manager._same_bird_burst_admit = lambda *args: True
+    manager._burst_admit = lambda **kwargs: True
+    manager._same_bird_burst_admit = lambda *args, **kwargs: True
     states = iter((False, False, True))
     manager.stop_event.is_set = lambda: next(states)
     with patch(

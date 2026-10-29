@@ -53,6 +53,24 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 *   **Guarded boundary:** Direct imports of `utils.image_ops`, `utils.telegram_notifier`, and `piexif` are rejected by `test_detection_manager_delegates_image_and_notification_helpers`.
 *   **Implementation debt:** The manager still contains direct DB and image-processing work. Do not describe it as an already-thin orchestrator or extend those responsibilities for new features.
 
+Capture attaches a process-local frame ID and decoder receipt timestamps before
+enqueueing a frame. Detection consumes each frame at most once and carries its
+receipt time into persistence. These timestamps cannot measure camera/network
+buffering or establish sensor exposure time. Detection and processing run on
+separate threads; PTZ dispatch does not wait for species classification. The
+single pending processing slot replaces older waiting jobs with fresher work.
+Burst and overlapping-box allowances are recorded only after successful detection
+persistence; duplicates, classifier rejects and failed saves do not consume them.
+
+`detectors/pipeline_metrics.py` aggregates local, lock-protected stage timings
+without retaining individual samples. The manager logs `[PIPELINE]` summaries
+every 15 seconds while detection runs. `od_inference` and `cls_inference` measure
+the runtime invocation; `classification` includes the classifier service and
+geographic assessment. Queue wait, frame age since decoder receipt, cropping,
+image/detection saving, notification sending and processing totals are separate.
+Each timing reports its own count, average, minimum and maximum; skipped crops
+are not classifier samples. These summaries are not uploaded as telemetry.
+
 ### `utils/file_gc.py`
 *   **MUST:** Handle safe deletion of files and database records.
 *   **MUST:** Operate exclusively on ABSOLUTE paths resolved via `PathManager`.

@@ -20,6 +20,7 @@ class ClassifierBackendPrediction:
     decision_level: str = "species"
     raw_species_name: str = ""
     common_name: str = ""
+    stage_timings_ms: dict[str, float] = field(default_factory=dict)
 
 
 class ClassifierBackend(ABC):

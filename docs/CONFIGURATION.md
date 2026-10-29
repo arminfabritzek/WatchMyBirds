@@ -59,7 +59,7 @@ Set these in your `.env` file, `docker-compose.yml`, or system environment.
 | `GO2RTC_API_BASE` | `http://127.0.0.1:1984` | Go2RTC health probe endpoint |
 | `GO2RTC_CONFIG_PATH` | `./go2rtc.yaml` | Writable go2rtc config file path synchronized by the app |
 | `STREAM_FPS_CAPTURE` | `5.0` | Capture FPS throttle (reduces CPU load) |
-| `STREAM_FPS` | `0` | UI MJPEG feed throttle (0 = unlimited) |
+| `STREAM_FPS` | `5.0` | UI MJPEG feed throttle; legacy zero values normalize to 5 FPS |
 | `STREAM_WIDTH_OUTPUT_RESIZE` | `640` | Width for live stream preview in the UI |
 
 Resolver behavior:
@@ -76,7 +76,7 @@ Deployment-specific `GO2RTC_CONFIG_PATH` values:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLASSIFIER_BACKEND` | `inat_tflite` | Species-classifier backend: `wmb_onnx` or `inat_tflite`. Runtime-editable in Settings; the next classification uses the selected backend. |
-| `DETECTION_INTERVAL_SECONDS` | `2.0` | Pause between detection cycles (seconds) |
+| `DETECTION_INTERVAL_SECONDS` | `2.0` | Target detection cycle period, including inference (seconds); slow inference and other cycle work can extend it. |
 | `SAVE_THRESHOLD` | `0.65` | Minimum confidence to save an image. Only used when `SAVE_THRESHOLD_MODE=manual`. |
 | `SAVE_THRESHOLD_MODE` | `auto` | `auto` (save = model's detection floor + 0.10) or `manual` (honour `SAVE_THRESHOLD` verbatim) |
 
@@ -114,8 +114,8 @@ changes.
 |----------|---------|-------------|
 | `LOCATION_DATA` | `52.516, 13.377` | GPS lat/lon for EXIF metadata and geographic species weighting (`"lat, lon"`); set the actual camera location explicitly |
 | `SPECIES_GEOGRAPHY_ENABLED` | `True` | Weight species candidates by local seasonal occurrence; requires an explicitly saved location or complete photo EXIF |
-| `DAY_AND_NIGHT_CAPTURE` | `True` | Enable daylight gating for detections |
-| `DAY_AND_NIGHT_CAPTURE_LOCATION` | `Berlin` | City name for Astral daylight check |
+| `DAY_AND_NIGHT_CAPTURE` | `True` | `True` runs detection around the clock. `False` pauses detection at night, from 30 minutes after nautical dusk until 45 minutes before nautical dawn; the pause needs coordinates in `LOCATION_DATA` and stays off without them. Shown in Settings as **Night Mode Capture** |
+| `DAY_AND_NIGHT_CAPTURE_LOCATION` | `Berlin` | Legacy city name; the night pause does not read it and uses `LOCATION_DATA` instead |
 
 Geographic weighting uses the same policy for every installation and classifier
 backend. Set your actual coordinates in Settings or through `LOCATION_DATA` in
@@ -262,6 +262,29 @@ are outside this release.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CPU_LIMIT` | `0` | CPU affinity cap (`0` disables affinity; `1+` pins to first N available CPUs) |
+| `OD_NUM_THREADS` | `2` | ONNX detector inference threads; `0` selects the runtime default. Requires restart. |
+| `CLS_NUM_THREADS` | `1` | Species-classifier inference threads for either backend; `0` selects the runtime default. Requires restart. |
+
+The thread budgets are independent of each other and `CPU_LIMIT`. The default
+CPU pipeline uses two OD threads, one CLS thread and a two-second target
+cycle, with capture and preview at 5 FPS. This is a starting point for shared
+NAS/Docker hosts and Raspberry Pi installations. `CPU_LIMIT=0` leaves CPU
+placement to the operating system and Docker. A positive value restricts the CPUs available
+to the entire application, including both models; it is not a CPU usage quota.
+Positive ONNX thread limits set intra-op parallelism and keep inter-op
+parallelism at one. Thread budgets do not change persistence limits.
+
+Existing environment variables and saved runtime settings continue to override
+defaults. A saved two-second interval therefore stays at two seconds after an
+upgrade. A slower CPU may take longer than the target interval; the detection
+loop uses fresh frames rather than queuing every captured frame. Docker CPU
+quotas/cpusets remain the host administrator's controls for limiting total CPU
+use; thread budgets alone do not reserve cores or guarantee a usage ceiling.
+
+For a Raspberry Pi 5 dedicated to tracking, an optional faster profile is
+`OD_NUM_THREADS=4`, `CLS_NUM_THREADS=2` and `DETECTION_INTERVAL_SECONDS=1.0`.
+Measure video decoding, saving and classification load on the actual station
+before choosing it for shared hardware.
 
 ### Photo deletion
 
@@ -394,6 +417,9 @@ CLASSIFIER_BACKEND=inat_tflite
 SAVE_THRESHOLD_MODE=auto   # or "manual"
 SAVE_THRESHOLD=0.65        # only applied when SAVE_THRESHOLD_MODE=manual
 DETECTION_INTERVAL_SECONDS=2.0
+OD_NUM_THREADS=2
+CLS_NUM_THREADS=1
+CPU_LIMIT=0
 
 # Security
 EDIT_PASSWORD=your-secure-password

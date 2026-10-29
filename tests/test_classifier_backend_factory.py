@@ -67,9 +67,27 @@ def test_factory_builds_inaturalist_backend(tmp_path) -> None:
 
 
 def test_factory_defaults_to_inaturalist_backend(tmp_path) -> None:
-    backend = build_classifier_backend({"MODEL_BASE_PATH": str(tmp_path)})
+    backend = build_classifier_backend(
+        {"MODEL_BASE_PATH": str(tmp_path), "CPU_LIMIT": 4}
+    )
 
     assert isinstance(backend, INaturalistTFLiteBirdClassifierBackend)
+    assert backend.num_threads == 1
+
+
+@pytest.mark.parametrize(
+    ("threads", "expected"), [(None, None), (0, None), (1, 1), (2, 2)]
+)
+def test_classifier_threads_override_affinity_without_changing_od(
+    threads: int | None, expected: int | None
+) -> None:
+    settings = {"CPU_LIMIT": 4, "OD_NUM_THREADS": 3, "CLS_NUM_THREADS": threads}
+
+    backend = build_classifier_backend(settings)
+
+    assert backend.num_threads == expected
+    assert settings["CPU_LIMIT"] == 4
+    assert settings["OD_NUM_THREADS"] == 3
 
 
 def test_factory_rejects_unknown_backend() -> None:
@@ -87,6 +105,7 @@ def test_classification_service_maps_backend_prediction() -> None:
     backend.predict_rgb.return_value.top_k_confidences = [0.75]
     backend.predict_rgb.return_value.decision_level = "species"
     backend.predict_rgb.return_value.raw_species_name = "Cyanocitta_cristata"
+    backend.predict_rgb.return_value.stage_timings_ms = {"inference": 5.0}
     backend.get_model_id.return_value = "inat-test"
     service = ClassificationService(backend=backend)
 
@@ -95,6 +114,7 @@ def test_classification_service_maps_backend_prediction() -> None:
     assert result.class_name == "Cyanocitta_cristata"
     assert result.model_id == "inat-test"
     assert result.top_k_confidences == [0.75]
+    assert result.stage_timings_ms == {"inference": 5.0}
 
 
 def test_classifier_registry_reports_active_inat_backend(tmp_path, monkeypatch) -> None:

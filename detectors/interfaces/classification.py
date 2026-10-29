@@ -71,6 +71,7 @@ class ClassificationResult:
     raw_species_name: str = ""
     geography_json: str | None = None
     storage_alternatives: list[tuple[str, float]] | None = None
+    stage_timings_ms: dict[str, float] = field(default_factory=dict)
 
 
 def compute_unknown_score(top_k_confidences: list[float]) -> float:

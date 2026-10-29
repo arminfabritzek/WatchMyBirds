@@ -28,6 +28,7 @@ class DetectionResult:
     detections: list[dict] = field(default_factory=list)
     model_id: str = ""
     inference_time_ms: int = 0
+    stage_timings_ms: dict[str, float] = field(default_factory=dict)
 
     # Detection dict structure:
     # {

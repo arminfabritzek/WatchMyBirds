@@ -4,12 +4,13 @@
 # ------------------------------------------------------------------------------
 import json
 import os
+import time
 from typing import Any
 
 import cv2
 import numpy as np
 
-from config import get_config
+from config import DEFAULTS, get_config
 from logging_config import get_logger
 from utils.model_downloader import (
     ensure_model_files,
@@ -183,6 +184,13 @@ class ONNXDetectionModel(BaseDetectionModel):
         Initialize the ONNX Runtime model.
         """
         self.debug = debug
+        self.num_threads = int(
+            config.get("OD_NUM_THREADS", DEFAULTS["OD_NUM_THREADS"]) or 0
+        )
+        session_options = onnxruntime.SessionOptions()
+        if self.num_threads > 0:
+            session_options.intra_op_num_threads = self.num_threads
+            session_options.inter_op_num_threads = 1
 
         local_dir = os.environ.get(LOCAL_MODEL_ENV_VAR)
         metadata_path = None
@@ -235,7 +243,9 @@ class ONNXDetectionModel(BaseDetectionModel):
                             continue
                         try:
                             _probe = onnxruntime.InferenceSession(
-                                candidate, providers=["CPUExecutionProvider"]
+                                candidate,
+                                sess_options=session_options,
+                                providers=["CPUExecutionProvider"],
                             )
                         except Exception as exc:
                             tried.append((candidate, f"load_failed: {exc}"))
@@ -266,7 +276,12 @@ class ONNXDetectionModel(BaseDetectionModel):
         # Initialize ONNX Runtime session.
         try:
             self.session = onnxruntime.InferenceSession(
-                self.model_path, providers=["CPUExecutionProvider"]
+                self.model_path,
+                sess_options=session_options,
+                providers=["CPUExecutionProvider"],
+            )
+            logger.info(
+                "OD inference threads: %s", self.num_threads or "runtime default"
             )
             self.input_name = self.session.get_inputs()[0].name
             logger.info(
@@ -807,11 +822,15 @@ class ONNXDetectionModel(BaseDetectionModel):
         calibrated operating point.
         """
         del confidence_threshold  # unused, kept in signature for back-compat
+        self.last_stage_timings_ms: dict[str, float] = {}
         detection_info_list = []
         try:
+            started = time.perf_counter()
             processed_image, original_image, scale = self.preprocess_image_yolox(frame)
             original_height, original_width = original_image.shape[:2]
+            inference_started = time.perf_counter()
             outputs = self.session.run(None, {self.input_name: processed_image})
+            inference_finished = time.perf_counter()
             detections = self.postprocess_output_yolox(
                 outputs[0],
                 scale,
@@ -836,6 +855,12 @@ class ONNXDetectionModel(BaseDetectionModel):
                         "y2": int(detection["y2"]),
                     }
                 )
+
+            self.last_stage_timings_ms = {
+                "preprocess": (inference_started - started) * 1000,
+                "inference": (inference_finished - inference_started) * 1000,
+                "postprocess": (time.perf_counter() - inference_finished) * 1000,
+            }
 
         except Exception as e:
             self.inference_error_count += 1

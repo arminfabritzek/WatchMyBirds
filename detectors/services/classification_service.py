@@ -97,6 +97,7 @@ class ClassificationService(ClassificationInterface):
                 top_k_confidences=prediction.top_k_confidences,
                 decision_level=prediction.decision_level,
                 raw_species_name=prediction.raw_species_name,
+                stage_timings_ms=dict(getattr(prediction, "stage_timings_ms", {})),
             )
         except Exception as e:
             logger.error(f"Classification error: {e}")

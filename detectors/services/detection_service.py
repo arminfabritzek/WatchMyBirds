@@ -113,7 +113,7 @@ class DetectionService(DetectionInterface):
             )
 
         metrics.record("model_ready")
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         try:
             object_detected, original_frame, detection_info_list = (
@@ -124,7 +124,7 @@ class DetectionService(DetectionInterface):
                 )
             )
 
-            inference_time_ms = int((time.time() - start_time) * 1000)
+            inference_time_ms = int((time.perf_counter() - start_time) * 1000)
             metrics.record("inference_ok")
             metrics.record(
                 "inference_latency_bucket",
@@ -137,10 +137,17 @@ class DetectionService(DetectionInterface):
                 detections=detection_info_list,
                 model_id=self._model_id,
                 inference_time_ms=inference_time_ms,
+                stage_timings_ms=dict(
+                    getattr(
+                        getattr(self._detector, "model", None),
+                        "last_stage_timings_ms",
+                        {},
+                    )
+                ),
             )
 
         except Exception as e:
-            inference_time_ms = int((time.time() - start_time) * 1000)
+            inference_time_ms = int((time.perf_counter() - start_time) * 1000)
             metrics.record("inference_error")
             logger.error(f"Detection error: {e}")
 

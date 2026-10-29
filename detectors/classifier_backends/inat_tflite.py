@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -171,6 +172,9 @@ class INaturalistTFLiteBirdClassifierBackend(ClassifierBackend):
             model_path, labels_path = self._artifact_loader(self.model_dir)
             interpreter = self._interpreter_factory(model_path, self.num_threads)
             interpreter.allocate_tensors()
+            logger.info(
+                "CLS inference threads: %s", self.num_threads or "runtime default"
+            )
             input_details = interpreter.get_input_details()[0]
             output_details = interpreter.get_output_details()[0]
 
@@ -251,7 +255,7 @@ class INaturalistTFLiteBirdClassifierBackend(ClassifierBackend):
             quantized = np.clip(quantized_float, 0, 255).astype(np.uint8)
         return np.expand_dims(quantized, axis=0)
 
-    def _read_probabilities(self, input_tensor: np.ndarray) -> np.ndarray:
+    def _read_probabilities(self, input_tensor: np.ndarray) -> tuple[np.ndarray, float]:
         if (
             self._interpreter is None
             or self._input_details is None
@@ -260,15 +264,21 @@ class INaturalistTFLiteBirdClassifierBackend(ClassifierBackend):
             raise RuntimeError("iNaturalist interpreter is unavailable")
         with self._inference_lock:
             self._interpreter.set_tensor(self._input_details["index"], input_tensor)
+            started = time.perf_counter()
             self._interpreter.invoke()
+            inference_ms = (time.perf_counter() - started) * 1000
             raw_output = self._interpreter.get_tensor(self._output_details["index"])[0]
 
         if np.issubdtype(raw_output.dtype, np.integer):
             scale, zero_point = self._output_details.get("quantization", (0.0, 0))
             if scale <= 0:
                 raise ValueError("iNaturalist output tensor has no quantization scale")
-            return (raw_output.astype(np.float32) - float(zero_point)) * float(scale)
-        return raw_output.astype(np.float32)
+            probabilities = (raw_output.astype(np.float32) - float(zero_point)) * float(
+                scale
+            )
+        else:
+            probabilities = raw_output.astype(np.float32)
+        return probabilities, inference_ms
 
     def predict_rgb(
         self,
@@ -277,7 +287,10 @@ class INaturalistTFLiteBirdClassifierBackend(ClassifierBackend):
         top_k: int = 5,
     ) -> ClassifierBackendPrediction:
         self._ensure_initialized()
-        probabilities = self._read_probabilities(self._preprocess(image))
+        started = time.perf_counter()
+        input_tensor = self._preprocess(image)
+        preprocess_ms = (time.perf_counter() - started) * 1000
+        probabilities, inference_ms = self._read_probabilities(input_tensor)
         count = max(1, min(int(top_k), len(self.classes)))
         indices = np.argsort(probabilities)[::-1][:count]
         top1_index = int(indices[0])
@@ -285,7 +298,7 @@ class INaturalistTFLiteBirdClassifierBackend(ClassifierBackend):
         top1_confidence = float(probabilities[top1_index])
         is_background = top1_class.casefold() == "background"
 
-        return ClassifierBackendPrediction(
+        result = ClassifierBackendPrediction(
             class_name="" if is_background else top1_class,
             confidence=top1_confidence,
             model_id=INAT_MODEL_ID,
@@ -295,6 +308,14 @@ class INaturalistTFLiteBirdClassifierBackend(ClassifierBackend):
             raw_species_name=top1_class,
             common_name=self.common_names[top1_index],
         )
+        result.stage_timings_ms.update(
+            preprocess=preprocess_ms,
+            inference=inference_ms,
+            postprocess=(time.perf_counter() - started) * 1000
+            - preprocess_ms
+            - inference_ms,
+        )
+        return result
 
     def get_model_id(self) -> str:
         return INAT_MODEL_ID

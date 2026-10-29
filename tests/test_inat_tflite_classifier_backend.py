@@ -182,6 +182,42 @@ def test_inat_backend_uses_uint8_nhwc_rgb_without_imagenet_normalization(
     assert prediction.decision_level == "species"
 
 
+def test_inference_timing_excludes_preprocessing_and_output_transfer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, interpreter = _backend(
+        tmp_path, output=np.array([[200, 20]], dtype=np.uint8)
+    )
+    elapsed = [0.0]
+    preprocess = backend._preprocess
+    get_tensor = interpreter.get_tensor
+
+    def prepare(image: np.ndarray) -> np.ndarray:
+        elapsed[0] += 0.002
+        return preprocess(image)
+
+    def invoke() -> None:
+        elapsed[0] += 0.005
+
+    def read(index: int) -> np.ndarray:
+        elapsed[0] += 0.003
+        return get_tensor(index)
+
+    monkeypatch.setattr(
+        "detectors.classifier_backends.inat_tflite.time.perf_counter",
+        lambda: elapsed[0],
+    )
+    monkeypatch.setattr(backend, "_preprocess", prepare)
+    monkeypatch.setattr(interpreter, "invoke", invoke)
+    monkeypatch.setattr(interpreter, "get_tensor", read)
+
+    prediction = backend.predict_rgb(np.zeros((32, 48, 3), dtype=np.uint8))
+
+    assert prediction.stage_timings_ms == pytest.approx(
+        {"preprocess": 2, "inference": 5, "postprocess": 3}
+    )
+
+
 def test_inat_backend_rejects_background_top1(tmp_path: Path) -> None:
     backend, _interpreter = _backend(
         tmp_path,

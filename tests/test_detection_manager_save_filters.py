@@ -29,6 +29,7 @@ from detectors.interfaces.persistence import (
     DetectionPersistenceResult,
     ImagePersistenceResult,
 )
+from tests.conftest import reset_config_in_place
 
 
 @pytest.fixture
@@ -42,6 +43,7 @@ def manager(monkeypatch, tmp_path):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     monkeypatch.setenv("SAVE_THRESHOLD", "0.65")
     monkeypatch.setenv("SAVE_THRESHOLD_MODE", "manual")
+    reset_config_in_place()
 
     mgr = DetectionManager()
 
@@ -53,8 +55,8 @@ def manager(monkeypatch, tmp_path):
     mgr.persistence_service.save_image.return_value = ImagePersistenceResult(
         success=True, base_filename="test.jpg"
     )
-    mgr.persistence_service.save_detection.return_value = (
-        DetectionPersistenceResult(success=True, thumbnail_path="thumb.webp")
+    mgr.persistence_service.save_detection.return_value = DetectionPersistenceResult(
+        success=True, thumbnail_path="thumb.webp"
     )
     mgr.crop_service.create_classification_crop.return_value = np.zeros(
         (224, 224, 3), dtype=np.uint8
@@ -114,10 +116,93 @@ def test_filter_a_skips_detections_below_save_threshold(manager):
     _drain_one_job(manager, job)
 
     assert manager.persistence_service.save_detection.call_count == 1
-    persisted_conf = (
-        manager.persistence_service.save_detection.call_args[1]["detection"].confidence
-    )
+    persisted_conf = manager.persistence_service.save_detection.call_args[1][
+        "detection"
+    ].confidence
     assert persisted_conf == pytest.approx(0.90)
+
+
+def _bird_job(x: int = 100) -> dict[str, object]:
+    return {
+        "capture_time_precise": datetime.now(),
+        "original_frame": np.zeros((400, 800, 3), dtype=np.uint8),
+        "detection_info_list": [
+            {"x1": x, "y1": 100, "x2": x + 100, "y2": 200, "confidence": 0.9}
+        ],
+        "detection_time_ms": 100,
+        "sleep_time_ms": 10,
+    }
+
+
+def test_duplicates_do_not_use_capacity_needed_by_another_bird(
+    manager: DetectionManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(manager.config, "MAX_DETECTIONS_PER_BURST", 2)
+    manager._process_job(_bird_job())
+    manager._process_job(_bird_job())
+    manager._process_job(_bird_job(x=500))
+
+    assert manager.persistence_service.save_detection.call_count == 2
+    assert manager.classification_service.classify.call_count == 2
+    assert len(manager._burst_timestamps) == 2
+    report = manager.pipeline_metrics.drain()
+    assert report["timings_ms"]["classification"]["count"] == 2
+    assert report["counts"]["classification_calls"] == 2
+    assert report["counts"]["duplicate_skipped"] == 1
+
+
+def test_classifier_rejection_does_not_block_a_later_bird(
+    manager: DetectionManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(manager.config, "MAX_DETECTIONS_PER_BURST", 1)
+    accepted = manager.classification_service.classify.return_value
+    manager.classification_service.classify.side_effect = [
+        ClassificationResult(class_name="", confidence=0.9, decision_level="reject"),
+        accepted,
+    ]
+    manager._process_job(_bird_job())
+    manager._process_job(_bird_job())
+
+    assert manager.classification_service.classify.call_count == 2
+    assert manager.persistence_service.save_detection.call_count == 1
+    assert len(manager._burst_timestamps) == 1
+    assert len(manager._recent_admissions) == 1
+
+
+@pytest.mark.parametrize("failed_stage", ["image", "detection"])
+@pytest.mark.parametrize("raises_error", [False, True])
+def test_failed_save_does_not_suppress_retry(
+    manager: DetectionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_stage: str,
+    raises_error: bool,
+) -> None:
+    monkeypatch.setitem(manager.config, "MAX_DETECTIONS_PER_BURST", 1)
+    manager.mqtt_detection_service = MagicMock()
+    bus = MagicMock()
+    monkeypatch.setattr("utils.live_event_bus.get_bus", lambda: bus)
+    save = getattr(manager.persistence_service, f"save_{failed_stage}")
+    accepted = save.return_value
+    failure_type = (
+        ImagePersistenceResult
+        if failed_stage == "image"
+        else DetectionPersistenceResult
+    )
+    failure = RuntimeError("disk full") if raises_error else failure_type(success=False)
+    save.side_effect = [failure, accepted]
+    manager._process_job(_bird_job())
+
+    assert not manager._burst_timestamps
+    assert not manager._recent_admissions
+    manager.notification_service.queue_detection.assert_not_called()
+    manager.mqtt_detection_service.publish_detection.assert_not_called()
+    bus.publish.assert_not_called()
+
+    manager._process_job(_bird_job())
+
+    assert save.call_count == 2
+    assert len(manager._burst_timestamps) == 1
+    assert len(manager._recent_admissions) == 1
 
 
 def test_filter_a_persists_detection_at_exact_threshold(manager):
@@ -211,7 +296,9 @@ def test_filter_b_window_expires_old_entries(manager, monkeypatch):
 
     # Fast-forward the monotonic clock between calls.
     fake_now = [1000.0]
-    monkeypatch.setattr("detectors.detection_manager.time.monotonic", lambda: fake_now[0])
+    monkeypatch.setattr(
+        "detectors.detection_manager.time.monotonic", lambda: fake_now[0]
+    )
 
     # First two calls fill the window
     assert manager._burst_admit() is True

@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from camera.video_capture import VideoCapture
+from camera.video_capture import CapturedFrame, VideoCapture
 from config import get_config
 from core.ptz_tracking_core import AutoPtzController
 from detectors.classifier import ImageClassifier
@@ -27,6 +27,7 @@ from detectors.classifier_backends.factory import build_classifier_backend
 from detectors.interfaces.classification import DecisionState
 from detectors.motion_detector import MotionDetector
 from detectors.od_classes import is_bird_od_class
+from detectors.pipeline_metrics import PipelineMetrics
 from detectors.services import NotificationService, PersistenceService
 from detectors.services.capability_registry import build_default_registry
 from detectors.services.classification_service import ClassificationService
@@ -99,16 +100,14 @@ class DetectionManager:
         # Shared state
         self.latest_raw_frame = None
         self.latest_raw_timestamp = 0
+        self.latest_raw_monotonic = 0.0
+        self.latest_raw_frame_id = 0
+        self._last_detected_frame_id = 0
         self.latest_detection_time = 0
         self.previous_frame_hash = None
         self.consecutive_identical_frames = 0
 
-        # Detection / classification timing summary (logged periodically
-        # instead of per-frame). Both lists are appended from different
-        # threads (detect-loop / processing-loop); list.append() is
-        # atomic under CPython's GIL so no lock is needed.
-        self._det_times: list[int] = []
-        self._cls_times: list[int] = []
+        self.pipeline_metrics = PipelineMetrics()
         self._det_summary_interval = 15  # seconds
         self._det_summary_last = time.monotonic()
 
@@ -372,8 +371,8 @@ class DetectionManager:
 
         from utils.sun_times import is_daytime
 
-        # Location resolution: prefer LOCATION_DATA (lat/lon, primary)
-        # over DAY_AND_NIGHT_CAPTURE_LOCATION (city name, legacy).
+        # Only LOCATION_DATA counts; the legacy city name
+        # DAY_AND_NIGHT_CAPTURE_LOCATION is not a fallback.
         lat, lon = self._resolve_location()
         if lat is None or lon is None:
             # No location configured → can't compute twilight → fall
@@ -547,17 +546,19 @@ class DetectionManager:
                 time.sleep(0.1)
                 continue
 
-            frame = self.video_capture.get_frame()
-            if frame is not None:
+            sample = self.video_capture.get_frame_sample()
+            if sample is not None:
                 with self.frame_lock:
-                    self.latest_raw_frame = frame.copy()
-                    self.latest_raw_timestamp = time.time()
+                    self.latest_raw_frame = sample.frame.copy()
+                    self.latest_raw_timestamp = sample.received_at
+                    self.latest_raw_monotonic = sample.received_monotonic
+                    self.latest_raw_frame_id = sample.frame_id
 
                 if self._no_frame_log_state:
                     logger.debug("Frames received again.")
                     self._no_frame_log_state = False
             else:
-                if time.time() - self.latest_raw_timestamp > 5:
+                if time.monotonic() - self.latest_raw_monotonic > 5:
                     with self.frame_lock:
                         if self.latest_raw_frame is not None:
                             logger.info("No frames for 5s. Clearing buffer.")
@@ -567,6 +568,22 @@ class DetectionManager:
                         logger.warning("No frames for 5s.")
                         self._no_frame_log_state = True
                 time.sleep(0.1)
+
+    def _take_detection_frame(self) -> CapturedFrame | None:
+        with self.frame_lock:
+            if (
+                self.latest_raw_frame is None
+                or self.latest_raw_frame_id <= self._last_detected_frame_id
+                or time.monotonic() - self.latest_raw_monotonic > 5.0
+            ):
+                return None
+            self._last_detected_frame_id = self.latest_raw_frame_id
+            return CapturedFrame(
+                frame=self.latest_raw_frame.copy(),
+                frame_id=self.latest_raw_frame_id,
+                received_at=self.latest_raw_timestamp,
+                received_monotonic=self.latest_raw_monotonic,
+            )
 
     # =========================================================================
     # DETECTION LOOP
@@ -601,21 +618,16 @@ class DetectionManager:
 
             self._last_components_ready_state = True
 
-            # Get frame
-            raw_frame = None
-            capture_time_precise = datetime.now()
-
-            with self.frame_lock:
-                if self.latest_raw_frame is not None:
-                    raw_frame = self.latest_raw_frame.copy()
-
-            if raw_frame is None:
+            sample = self._take_detection_frame()
+            if sample is None:
                 if self.last_detection_had_frame:
-                    logger.debug("No frame available.")
+                    logger.debug("No fresh frame available.")
                     self.last_detection_had_frame = False
                 time.sleep(0.1)
                 continue
 
+            raw_frame = sample.frame
+            capture_time_precise = datetime.fromtimestamp(sample.received_at)
             self.last_detection_had_frame = True
 
             # OD night-pause gate. Master switch DAY_AND_NIGHT_CAPTURE
@@ -639,7 +651,11 @@ class DetectionManager:
                     continue
 
             # Run detection via DetectionService
-            start_time = time.time()
+            start_time = time.perf_counter()
+            self.pipeline_metrics.observe(
+                "frame_age_at_detection",
+                (time.monotonic() - sample.received_monotonic) * 1000,
+            )
 
             # Detection floor is owned by the model (model_metadata.json
             # drives self._detector.conf_threshold_default). Save-threshold
@@ -690,16 +706,22 @@ class DetectionManager:
             with self.frame_lock:
                 self.latest_detection_time = time.time()
 
-            detection_time = time.time() - start_time
+            detection_time = time.perf_counter() - start_time
             target_duration = 1.0 / self.config["MAX_FPS_DETECTION"]
             sleep_time = max(0.01, target_duration - detection_time)
 
             det_ms = int(detection_time * 1000)
+            self.pipeline_metrics.increment("detected_frames")
+            self.pipeline_metrics.observe("detection", detection_time * 1000)
+            for stage, duration in detection_result.stage_timings_ms.items():
+                self.pipeline_metrics.observe(f"od_{stage}", duration)
 
             if object_detected:
                 self._enqueue_processing_job(
                     {
                         "capture_time_precise": capture_time_precise,
+                        "frame_id": sample.frame_id,
+                        "frame_received_monotonic": sample.received_monotonic,
                         "original_frame": original_frame,
                         "detection_info_list": detection_info_list,
                         "detection_time_ms": det_ms,
@@ -707,6 +729,7 @@ class DetectionManager:
                     }
                 )
 
+            ptz_started = time.perf_counter()
             try:
                 frame_for_ptz = (
                     original_frame if original_frame is not None else raw_frame
@@ -726,52 +749,18 @@ class DetectionManager:
                     self.auto_ptz_controller.handle_no_detection()
             except Exception:
                 logger.exception("Auto PTZ update failed")
+            finally:
+                self.pipeline_metrics.observe(
+                    "ptz_dispatch", (time.perf_counter() - ptz_started) * 1000
+                )
 
-            # Collect timing and log a periodic summary
-            self._det_times.append(det_ms)
             now_mono = time.monotonic()
             if now_mono - self._det_summary_last >= self._det_summary_interval:
-                window_s = int(now_mono - self._det_summary_last)
-                n_det = len(self._det_times)
-                det_avg = sum(self._det_times) // n_det
-                det_lo = min(self._det_times)
-                det_hi = max(self._det_times)
-                # Snapshot CLS samples (different thread writes them).
-                # Slice-copy so we don't race with a concurrent append;
-                # CLS may have zero samples in this window if no frames
-                # had detections (Processing loop only fires on detects).
-                cls_snapshot = self._cls_times[:]
-                if cls_snapshot:
-                    n_cls = len(cls_snapshot)
-                    cls_avg = sum(cls_snapshot) // n_cls
-                    cls_lo = min(cls_snapshot)
-                    cls_hi = max(cls_snapshot)
-                    logger.info(
-                        "[DET+CLS] %ds summary: %d frames | "
-                        "DET avg %dms (min %dms / max %dms) | "
-                        "CLS %d samples avg %dms (min %dms / max %dms)",
-                        window_s,
-                        n_det,
-                        det_avg,
-                        det_lo,
-                        det_hi,
-                        n_cls,
-                        cls_avg,
-                        cls_lo,
-                        cls_hi,
-                    )
-                else:
-                    logger.info(
-                        "[DET] %ds summary: %d frames | "
-                        "avg %dms | min %dms | max %dms | CLS no samples",
-                        window_s,
-                        n_det,
-                        det_avg,
-                        det_lo,
-                        det_hi,
-                    )
-                self._det_times.clear()
-                self._cls_times.clear()
+                logger.info(
+                    "[PIPELINE] %ds summary: %s",
+                    int(now_mono - self._det_summary_last),
+                    json.dumps(self.pipeline_metrics.drain(), sort_keys=True),
+                )
                 self._det_summary_last = now_mono
 
             time.sleep(sleep_time)
@@ -780,15 +769,18 @@ class DetectionManager:
 
     def _enqueue_processing_job(self, job: dict[str, object]) -> None:
         """Enqueue job, drop oldest if full."""
+        job = {**job, "enqueued_monotonic": time.monotonic()}
         try:
             self.processing_queue.put_nowait(job)
         except queue.Full:
             try:
                 self.processing_queue.get_nowait()
+                self.pipeline_metrics.increment("processing_queue_dropped")
             except queue.Empty:
                 # Another consumer drained the queue after the Full check.
                 pass
             self.processing_queue.put_nowait(job)
+        self.pipeline_metrics.increment("processing_enqueued")
 
     @staticmethod
     def _bbox_iou(
@@ -822,12 +814,14 @@ class DetectionManager:
         self,
         bbox: tuple[int, int, int, int],
         species_key: str,
+        *,
+        record: bool = True,
     ) -> bool:
         """Per-bbox burst-suppression gate (Filter B2).
 
         Returns True when no recent admission overlaps this bbox by
         IoU > SAME_BIRD_BURST_IOU within SAME_BIRD_BURST_WINDOW_SECONDS,
-        AND records the new admission.
+        AND records the new admission unless ``record=False``.
 
         Returns False (skip persistence) when an overlapping same-species
         admission was made recently. species_key="" matches any species
@@ -883,14 +877,15 @@ class DetectionManager:
                 self._same_bird_skipped_last_log = now
             return False
 
-        self._recent_admissions.append((now, bbox, species_key))
+        if record:
+            self._recent_admissions.append((now, bbox, species_key))
         return True
 
-    def _burst_admit(self) -> bool:
+    def _burst_admit(self, *, record: bool = True) -> bool:
         """Sliding-window burst-cap gate (Filter B).
 
-        Returns True and records the admission timestamp when the rolling
-        window has capacity. Returns False (and increments a skip counter)
+        Returns True when the rolling window has capacity, recording the
+        timestamp unless ``record=False``. Returns False (and increments a skip counter)
         when the cap is hit — the caller should skip persistence for that
         detection.
 
@@ -941,8 +936,26 @@ class DetectionManager:
                 self._burst_skipped_last_log = now
             return False
 
-        self._burst_timestamps.append(now)
+        if record:
+            self._burst_timestamps.append(now)
         return True
+
+    def _record_persisted_admission(
+        self, bbox: tuple[int, int, int, int], species_key: str
+    ) -> None:
+        now = time.monotonic()
+        try:
+            cap = int(self.config.get("MAX_DETECTIONS_PER_BURST", 100))
+        except (TypeError, ValueError):
+            cap = 100
+        try:
+            window = float(self.config.get("SAME_BIRD_BURST_WINDOW_SECONDS", 15.0))
+        except (TypeError, ValueError):
+            window = 15.0
+        if cap > 0:
+            self._burst_timestamps.append(now)
+        if window > 0:
+            self._recent_admissions.append((now, bbox, species_key))
 
     # =========================================================================
     # PROCESSING LOOP - Uses Services
@@ -959,7 +972,8 @@ class DetectionManager:
                 continue
 
             try:
-                self._process_job(job)
+                with self.pipeline_metrics.measure("processing"):
+                    self._process_job(job)
             except Exception:
                 logger.exception(
                     "Detection processing failed; continuing with next frame"
@@ -971,9 +985,15 @@ class DetectionManager:
         capture_time = job["capture_time_precise"]
         original_frame = job["original_frame"]
         detection_info_list = job["detection_info_list"]
-        detection_time_ms = job["detection_time_ms"]
 
-        cls_start = time.time()
+        self.pipeline_metrics.increment("processing_jobs")
+        now = time.monotonic()
+        for key, stage in (
+            ("enqueued_monotonic", "queue_wait"),
+            ("frame_received_monotonic", "frame_age_at_processing"),
+        ):
+            if key in job:
+                self.pipeline_metrics.observe(stage, (now - job[key]) * 1000)
 
         # Rejected classifier results never reach image persistence.
         timestamp_stamp = capture_time.strftime("%Y%m%d_%H%M%S_%f")
@@ -1075,7 +1095,8 @@ class DetectionManager:
             # Filter (B): sliding-window burst cap. When too many
             # detections fire in a short window (e.g. sparrow flock),
             # stop persisting until the burst subsides.
-            if not self._burst_admit():
+            if not self._burst_admit(record=False):
+                self.pipeline_metrics.increment("burst_skipped")
                 continue
 
             # Filter (B2): same-bird burst suppression. Skip
@@ -1090,17 +1111,21 @@ class DetectionManager:
             # short window is the same bird regardless of how CLS
             # may flip-flop between Parus/Cyanistes per frame.
             species_key_for_burst = "" if is_bird else od_class_name
-            if not self._same_bird_burst_admit(bbox_tuple, species_key_for_burst):
+            if not self._same_bird_burst_admit(
+                bbox_tuple, species_key_for_burst, record=False
+            ):
+                self.pipeline_metrics.increment("duplicate_skipped")
                 continue
 
             # Create crop for classification via CropService
-            crop_rgb = self.crop_service.create_classification_crop(
-                frame=original_frame,
-                bbox=bbox_tuple,
-                size=self.SAVE_RESOLUTION_CROP,
-                margin_percent=0.1,
-                to_rgb=True,
-            )
+            with self.pipeline_metrics.measure("crop"):
+                crop_rgb = self.crop_service.create_classification_crop(
+                    frame=original_frame,
+                    bbox=bbox_tuple,
+                    size=self.SAVE_RESOLUTION_CROP,
+                    margin_percent=0.1,
+                    to_rgb=True,
+                )
             if crop_rgb is None:
                 continue
 
@@ -1114,9 +1139,13 @@ class DetectionManager:
             if is_bird:
                 try:
                     if crop_rgb is not None:
-                        cls_result = self.classification_service.classify(
-                            crop_rgb, observed_at=capture_time
-                        )
+                        self.pipeline_metrics.increment("classification_calls")
+                        with self.pipeline_metrics.measure("classification"):
+                            cls_result = self.classification_service.classify(
+                                crop_rgb, observed_at=capture_time
+                            )
+                        for stage, duration in cls_result.stage_timings_ms.items():
+                            self.pipeline_metrics.observe(f"cls_{stage}", duration)
                         cls_name = cls_result.class_name
                         cls_conf = cls_result.confidence
                         if not self.classifier_model_id:
@@ -1192,6 +1221,7 @@ class DetectionManager:
                 else None
             )
             if detection_level is not None and str(detection_level).lower() == "reject":
+                self.pipeline_metrics.increment("classifier_rejected")
                 if decision_state in self.decision_state_counts:
                     self.decision_state_counts[decision_state] += 1
                 continue
@@ -1200,15 +1230,16 @@ class DetectionManager:
             # save. Subsequent keepers reuse the same base_filename.
             if img_result is None:
                 try:
-                    img_result = self.persistence_service.save_image(
-                        frame=original_frame,
-                        capture_time=capture_time,
-                        detector_model_id=self.detector_model_id,
-                        classifier_model_id=self.classifier_model_id,
-                        source_id=self.current_source_id,
-                        location_config=self.location_config,
-                        exif_gps_enabled=self.exif_gps_enabled,
-                    )
+                    with self.pipeline_metrics.measure("save_image"):
+                        img_result = self.persistence_service.save_image(
+                            frame=original_frame,
+                            capture_time=capture_time,
+                            detector_model_id=self.detector_model_id,
+                            classifier_model_id=self.classifier_model_id,
+                            source_id=self.current_source_id,
+                            location_config=self.location_config,
+                            exif_gps_enabled=self.exif_gps_enabled,
+                        )
                 except Exception as e:
                     logger.error(f"PersistenceService.save_image error: {e}")
                     img_result = None
@@ -1226,14 +1257,20 @@ class DetectionManager:
                 base_filename = img_result.base_filename
 
             try:
-                det_result = self.persistence_service.save_detection(
-                    image_filename=base_filename,
-                    detection=det_data,
-                    frame=original_frame,
-                    detector_model_id=self.detector_model_id,
-                    classifier_model_id=self.classifier_model_id,
-                    crop_index=idx,
-                )
+                with self.pipeline_metrics.measure("save_detection"):
+                    det_result = self.persistence_service.save_detection(
+                        image_filename=base_filename,
+                        detection=det_data,
+                        frame=original_frame,
+                        detector_model_id=self.detector_model_id,
+                        classifier_model_id=self.classifier_model_id,
+                        crop_index=idx,
+                    )
+                if not det_result.success:
+                    continue
+                # Only persisted observations consume the storage allowance.
+                self._record_persisted_admission(bbox_tuple, species_key_for_burst)
+                self.pipeline_metrics.increment("saved_detections")
 
                 # Push to the live-event bus so the stream-page LED
                 # ticker can render this detection in real time. Wrapped
@@ -1313,27 +1350,8 @@ class DetectionManager:
             self.notification_service.queue_detection(species_info)
 
             if self.notification_service.should_send():
-                self.notification_service.send_summary()
-
-        # Log timing.
-        # The detect-loop and processing-loop run on separate threads.
-        # det_cycle = DETECTION_INTERVAL_SECONDS target = DET + det_idle
-        # (the idle is what the *detect* loop sleeps after queuing this
-        # job). CLS happens here in the processing loop and does NOT
-        # add to det_cycle — it runs in parallel with the next detect.
-        cls_duration_ms = int((time.time() - cls_start) * 1000)
-        det_idle_ms = job["sleep_time_ms"]
-        det_cycle_ms = detection_time_ms + det_idle_ms
-        # Feed the CLS sample into the shared summary buffer; the
-        # detect-loop reads it on its 15s-tick so the summary line
-        # carries both DET and CLS aggregates.
-        self._cls_times.append(cls_duration_ms)
-        logger.debug(
-            f"[DET+CLS] pipeline={detection_time_ms + cls_duration_ms}ms "
-            f"(DET={detection_time_ms}ms, CLS={cls_duration_ms}ms) | "
-            f"Objects={len(detection_info_list)} | "
-            f"det_cycle={det_cycle_ms}ms (idle {det_idle_ms}ms)"
-        )
+                with self.pipeline_metrics.measure("notification"):
+                    self.notification_service.send_summary()
 
     # =========================================================================
     # PUBLIC INTERFACE - Same as original
@@ -1358,6 +1376,8 @@ class DetectionManager:
         with self.frame_lock:
             self.latest_raw_frame = None
             self.latest_raw_timestamp = 0
+            self.latest_raw_monotonic = 0.0
+            self.latest_raw_frame_id = 0
 
         if self.video_capture:
             try:

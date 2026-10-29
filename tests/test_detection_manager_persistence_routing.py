@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -69,9 +70,12 @@ def _build_mgr_fixture() -> DetectionManager:
 
     mgr._burst_admit = MagicMock(return_value=True)
     mgr._same_bird_burst_admit = MagicMock(return_value=True)
+    mgr._burst_timestamps = deque()
+    mgr._recent_admissions = deque()
 
-    mgr._det_times = []
-    mgr._cls_times = []
+    from detectors.pipeline_metrics import PipelineMetrics
+
+    mgr.pipeline_metrics = PipelineMetrics()
     mgr._inference_error_state = False
 
     return mgr

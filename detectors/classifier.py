@@ -1,10 +1,11 @@
 import os
+import time
 
 import cv2
 import numpy as np
 from PIL import Image
 
-from config import get_config
+from config import DEFAULTS, get_config
 from detectors.cls_config import (
     ClsDecisionConfig,
     decide_label,
@@ -25,6 +26,9 @@ class ImageClassifier:
     def __init__(self) -> None:
         """Initializes the image classifier (lazy-loads model on first use)."""
         self.config = get_config()
+        self.num_threads = int(
+            self.config.get("CLS_NUM_THREADS", DEFAULTS["CLS_NUM_THREADS"]) or 0
+        )
         # Lazy loading: defer model check and ONNX session creation until first prediction
         self.model_dir = os.path.join(self.config["MODEL_BASE_PATH"], "classifier")
         self.model_path = None
@@ -46,6 +50,7 @@ class ImageClassifier:
         # species/genus/reject level can read this attribute instead of
         # changing the legacy tuple return shape.
         self.last_decision: dict | None = None
+        self.last_stage_timings_ms: dict[str, float] = {}
 
         # Normalization constants (ImageNet defaults)
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
@@ -54,7 +59,9 @@ class ImageClassifier:
     @staticmethod
     def _stable_softmax(logits: np.ndarray, temperature: float = 1.0) -> np.ndarray:
         """Stable softmax over the class axis with optional temperature scaling."""
-        safe_temperature = float(temperature) if temperature and temperature > 0 else 1.0
+        safe_temperature = (
+            float(temperature) if temperature and temperature > 0 else 1.0
+        )
         scaled_logits = logits / safe_temperature
         shifted = scaled_logits - np.max(scaled_logits, axis=1, keepdims=True)
         exp_scores = np.exp(shifted)
@@ -77,9 +84,18 @@ class ImageClassifier:
         self.model_id = ident if ident else os.path.basename(self.model_path)
 
         logger.info(f"Lazy-loading ONNX classifier model: {self.model_path}")
+        session_options = ort.SessionOptions()
+        if self.num_threads > 0:
+            session_options.intra_op_num_threads = self.num_threads
+            session_options.inter_op_num_threads = 1
         try:
             self.ort_session = ort.InferenceSession(
-                self.model_path, providers=["CPUExecutionProvider"]
+                self.model_path,
+                sess_options=session_options,
+                providers=["CPUExecutionProvider"],
+            )
+            logger.info(
+                "CLS inference threads: %s", self.num_threads or "runtime default"
             )
             logger.info(f"ONNX model loaded: {self.model_path}")
         except Exception as exc:
@@ -163,6 +179,8 @@ class ImageClassifier:
     ) -> tuple[np.ndarray, np.ndarray, str, float]:
         """Runs inference on a NumPy RGB image."""
         self._ensure_initialized()  # Lazy load on first use
+        self.last_stage_timings_ms = {}
+        started = time.perf_counter()
 
         # Ensure image is numpy array
         if isinstance(image, Image.Image):
@@ -186,7 +204,9 @@ class ImageClassifier:
 
         # Run ONNX inference
         ort_inputs = {self.ort_session.get_inputs()[0].name: input_tensor}
+        inference_started = time.perf_counter()
         logits = self.ort_session.run(None, ort_inputs)[0]
+        inference_finished = time.perf_counter()
 
         # HF classifier bundles ship raw logits. Apply stable softmax
         # here, using the variant's calibrated temperature when present.
@@ -213,5 +233,10 @@ class ImageClassifier:
         self.last_decision = decide_label(
             probabilities[0], self.classes or [], self.decision_config
         )
+        self.last_stage_timings_ms = {
+            "preprocess": (inference_started - started) * 1000,
+            "inference": (inference_finished - inference_started) * 1000,
+            "postprocess": (time.perf_counter() - inference_finished) * 1000,
+        }
 
         return top_k_indices, top_k_confidences, top1_class_name, top1_confidence

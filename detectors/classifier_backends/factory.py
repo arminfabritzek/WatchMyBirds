@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from config import DEFAULTS
 from detectors.classifier import ImageClassifier
 from detectors.classifier_backends.base import ClassifierBackend
 from detectors.classifier_backends.inat_tflite import (
@@ -29,9 +30,9 @@ def build_classifier_backend(
     if backend_name == CLASSIFIER_BACKEND_WMB:
         return WMBOnnxClassifierBackend(wmb_classifier)
     if backend_name == CLASSIFIER_BACKEND_INAT:
-        cpu_limit = int(config.get("CPU_LIMIT", 0) or 0)
+        threads = config.get("CLS_NUM_THREADS", DEFAULTS["CLS_NUM_THREADS"])
         return INaturalistTFLiteBirdClassifierBackend(
             model_base_path=str(config.get("MODEL_BASE_PATH", "./data/models")),
-            num_threads=cpu_limit or None,
+            num_threads=int(threads or 0) or None,
         )
     raise ValueError(f"Unsupported classifier backend: {backend_name!r}")
