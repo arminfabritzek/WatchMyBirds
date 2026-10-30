@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.11 - 2026-10-30
+
 ### Changed
 
 - Detection and species classification use separate CPU thread budgets,
