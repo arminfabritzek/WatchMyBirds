@@ -126,6 +126,14 @@ class PathManager:
     def get_report_tmp_dir(self) -> Path:
         return self.base_dir / "report_tmp"
 
+    def get_training_export_dir(self, job_id: str = "") -> Path:
+        if job_id and (
+            len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id)
+        ):
+            raise ValueError("Invalid export job identity")
+        root = self.base_dir / "training_exports"
+        return root / job_id if job_id else root
+
     def disposable_files(self) -> Iterator[tuple[Path, str]]:
         for directory in (self.base_dir / "restore_tmp", self.get_report_tmp_dir()):
             yield from (

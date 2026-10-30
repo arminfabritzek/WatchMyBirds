@@ -23,6 +23,8 @@
 
 - Nightly crop upgrades preserve newer box corrections and skip observations
   deleted during rendering. Only final publication holds a database write lock.
+- Training exports skip unavailable originals before preparing parts, preventing
+  repeated exports from accumulating duplicate metadata-only bundles.
 - Detection processes each decoded frame at most once, skips stale frames and
   carries decoder receipt time through to saved observations.
 - Duplicate detections, classifier rejects and failed saves no longer consume
@@ -36,6 +38,10 @@
   saved rule changes or explicit refresh recalculate them.
 - Selected training exports load only their photo context instead of the entire
   station's answer history, preserving siblings and revision-specific receipts.
+- Full training exports prepare bounded ZIP parts in the background from one
+  saved snapshot, with progress, cancellation, restart recovery and repeatable
+  downloads. Disk-space checks pause preparation; received ZIPs can be removed
+  locally to continue, and expired artifacts are cleaned up without losing receipts.
 
 ## 0.5.10 - 2026-10-25
 

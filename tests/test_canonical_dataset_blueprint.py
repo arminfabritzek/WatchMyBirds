@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config import get_config
+from tests.export_helpers import download_export, prepare_export
 from tests.labeling_helpers import _reset_test_config, _seed, post
 from utils.db import connection as db_connection
 from utils.path_manager import PathManager
@@ -64,6 +65,7 @@ def canonical_client(monkeypatch, tmp_path):
                 },
             )
             yield client, filename
+        app.extensions["training_export_jobs"].close()
 
 
 def test_preview_and_download_share_bundle_and_do_not_write(canonical_client) -> None:
@@ -72,9 +74,7 @@ def test_preview_and_download_share_bundle_and_do_not_write(canonical_client) ->
         before = conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
 
     preview = client.get("/api/canonical-dataset/preview")
-    download = client.post(
-        "/api/canonical-dataset/download", headers={"X-CSRF-Token": "test-csrf-token"}
-    )
+    download = download_export(client)
 
     assert preview.status_code == 200
     assert download.status_code == 200
@@ -310,14 +310,13 @@ def test_canonical_dataset_page_has_no_action_when_no_box_verdict_is_needed(
 
 
 @pytest.mark.parametrize("consume", [True, False])
-def test_download_creates_no_files_under_output(canonical_client, consume):
+def test_prepared_download_does_not_rebuild_files(canonical_client, consume):
     client, _ = canonical_client
     root = Path(get_config()["OUTPUT_DIR"])
+    identifier = prepare_export(client)
     before = {p.relative_to(root) for p in root.rglob("*") if p.is_file()}
-    response = client.post(
-        "/api/canonical-dataset/download",
-        headers={"X-CSRF-Token": "test-csrf-token"},
-        buffered=False,
+    response = client.get(
+        f"/api/canonical-dataset/exports/{identifier}/download", buffered=False
     )
     assert response.status_code == 200
     for chunk in response.response:
@@ -334,6 +333,20 @@ def test_download_creates_no_files_under_output(canonical_client, consume):
             ).fetchone()[0]
             == 1
         )
+    headers = {"X-CSRF-Token": "test-csrf-token"}
+    assert (
+        client.post(
+            f"/api/canonical-dataset/exports/{identifier}/received", headers=headers
+        ).status_code
+        == 303
+    )
+    assert (
+        client.post(
+            f"/api/canonical-dataset/exports/{identifier}/remove-archive",
+            headers=headers,
+        ).status_code
+        == 303
+    )
 
 
 def test_backup_form_streams_selected_options_and_requires_csrf(
@@ -375,9 +388,7 @@ def test_backup_form_streams_selected_options_and_requires_csrf(
 
 def test_repeat_download_is_stable_after_answer_changes(canonical_client) -> None:
     client, filename = canonical_client
-    original = client.post(
-        "/api/canonical-dataset/download", headers={"X-CSRF-Token": "test-csrf-token"}
-    )
+    original = download_export(client)
     with db_connection.closing_connection() as conn:
         export_id = conn.execute("SELECT export_id FROM labeling_exports").fetchone()[0]
         detection_id = conn.execute(
@@ -416,7 +427,13 @@ def test_export_actions_require_auth_csrf_and_valid_selection(canonical_client) 
     client, _ = canonical_client
     assert client.get("/api/canonical-dataset/download").status_code == 405
     assert client.post("/api/canonical-dataset/download").status_code == 403
-    for selection in ("detection:1", [False], ["detection:999999"], []):
+    for selection in (
+        "detection:1",
+        [False],
+        ["detection:999999"],
+        ["detection:999999999999999999999999999999999999"],
+        [],
+    ):
         response = post(
             client, "/api/canonical-dataset/download", {"selection": selection}
         )
@@ -430,13 +447,11 @@ def test_export_actions_require_auth_csrf_and_valid_selection(canonical_client) 
     )
 
 
-def test_missing_original_blocks_repeat_download_without_confirming(
+def test_prepared_download_survives_missing_original_without_confirming(
     canonical_client,
 ) -> None:
     client, filename = canonical_client
-    client.post(
-        "/api/canonical-dataset/download", headers={"X-CSRF-Token": "test-csrf-token"}
-    )
+    download_export(client)
     with db_connection.closing_connection() as conn:
         identifier = conn.execute("SELECT export_id FROM labeling_exports").fetchone()[
             0
@@ -444,10 +459,51 @@ def test_missing_original_blocks_repeat_download_without_confirming(
     PathManager(str(get_config()["OUTPUT_DIR"])).get_original_path(filename).unlink()
     assert (
         client.get(f"/api/canonical-dataset/exports/{identifier}/download").status_code
-        == 409
+        == 200
     )
     with db_connection.closing_connection() as conn:
         assert (
             conn.execute("SELECT received_at FROM labeling_exports").fetchone()[0]
             is None
         )
+
+
+def test_prepared_archive_supports_range_retry_without_receipt(canonical_client):
+    client, _ = canonical_client
+    identifier = prepare_export(client)
+    endpoint = f"/api/canonical-dataset/exports/{identifier}/download"
+    full = client.get(endpoint, buffered=True)
+    first = client.get(endpoint, headers={"Range": "bytes=0-99"}, buffered=True)
+    assert first.status_code == 206
+    assert first.data == full.data[:100]
+    assert first.headers["Content-Range"] == f"bytes 0-99/{len(full.data)}"
+    rest = client.get(
+        endpoint,
+        headers={"Range": "bytes=100-", "If-Range": full.headers["ETag"]},
+        buffered=True,
+    )
+    assert rest.status_code == 206
+    assert first.data + rest.data == full.data
+    with db_connection.closing_connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT received_at FROM labeling_exports WHERE export_id=?",
+                (identifier,),
+            ).fetchone()[0]
+            is None
+        )
+
+
+def test_job_actions_require_authentication_and_csrf(canonical_client):
+    client, _ = canonical_client
+    identifier = prepare_export(client)
+    for endpoint in (
+        f"/api/canonical-dataset/jobs/{identifier}/cancel",
+        f"/api/canonical-dataset/jobs/{identifier}/resume",
+        f"/api/canonical-dataset/exports/{identifier}/remove-archive",
+        f"/api/canonical-dataset/exports/{identifier}/rebuild",
+    ):
+        assert client.post(endpoint).status_code == 403
+    with client.session_transaction() as session:
+        session.clear()
+    assert client.get(f"/api/canonical-dataset/jobs/{identifier}").status_code == 302

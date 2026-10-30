@@ -227,9 +227,48 @@ keys to images, detections or label subjects and survive their deletion. The
 unused legacy `training_exports` table is never explicitly written or altered;
 its existing detection cascade can remove rows when a detection is fully deleted.
 
-ZIP responses stream media in 64 KiB chunks without a temporary archive. Saved
-metadata rebuilds the same bytes after later edits; originals remain immutable.
-Metadata memory scales with the selected photo context, not media byte volume.
+`core/training_export_jobs.py` prepares exports outside HTTP requests. One worker
+per output directory holds a process lock; a partial unique index permits one
+active job. The worker copies SQLite under a read transaction, then catalogs
+waiting photos in batches of 200. Snapshot-copy progress uses a separate small
+file to avoid source WAL growth and backup restarts from progress writes.
+All parts share that durable snapshot, including after cancellation or restart.
+Each independent version-3 ZIP includes its job ID and part number in `snapshot`.
+
+Parts hold at most 1,000 photos, target 1 GiB of media, and cap metadata at
+20,000 source records and 32 MiB of encoded bundle metadata. A single photo may
+exceed the media target, but never the 2 GiB staging budget. Media is copied in
+64 KiB chunks by `core/canonical_archive.py`. Memory scales with one part's
+metadata, not the station's history or total media. The Settings/Training preview
+reads at most 200 photos; export history pages read 20 records without loading
+their bundle JSON. Explicit selection requests still include sibling context.
+
+Artifacts live under checked `PathManager` paths in `output/training_exports`.
+Preparation reserves room for the DB snapshot and pauses before exhausting ZIP
+staging (2 GiB) or filesystem reserve (256 MiB). A complete ZIP is atomically
+published before its export evidence and cursor are committed together. Originals
+already missing during selection are counted and skipped, without storing empty
+export bundles. A selected original that disappears during preparation can appear
+as an exclusion and acquires no export members. Failed partial
+files and unpublished ZIPs are removed. Queued/running jobs resume on startup;
+cancelled/paused/failed jobs can resume the same snapshot explicitly. Concurrent
+answer edits remain waiting if they differ from the exported revisions.
+
+Downloads serve completed files with Content-Length, ETag and Range support,
+without rebuilding after a disconnect. File leases block removal during active
+downloads. Explicit receipt applies to one part; only received parts offer manual
+local ZIP removal. Startup and new preparation remove artifacts older than seven
+days and expire abandoned snapshots, preserving answers and receipt evidence.
+Removed ZIPs can be rebuilt from their recorded context while originals exist;
+that does not change export membership or receipt time. Legacy downloads keep
+their recorded context but reject metadata larger than 32 MiB before decoding it.
+Restoring database evidence without its local ZIPs marks those files unavailable;
+their saved context can still prepare another download. An unfinished job whose
+snapshot is absent fails without rebuilding a different snapshot under the same
+job ID.
+Snapshots, partial files and prepared ZIPs count as temporary exports in storage
+accounting. Snapshot disk use is additional to the ZIP budget.
+
 Explicit answer selections resolve their photos before checking waiting revisions;
 snapshot queries filter photos in SQL with bounded parameter batches, preserving
 complete sibling context and deterministic ordering across those batches.

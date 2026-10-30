@@ -12,6 +12,7 @@ from PIL import Image
 from config import get_config
 from core.deletion_plan import DEFAULT_SETTINGS, deletion_preview
 from core.training_export import waiting_revisions
+from tests.export_helpers import download_export
 from tests.test_restore_database_merge import _make_db
 from tests.test_surface_routes_local_db import local_db_app as local_db_app
 from utils import backup
@@ -58,10 +59,7 @@ def test_legacy_export_upgrade_download_receipt_backup_restore_and_merge(
             session["authenticated"] = True
             session["_csrf_token"] = "upgrade-test"
         assert client.get("/admin/canonical-dataset").status_code == 200
-        response = client.post(
-            "/api/canonical-dataset/download",
-            headers={"X-CSRF-Token": "upgrade-test"},
-        )
+        response = download_export(client, "upgrade-test")
         assert response.status_code == 200 and len(response.data) > 0
         with db_connection.closing_connection() as conn:
             export_id = conn.execute(

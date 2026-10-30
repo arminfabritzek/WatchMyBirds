@@ -21,6 +21,7 @@
             title="Back to Canonical Dataset">Back to dataset</a>
     </header>
 
+    {% if preview_page.next_after %}<a class="btn btn--secondary" href="{{ url_for('canonical_dataset.box_walkthrough_page', after=preview_page.next_after) }}">Next preview</a>{% endif %}
     {% if det %}
     <p class="box-walkthrough__remaining">{{ remaining_count }} waiting on a box verdict</p>
 
@@ -53,7 +54,7 @@
         </div>
     </div>
     {% else %}
-    <p class="box-walkthrough__empty">Every detection with an answered species also has a box verdict.</p>
+    <p class="box-walkthrough__empty">Every detection with an answered species in this preview also has a box verdict.</p>
     <a class="btn btn--primary" href="/admin/canonical-dataset"
         aria-label="Back to Canonical Dataset">Back to dataset</a>
     {% endif %}

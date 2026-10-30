@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
+from typing import Any
 
 import pytest
 from flask import Flask
@@ -19,7 +21,11 @@ from utils.path_manager import PathManager
 @pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_export_download_repeat_and_receipt(
-    local_db_app: Flask, tmp_path: Path, width: int, theme: str
+    local_db_app: Flask,
+    tmp_path: Path,
+    width: int,
+    theme: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
@@ -46,6 +52,17 @@ def test_export_download_repeat_and_receipt(
     path = paths.get_original_path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (600, 400), (115, 130, 110)).save(path)
+    from core import training_export_jobs
+
+    started, release = Event(), Event()
+    original_stream = training_export_jobs.stream_canonical_bundle
+
+    def slow_archive(*args: Any, **kwargs: Any) -> Iterator[bytes]:
+        started.set()
+        assert release.wait(20)
+        yield from original_stream(*args, **kwargs)
+
+    monkeypatch.setattr(training_export_jobs, "stream_canonical_bundle", slow_archive)
     server = make_server("127.0.0.1", 0, local_db_app, threaded=True)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -74,6 +91,19 @@ def test_export_download_repeat_and_receipt(
                 page.get_by_role(
                     "button", name="Export waiting photos", exact=True
                 ).click()
+                assert started.wait(5)
+                page.locator("[data-job-progress]").first.wait_for()
+                assert (
+                    page.request.get(
+                        base + "/admin/canonical-dataset", timeout=3000
+                    ).status
+                    == 200
+                )
+                page.screenshot(
+                    path=str(tmp_path / f"preparing-{width}-{theme}.png"),
+                    full_page=True,
+                )
+                release.set()
             first = tmp_path / "first.zip"
             first_download.value.save_as(first)
             assert first.stat().st_size > 0
@@ -121,10 +151,31 @@ def test_export_download_repeat_and_receipt(
                 path=str(tmp_path / f"received-{width}-{theme}.png"), full_page=True
             )
             assert errors == []
+            page.get_by_role("button", name="Remove local ZIP", exact=True).click()
+            assert page.get_by_role(
+                "button", name="Prepare download again", exact=True
+            ).is_visible()
+            with page.expect_download() as rebuilt_download:
+                page.get_by_role(
+                    "button", name="Prepare download again", exact=True
+                ).click()
+            rebuilt = tmp_path / "rebuilt.zip"
+            rebuilt_download.value.save_as(rebuilt)
+            assert rebuilt.read_bytes() == first.read_bytes()
+            assert (
+                page.get_by_role("button", name="Export received", exact=True).count()
+                == 0
+            )
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= window.innerWidth"
+            )
+            assert errors == []
         finally:
+            release.set()
             browser.close()
             server.shutdown()
             thread.join(timeout=5)
             cache = local_db_app.extensions.get("station_report")
             if cache:
                 cache.close()
+            local_db_app.extensions["training_export_jobs"].close()

@@ -179,19 +179,30 @@ It is an existing image answer, not an unresolved conflict.
 
 ## Training export
 
-The Training export page shows waiting photo counts and recorded exports.
-`Export waiting photos` records the waiting revisions and starts a streamed ZIP
-download. The page immediately shows the new unconfirmed export. `Download again`
-uses its recorded context, even after answers change. `Export received` confirms
-only that export and displays its receipt time. Waiting answers and unconfirmed
+The Training export page shows a paginated preview of at most 200 photos, with
+counts explicitly scoped to that preview. `Export waiting photos` starts a
+background job for all waiting photos. Show its phase, photo/byte progress,
+prepared part count, errors, Cancel and Resume actions. Polling stops on page
+exit. A full job produces independent ZIP parts with up to 1,000 photos and a
+target of 1 GiB each. Explain the 2 GiB local ZIP budget and the additional
+temporary database copy; a paused job resumes after received ZIPs are removed.
+The first available part starts downloading once preparation finishes or pauses.
+Recorded exports have 20-row pages, part numbers and Older/Latest navigation.
+`Download again` serves its completed ZIP, even after answers change.
+`Export received` confirms only that part and displays its receipt time.
+`Remove local ZIP` is available only after confirmation; removed or expired parts
+offer `Prepare download again` using their saved context. Explain seven-day
+artifact expiry and preserved answers/receipts. Waiting answers and unconfirmed
 exports protect photos; missing originals do not wait. Box-quality answers and
-the optional box walkthrough stay available independently of export receipts.
+the optional box walkthrough stay available independently of export receipts;
+the walkthrough retains its preview cursor.
 
 Use the shared `btn` variants. Waiting counts and every unconfirmed export use a
 prominent `alert alert-info` notice with `role="status"`; the notice explains that
 photos remain protected until receipt is confirmed. Export actions wrap at narrow
 widths. Creating and acknowledging exports require authenticated CSRF-protected
-POSTs; downloads never acknowledge receipt.
+POSTs; job actions, rebuilding and local ZIP removal have the same protections.
+Downloads never acknowledge receipt.
 
 ## Live camera status
 

@@ -585,7 +585,43 @@ def _init_training_export_schema(conn: sqlite3.Connection) -> None:
         ON labeling_export_members(kind, object_id, revision_json);
         CREATE INDEX IF NOT EXISTS idx_labeling_export_member_image
         ON labeling_export_members(image_filename);
+        CREATE INDEX IF NOT EXISTS idx_labeling_exports_created
+        ON labeling_exports(created_at DESC, export_id DESC);
+        CREATE TABLE IF NOT EXISTS training_export_jobs (
+            job_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            phase TEXT NOT NULL DEFAULT 'queued',
+            selection_json TEXT,
+            snapshot_ready INTEGER NOT NULL DEFAULT 0,
+            cursor TEXT NOT NULL DEFAULT '',
+            processed INTEGER NOT NULL DEFAULT 0,
+            total INTEGER NOT NULL DEFAULT 0,
+            missing INTEGER NOT NULL DEFAULT 0,
+            error TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_training_export_one_active
+        ON training_export_jobs((1)) WHERE status IN ('queued','running','paused','cancelling');
+        CREATE TABLE IF NOT EXISTS training_export_parts (
+            export_id TEXT PRIMARY KEY REFERENCES labeling_exports(export_id),
+            job_id TEXT NOT NULL REFERENCES training_export_jobs(job_id),
+            part_number INTEGER NOT NULL,
+            archive_bytes INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            available INTEGER NOT NULL DEFAULT 1,
+            artifact_job_id TEXT,
+            UNIQUE(job_id, part_number)
+        );
     """)
+    _ensure_column_on_table(conn, "training_export_parts", "artifact_job_id", "TEXT")
+    for column in ("bytes_done", "bytes_total"):
+        _ensure_column_on_table(
+            conn, "training_export_jobs", column, "INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_training_export_artifact_job ON training_export_parts(artifact_job_id)"
+    )
 
 
 def _init_human_label_schema(conn: sqlite3.Connection) -> None:

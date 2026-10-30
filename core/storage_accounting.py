@@ -61,7 +61,7 @@ def _category(relative: Path) -> str:
         )
     if parts[0] == "restore_tmp":
         return "restore_temporary"
-    if parts[0].startswith("canonical-bundle-"):
+    if parts[0] == "training_exports" or parts[0].startswith("canonical-bundle-"):
         return "temporary_exports"
     if parts[0] in {"archives", "exports"} or name.lower().endswith(
         (".zip", ".tar", ".tar.gz", ".tgz")

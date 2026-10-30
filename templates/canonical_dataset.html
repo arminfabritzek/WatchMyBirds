@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="container py-4 canonical-dataset">
+    {% set active_jobs = jobs|selectattr('status', 'in', ['queued', 'running', 'paused', 'cancelling'])|list %}
     <header class="canonical-dataset__header">
         <div>
             <p class="canonical-dataset__eyebrow">Human-verified training data</p>
@@ -12,15 +13,45 @@
         </div>
         <form method="post" action="/api/canonical-dataset/exports">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-            <button class="btn btn--primary" type="submit" {% if not waiting %}disabled{% endif %}>Export waiting photos</button>
+            <button class="btn btn--primary" type="submit" {% if active_jobs or (not waiting and not preview_page.has_more and not preview_page.after) %}disabled{% endif %}>Export waiting photos</button>
         </form>
     </header>
+    {% if active_jobs %}<p>Finish or cancel the current preparation before starting another export.</p>{% endif %}
 
     <div class="alert alert-info" role="status">
-        <strong>{{ waiting_photos }} {{ 'photo is' if waiting_photos == 1 else 'photos are' }} waiting for training.</strong>
+        <strong>{{ waiting_photos }} {{ 'photo is' if waiting_photos == 1 else 'photos are' }} waiting for training in this preview.</strong>
         <p>Photos stay protected until you confirm “Export received” for their export.
             Changed answers wait again. Answers without an original do not wait.</p>
     </div>
+    <p>The preview shows up to 200 photos. Export processes all waiting photos in the background,
+        in ZIP parts of up to 1,000 photos and about 1 GiB each. Up to 2 GiB of ZIPs are kept locally.
+        Save and confirm each part, then remove its local ZIP to make room for more parts.
+        Preparation also needs space for a temporary copy of the database.
+        Prepared ZIPs expire after seven days; your answers and export receipts stay saved.</p>
+    <nav aria-label="Training preview pages">
+        {% if preview_page.after %}<a class="btn btn--secondary" href="/admin/canonical-dataset">First preview</a>{% endif %}
+        {% if preview_page.next_after %}<a class="btn btn--secondary" href="{{ url_for('canonical_dataset.canonical_dataset_page', after=preview_page.next_after) }}">Next preview</a>{% endif %}
+    </nav>
+    {% for job in jobs %}
+    <section class="alert alert-info" role="status" data-export-job="{{ job.job_id }}" data-job-state="{{ job.status }}">
+        <strong>Export preparation: {{ job.status }}</strong>
+        <p data-job-progress>{{ job.processed }} / {{ job.total }} photos; {{ job.part_count }} ZIP parts prepared.
+            {% if job.missing %}{{ job.missing }} photos have missing originals and are recorded as excluded.{% endif %}</p>
+        {% if job.error %}<p>{{ job.error }}</p>{% endif %}
+        {% if job.status in ['queued','running','paused'] %}
+        <form method="post" action="/api/canonical-dataset/jobs/{{ job.job_id }}/cancel">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn--secondary" type="submit">Cancel preparation</button>
+        </form>
+        {% endif %}
+        {% if job.status in ['failed','paused','cancelled'] %}
+        <form method="post" action="/api/canonical-dataset/jobs/{{ job.job_id }}/resume">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn--secondary" type="submit">Resume preparation</button>
+        </form>
+        {% endif %}
+    </section>
+    {% endfor %}
     <section class="canonical-dataset__exports" aria-labelledby="exports-title">
         <h2 id="exports-title">Recorded exports</h2>
         {% for export in exports %}
@@ -31,19 +62,37 @@
                 <p>{{ export.photo_count }} {{ 'photo remains' if export.photo_count == 1 else 'photos remain' }} protected. Confirm only after you have received this ZIP.</p>
             </div>
             {% endif %}
-            <p>Created <time datetime="{{ export.created_at }}">{{ export.created_at[:16]|replace('T', ' ') }} UTC</time> · {{ export.photo_count }} {{ 'photo' if export.photo_count == 1 else 'photos' }}
+            <p>{% if export.part_number %}Part {{ export.part_number }} · {% endif %}Created <time datetime="{{ export.created_at }}">{{ export.created_at[:16]|replace('T', ' ') }} UTC</time> · {{ export.photo_count }} {{ 'photo' if export.photo_count == 1 else 'photos' }}
                 {% if export.received_at %}<br>Received <time datetime="{{ export.received_at }}">{{ export.received_at[:16]|replace('T', ' ') }} UTC</time>{% endif %}</p>
             <div class="canonical-dataset__export-actions">
+                {% if export.archive_available != 0 %}
                 <a class="btn btn--secondary" href="/api/canonical-dataset/exports/{{ export.export_id }}/download">Download again</a>
+                {% else %}
+                <span>Local ZIP removed or expired.</span>
+                <form method="post" action="/api/canonical-dataset/exports/{{ export.export_id }}/rebuild">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <button class="btn btn--secondary" type="submit">Prepare download again</button>
+                </form>
+                {% endif %}
                 {% if not export.received_at %}
                 <form method="post" action="/api/canonical-dataset/exports/{{ export.export_id }}/received">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                     <button class="btn btn--primary" type="submit">Export received</button>
                 </form>
                 {% endif %}
+                {% if export.received_at and export.archive_available == 1 %}
+                <form method="post" action="/api/canonical-dataset/exports/{{ export.export_id }}/remove-archive">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <button class="btn btn--secondary" type="submit">Remove local ZIP</button>
+                </form>
+                {% endif %}
             </div>
         </article>
         {% else %}<p>No exports recorded yet.</p>{% endfor %}
+        <nav aria-label="Recorded export pages">
+            {% if export_before %}<a class="btn btn--secondary" href="{{ url_for('canonical_dataset.canonical_dataset_page', after=preview_page.after) }}">Latest exports</a>{% endif %}
+            {% if next_export_before %}<a class="btn btn--secondary" href="{{ url_for('canonical_dataset.canonical_dataset_page', after=preview_page.after, export_before=next_export_before) }}">Older exports</a>{% endif %}
+        </nav>
     </section>
 
     <section class="canonical-review{% if not needs_box_verdict_count %} canonical-review--complete{% endif %}"
@@ -69,14 +118,14 @@
         <div class="canonical-review__content">
             {% if needs_box_verdict_count %}
                 <p class="canonical-review__kicker">Fully identified birds that no training job can use for boxes yet.</p>
-                <a class="btn btn--primary btn--lg canonical-review__action" href="/admin/canonical-dataset/box-walkthrough"
+                <a class="btn btn--primary btn--lg canonical-review__action" href="{{ url_for('canonical_dataset.box_walkthrough_page', after=preview_page.after) if preview_page.after else '/admin/canonical-dataset/box-walkthrough' }}"
                     aria-label="Go through detections that need a box verdict"
                     title="Confirm or correct the box on each pending detection">
                     Go through them <span class="canonical-review__arrow" aria-hidden="true">→</span>
                 </a>
             {% else %}
                 <p class="canonical-review__kicker">All caught up</p>
-                <p>No detection is waiting on a box verdict right now.</p>
+                <p>No detection in this preview is waiting on a box verdict.</p>
             {% endif %}
         </div>
     </section>
@@ -105,7 +154,7 @@
         <p>
             Every bird your station recognises, it recognises because someone else sat
             down and corrected it first. If you ever feel like passing that on, the
-            bundle above is what you would send.
+            exports contain the answered photos you could send.
         </p>
 
         <p>
@@ -173,7 +222,5 @@
 
 {% block scripts %}
 {{ super() }}
-{% if download_export_id %}
-<script src="/assets/js/training_export.js?v={{ asset_version }}" defer data-export-download="/api/canonical-dataset/exports/{{ download_export_id }}/download"></script>
-{% endif %}
+<script src="/assets/js/training_export.js?v={{ asset_version }}" defer data-auto-job="{{ auto_job }}"{% if download_export_id %} data-export-download="/api/canonical-dataset/exports/{{ download_export_id }}/download"{% endif %}></script>
 {% endblock %}

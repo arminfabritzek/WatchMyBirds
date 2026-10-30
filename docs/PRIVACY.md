@@ -127,8 +127,13 @@ Previously delivered reports remain until expiry or a deletion request.
 
 ## Training-data exports
 
-The Export page streams a ZIP of answered photos to your browser without writing
-an archive on this device. Each selected photo includes every object and image
+The Export page prepares ZIP parts of answered photos in the background on this
+device. A temporary database copy freezes the answer context; completed ZIPs are
+then downloaded to your browser. Local ZIP staging is limited to 2 GiB, with
+additional space needed for the database copy. Artifacts older than seven days
+are cleaned up on startup or the next preparation; active downloads are preserved.
+You can remove each local ZIP after confirming receipt. Each selected photo
+includes every object and image
 statement on it, manual objects, answer history and model proposal context.
 Sample IDs contain the stable local `labeling_installation_id`, separate from
 the optional heartbeat ID. It identifies the labeling installation across exports.

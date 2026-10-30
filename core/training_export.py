@@ -132,14 +132,41 @@ def waiting_revisions(
     return waiting
 
 
-def list_exports(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def list_exports(
+    conn: sqlite3.Connection, limit: int | None = None, *, before: str = ""
+) -> list[dict[str, object]]:
+    cursor = (
+        "WHERE (created_at,export_id)<(SELECT created_at,export_id FROM labeling_exports WHERE export_id=?)"
+        if before
+        else ""
+    )
     return [
         dict(row)
         for row in conn.execute(
-            """SELECT e.export_id, e.created_at, e.received_at,
-                  COUNT(DISTINCT m.image_filename) AS photo_count
-           FROM labeling_exports e LEFT JOIN labeling_export_members m USING(export_id)
-           GROUP BY e.export_id ORDER BY e.created_at DESC, e.export_id"""
+            f"""WITH selected AS (SELECT export_id,created_at,received_at FROM labeling_exports {cursor}
+           ORDER BY created_at DESC, export_id DESC LIMIT ?)
+           SELECT e.export_id, e.created_at, e.received_at,
+                  COUNT(DISTINCT m.image_filename) AS photo_count, p.available AS archive_available,
+                  p.part_number, p.job_id
+           FROM selected e LEFT JOIN labeling_export_members m USING(export_id)
+           LEFT JOIN training_export_parts p USING(export_id)
+           GROUP BY e.export_id ORDER BY e.created_at DESC, e.export_id DESC""",
+            (*((before,) if before else ()), -1 if limit is None else limit),
+        )
+    ]
+
+
+def preview_filenames(
+    conn: sqlite3.Connection, after: str = "", limit: int = 200
+) -> list[str]:
+    return [
+        str(row[0])
+        for row in conn.execute(
+            """SELECT i.filename FROM images i WHERE i.filename>?
+        AND (EXISTS(SELECT 1 FROM label_subjects s WHERE s.image_filename=i.filename)
+            OR EXISTS(SELECT 1 FROM manual_objects m WHERE m.image_filename=i.filename))
+        ORDER BY i.filename LIMIT ?""",
+            (after, limit + 1),
         )
     ]
 
@@ -231,6 +258,12 @@ def load_export(
     conn: sqlite3.Connection,
     export_id: str,
 ) -> tuple[CanonicalDataset, dict[str, str]]:
+    size = conn.execute(
+        "SELECT length(bundle_json)+length(media_map_json) FROM labeling_exports WHERE export_id=?",
+        (export_id,),
+    ).fetchone()
+    if size is not None and size[0] > 32 * 1024**2:
+        raise ValueError("This legacy export exceeds the download metadata limit")
     row = conn.execute(
         "SELECT * FROM labeling_exports WHERE export_id=?", (export_id,)
     ).fetchone()
