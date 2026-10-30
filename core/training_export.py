@@ -144,6 +144,30 @@ def list_exports(conn: sqlite3.Connection) -> list[dict[str, object]]:
     ]
 
 
+def _selection_filenames(conn: sqlite3.Connection, selection: set[str]) -> list[str]:
+    queries = {
+        "detection": "SELECT image_filename FROM detections WHERE detection_id=?",
+        "manual": "SELECT image_filename FROM manual_objects WHERE manual_object_id=? AND status='active'",
+        "image": "SELECT image_filename FROM label_subjects WHERE subject_id=? AND scope='image'",
+    }
+    names = set()
+    for key in selection:
+        kind, _, identifier = key.partition(":")
+        if (
+            kind not in queries
+            or not identifier.isascii()
+            or not identifier.isdecimal()
+            or len(identifier) > 19
+            or int(identifier) > 2**63 - 1
+        ):
+            raise ValueError("Select current answers waiting for training")
+        row = conn.execute(queries[kind], (int(identifier),)).fetchone()
+        if row is None:
+            raise ValueError("Select current answers waiting for training")
+        names.add(str(row["image_filename"]))
+    return sorted(names)
+
+
 def create_export(
     conn: sqlite3.Connection,
     *,
@@ -155,7 +179,11 @@ def create_export(
     with conn:
         conn.execute("BEGIN IMMEDIATE")
         waiting = waiting_revisions(
-            conn, media_exists=lambda name: resolve(name).is_file()
+            conn,
+            media_exists=lambda name: resolve(name).is_file(),
+            filenames=(
+                _selection_filenames(conn, selection) if selection is not None else None
+            ),
         )
         selected = (
             waiting

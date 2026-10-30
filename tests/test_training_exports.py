@@ -13,8 +13,14 @@ import pytest
 
 from config import get_config
 from core import training_retention
-from core.canonical_dataset import CanonicalDataset
-from core.human_label_core import BBox, HumanAnswer, record_human_answer, retract_answer
+from core.canonical_dataset import CanonicalDataset, build_canonical_dataset
+from core.human_label_core import (
+    BBox,
+    HumanAnswer,
+    LabelProvenance,
+    record_human_answer,
+    retract_answer,
+)
 from core.manual_object_core import (
     ManualObjectDraft,
     create_manual_object,
@@ -33,6 +39,10 @@ from utils.db import connection as db_connection
 from utils.path_manager import PathManager
 from utils.restore import _merge_database
 from web.services.canonical_dataset_service import stream_canonical_bundle
+
+CanonicalCase = tuple[
+    sqlite3.Connection, PathManager, LabelProvenance, list[int], list[int], list[int]
+]
 
 
 def waiting(conn: sqlite3.Connection, paths: PathManager) -> list[dict[str, object]]:
@@ -170,6 +180,44 @@ def test_selection_includes_unanswered_siblings_manual_objects_and_image_facts(
     }
     with pytest.raises(ValueError):
         export(conn, paths, selection={"detection:999999"})
+
+
+def test_selected_export_does_not_inspect_unrelated_photos(
+    canonical_case: CanonicalCase,
+) -> None:
+    from core import training_export
+
+    conn, paths, _, ids, _, _ = canonical_case
+    name = "20260810_090000_partial.jpg"
+    seen = []
+    resolver = training_export.original_resolver(paths)
+
+    def resolve(filename: str) -> Path:
+        seen.append(filename)
+        return resolver(filename)
+
+    with patch.object(training_export, "original_resolver", return_value=resolve):
+        _, bundle = export(conn, paths, selection={f"detection:{ids[0]}"})
+    assert set(seen) == {name}
+    assert bundle.media_filenames == [name]
+
+
+def test_selected_snapshot_is_stable_across_query_batches(
+    canonical_case: CanonicalCase,
+) -> None:
+    conn, paths, *_ = canonical_case
+    names = {row[0] for row in conn.execute("SELECT filename FROM images")}
+    options = dict(
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        filenames=names,
+        media_exists=lambda name: paths.get_original_path(name).is_file(),
+    )
+    expected = build_canonical_dataset(conn, **options)
+    previous_limit = conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 2)
+    try:
+        assert build_canonical_dataset(conn, **options) == expected
+    finally:
+        conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous_limit)
 
 
 def _measure_stream_in_child(

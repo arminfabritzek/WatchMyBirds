@@ -54,6 +54,29 @@ def _rows(
     return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
+def _rows_for_images(
+    conn: sqlite3.Connection,
+    sql: str,
+    filenames: set[str] | None,
+    *,
+    column: str,
+    order: tuple[str, ...],
+) -> list[dict[str, object]]:
+    if filenames is None:
+        return _rows(conn, sql.replace("{selection}", ""))
+    names = sorted(filenames)
+    batch_size = max(1, min(400, conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)))
+    rows = []
+    for start in range(0, len(names), batch_size):
+        batch = names[start : start + batch_size]
+        selected_sql = sql.replace(
+            "{selection}", f" AND {column} IN ({','.join('?' for _ in batch)})"
+        )
+        rows.extend(_rows(conn, selected_sql, tuple(batch)))
+    rows.sort(key=lambda row: tuple(row[key] for key in order))
+    return rows
+
+
 def _stable_sample_id(scope: str, filename: str, detection_id: int | None) -> str:
     value = f"{scope}:{filename}:{detection_id or 'image'}".encode()
     return hashlib.sha256(value).hexdigest()[:24]
@@ -148,7 +171,7 @@ def build_canonical_dataset(
     media_size: Callable[[str], tuple[int, int] | None] | None = None,
 ) -> CanonicalDataset:
     """Derive all views from explicit facts without mutating the database."""
-    subjects = _rows(
+    subjects = _rows_for_images(
         conn,
         """
         SELECT s.subject_id, s.scope, s.image_filename, s.detection_id,
@@ -161,10 +184,14 @@ def build_canonical_dataset(
         FROM label_subjects s
         JOIN images i ON i.filename = s.image_filename
         LEFT JOIN detections d ON d.detection_id = s.detection_id
+        WHERE 1 {selection}
         ORDER BY s.subject_id
         """,
+        filenames,
+        column="s.image_filename",
+        order=("subject_id",),
     )
-    facts = _rows(
+    facts = _rows_for_images(
         conn,
         """
         SELECT f.fact_id, f.schema_version, f.subject_id, s.scope,
@@ -176,19 +203,20 @@ def build_canonical_dataset(
                f.supersedes_fact_id
         FROM human_label_facts f
         JOIN label_subjects s ON s.subject_id = f.subject_id
+        WHERE 1 {selection}
         ORDER BY f.fact_id
         """,
+        filenames,
+        column="s.image_filename",
+        order=("fact_id",),
     )
-    current_facts = _rows(
+    current_facts = _rows_for_images(
         conn,
-        "SELECT * FROM current_human_label_facts ORDER BY subject_id, fact_type",
+        "SELECT * FROM current_human_label_facts WHERE 1 {selection} ORDER BY subject_id, fact_type",
+        filenames,
+        column="image_filename",
+        order=("subject_id", "fact_type"),
     )
-    if filenames is not None:
-        subjects = [row for row in subjects if row["image_filename"] in filenames]
-        facts = [row for row in facts if row["image_filename"] in filenames]
-        current_facts = [
-            row for row in current_facts if row["image_filename"] in filenames
-        ]
     current_by_subject = _current_by_subject(current_facts)
     subject_by_detection = {
         int(subject["detection_id"]): subject
@@ -200,20 +228,22 @@ def build_canonical_dataset(
         for subject in subjects
         if subject["scope"] == "image"
     }
-    manual_objects = _rows(
-        conn, "SELECT * FROM manual_objects ORDER BY manual_object_id"
+    manual_objects = _rows_for_images(
+        conn,
+        "SELECT * FROM manual_objects WHERE 1 {selection} ORDER BY manual_object_id",
+        filenames,
+        column="image_filename",
+        order=("manual_object_id",),
     )
-    manual_revisions = _rows(
-        conn, "SELECT * FROM manual_object_revisions ORDER BY manual_revision_id"
+    manual_revisions = _rows_for_images(
+        conn,
+        """SELECT r.* FROM manual_object_revisions r
+        JOIN manual_objects m ON m.manual_object_id=r.manual_object_id
+        WHERE 1 {selection} ORDER BY r.manual_revision_id""",
+        filenames,
+        column="m.image_filename",
+        order=("manual_revision_id",),
     )
-    if filenames is not None:
-        manual_objects = [
-            row for row in manual_objects if row["image_filename"] in filenames
-        ]
-        manual_ids = {row["manual_object_id"] for row in manual_objects}
-        manual_revisions = [
-            row for row in manual_revisions if row["manual_object_id"] in manual_ids
-        ]
     candidate_filenames = sorted(
         {str(subject["image_filename"]) for subject in subjects}
         | {
@@ -222,17 +252,16 @@ def build_canonical_dataset(
             if obj["status"] == "active"
         }
     )
-    detections = _rows(
+    detections = _rows_for_images(
         conn,
         """
-        SELECT detection_id, image_filename, frame_width, frame_height, status, bbox_x, bbox_y, bbox_w, bbox_h, raw_species_name, decision_state, decision_level FROM detections WHERE image_filename IN (
-            SELECT image_filename FROM label_subjects
-            UNION SELECT image_filename FROM manual_objects WHERE status = 'active'
-        ) ORDER BY image_filename, detection_id
+        SELECT detection_id, image_filename, frame_width, frame_height, status, bbox_x, bbox_y, bbox_w, bbox_h, raw_species_name, decision_state, decision_level FROM detections
+        WHERE 1 {selection} ORDER BY image_filename, detection_id
     """,
+        set(candidate_filenames),
+        column="image_filename",
+        order=("image_filename", "detection_id"),
     )
-    candidate_names = set(candidate_filenames)
-    detections = [row for row in detections if row["image_filename"] in candidate_names]
     image_facts = {
         name: current_by_subject.get(int(subject["subject_id"]), [])
         for name, subject in image_subjects.items()

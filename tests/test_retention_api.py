@@ -1,6 +1,8 @@
 """Retention API — preview + run routes and missing-original (410) serving."""
 
 import threading
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from flask import Flask
@@ -62,6 +64,7 @@ def client(output_dir, monkeypatch):
         with c.session_transaction() as sess:
             sess["authenticated"] = True
         yield c
+    app.extensions["retention_preview"].wait(timeout=2)
     nightly_job_hub._registry.clear()
 
 
@@ -69,6 +72,9 @@ def test_preview_returns_counts_and_is_side_effect_free(client, output_dir):
     fn = "20260101_120000_a.jpg"
     _seed_deletable(output_dir, fn)
 
+    resp = client.get("/api/v1/retention/preview")
+    assert resp.status_code == 202
+    client.application.extensions["retention_preview"].wait(timeout=2)
     resp = client.get("/api/v1/retention/preview")
     assert resp.status_code == 200
     data = resp.get_json()
@@ -85,10 +91,54 @@ def test_preview_returns_counts_and_is_side_effect_free(client, output_dir):
 
 
 def test_preview_reports_switch_and_upcoming_files(client: FlaskClient) -> None:
+    client.get("/api/v1/retention/preview")
+    client.application.extensions["retention_preview"].wait(timeout=2)
     data = client.get("/api/v1/retention/preview").get_json()
     assert data["enabled"] is True
     assert data["settings"]["old_bird_photos"] == "keep_previews"
     assert "next_14_days" in data
+
+
+def test_slow_preview_returns_progress_without_blocking_requests(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core import retention_core
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def build(
+        *,
+        settings: dict[str, Any],
+        progress_callback: Callable[[dict[str, int]], None],
+    ) -> dict[str, Any]:
+        calls.append(1)
+        progress_callback(dict(images_total=100, images_done=3))
+        started.set()
+        assert release.wait(timeout=2)
+        return dict(due_files=0, due_bytes=0)
+
+    monkeypatch.setattr(retention_core, "preview", build)
+    try:
+        assert client.get("/api/v1/retention/preview").status_code == 202
+        assert started.wait(timeout=1)
+        for _ in range(3):
+            response = client.get("/api/v1/retention/preview?refresh=1")
+            assert response.status_code == 202
+            assert response.get_json()["progress"] == dict(
+                images_total=100, images_done=3
+            )
+        assert calls == [1]
+    finally:
+        release.set()
+        client.application.extensions["retention_preview"].wait(timeout=2)
+    response = client.get("/api/v1/retention/preview")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "complete"
+    assert response.get_json()["due_files"] == 0
+    assert response.get_json()["calculated_at"]
+    assert calls == [1]
 
 
 def test_run_starts_shared_job_and_deletes_previewed_set(client, output_dir):

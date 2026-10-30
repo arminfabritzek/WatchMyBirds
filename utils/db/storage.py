@@ -101,11 +101,13 @@ def prepare_canonical_views(conn: sqlite3.Connection) -> None:
         ("current_human_label_facts", "image_filename"),
     ]:
         conn.execute(f'''CREATE TEMP VIEW "{table}" AS SELECT source.* FROM main."{table}" source
-            JOIN temp.storage_selection selected ON selected.filename=source."{column}"''')
+            WHERE source."{column}" IN (SELECT filename FROM temp.storage_selection)''')
     conn.execute("""CREATE TEMP VIEW human_label_facts AS SELECT source.*
-        FROM main.human_label_facts source JOIN temp.label_subjects subject ON subject.subject_id=source.subject_id""")
+        FROM main.human_label_facts source
+        WHERE source.subject_id IN (SELECT subject_id FROM temp.label_subjects)""")
     conn.execute("""CREATE TEMP VIEW manual_object_revisions AS SELECT source.*
-        FROM main.manual_object_revisions source JOIN temp.manual_objects object ON object.manual_object_id=source.manual_object_id""")
+        FROM main.manual_object_revisions source
+        WHERE source.manual_object_id IN (SELECT manual_object_id FROM temp.manual_objects)""")
 
 
 def select_images(conn: sqlite3.Connection, filenames: list[str]) -> None:

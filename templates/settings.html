@@ -1017,25 +1017,54 @@
         return `${v.toFixed(1)} ${u[i]}`;
     }
 
-    function retentionPreview() {
+    let retentionPreviewTimer = null;
+    let retentionPreviewRequest = 0;
+
+    function stopRetentionPreview() {
+        retentionPreviewRequest += 1;
+        window.clearTimeout(retentionPreviewTimer);
+    }
+
+    window.addEventListener('pagehide', stopRetentionPreview);
+
+    function retentionPreview(refresh = true) {
+        stopRetentionPreview();
+        const ticket = retentionPreviewRequest;
         const out = document.getElementById('retentionResult');
         out.textContent = 'Calculating the next 14 days…';
-        fetch('/api/v1/retention/preview')
-            .then(res => { if (!res.ok) throw new Error('Preview unavailable'); return res.json(); })
-            .then(data => {
+
+        async function poll(forceRefresh = false) {
+            if (ticket !== retentionPreviewRequest) return;
+            try {
+                const response = await fetch('/api/v1/retention/preview' + (forceRefresh ? '?refresh=1' : ''), { cache: 'no-store' });
+                if (!response.ok || response.redirected) throw new Error('Preview unavailable');
+                const data = await response.json();
+                if (ticket !== retentionPreviewRequest) return;
+                if (data.status === 'running') {
+                    const progress = data.progress || {};
+                    out.textContent = `Calculating the next 14 days… ${progress.images_done || 0} / ${progress.images_total || 0} photos checked.`;
+                    retentionPreviewTimer = window.setTimeout(() => poll(), 1000);
+                    return;
+                }
+                if (data.status === 'failed') throw new Error('Preview failed. Refresh deletion preview to retry.');
                 const next = data.next_14_days;
                 const state = data.enabled ? 'Automatic deletion is on.' : 'Automatic deletion is off. Nothing is deleted while it is off.';
                 const grace = data.enabled ? ` Last enabled ${new Date(data.enabled_at).toLocaleString()}.` : ' This preview assumes activation today.';
                 out.textContent = `${state}${grace} Due within the next 14 days, including overdue files: ${next.photos} photo${next.photos === 1 ? '' : 's'}, ${next.files} file${next.files === 1 ? '' : 's'} (${_fmtBytes(next.bytes)}). Open cases and model non-birds have at least 14 days after enabling deletion. This includes the existing Review backlog. Apply Settings after changing a choice, then refresh the preview.`;
+                if (data.calculated_at) out.textContent += ` Calculated ${new Date(data.calculated_at).toLocaleString()}. Refresh to include newer observations.`;
                 if (!data.migration_ready) out.textContent += ' Deletion is blocked until the answer migration finishes.';
                 if (data.errors || data.unknown_deadlines) out.textContent += ' Some paths or deadline dates could not be checked; see Storage usage.';
                 _updateRetentionLastRun(data.last_run);
-            })
-            .catch(err => { out.textContent = `Error: ${err.message || 'request failed'}`; });
+            } catch (err) {
+                if (ticket === retentionPreviewRequest) out.textContent = `Error: ${err.message || 'request failed'}`;
+            }
+        }
+        poll(refresh);
     }
 
     function retentionRun() {
         if (!confirm('Delete all files and rows currently due under your saved photo rules, including expired trash? This cannot be undone.')) return;
+        stopRetentionPreview();
         const out = document.getElementById('retentionResult');
         out.textContent = 'Starting cleanup…';
         fetch('/api/v1/retention/run', { method: 'POST' })
@@ -3734,13 +3763,14 @@
     function togglePanel(id) {
         const panel = document.getElementById(id);
         const wasOpen = panel.classList.contains('is-open');
+        stopRetentionPreview();
 
         // Close all
         document.querySelectorAll('.settings-panel.is-open').forEach(p => p.classList.remove('is-open'));
 
         // Open clicked if it was closed
         if (!wasOpen) panel.classList.add('is-open');
-        if (id === 'panelRetention' && !wasOpen) retentionPreview();
+        if (id === 'panelRetention' && !wasOpen) retentionPreview(false);
 
         // One accordion action can close either scheduled-job panel while
         // opening another. Recompute both visibility states together so the

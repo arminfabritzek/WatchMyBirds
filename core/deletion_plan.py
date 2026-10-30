@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import stat
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -566,6 +566,7 @@ def deletion_preview(
     *,
     paths: PathManager,
     automatic_deletion_enabled_at: datetime | None = None,
+    progress_callback: Callable[[dict[str, int]], None] | None = None,
 ) -> dict[str, Any]:
     classes: dict[str, dict[str, int]] = defaultdict(lambda: dict(files=0, bytes=0))
     waiting: dict[str, dict[str, int]] = defaultdict(lambda: dict(photos=0, bytes=0))
@@ -574,6 +575,9 @@ def deletion_preview(
     fortnight_files = fortnight_bytes = fortnight_photos = 0
     horizon = now + timedelta(days=14)
     forecast = StorageForecast(now, enabled=automatic_deletion_enabled_at is not None)
+    processed = 0
+    if progress_callback:
+        progress_callback(dict(images_done=processed))
     for photo in plan_deletions(
         conn,
         settings,
@@ -624,6 +628,11 @@ def deletion_preview(
                 )
                 upcoming.sort(key=lambda entry: (entry["deadline"], entry["reference"]))
                 del upcoming[20:]
+        processed += 1
+        if progress_callback and processed % 200 == 0:
+            progress_callback(dict(images_done=processed))
+    if progress_callback and processed % 200:
+        progress_callback(dict(images_done=processed))
     return dict(
         settings=asdict(settings),
         classes=dict(classes),

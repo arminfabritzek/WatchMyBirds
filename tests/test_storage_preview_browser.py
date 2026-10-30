@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 from flask import Flask
@@ -9,6 +10,7 @@ from PIL import Image
 from werkzeug.serving import make_server
 
 from config import get_config, update_runtime_settings
+from core import retention_core
 from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
 from core.storage_forecast import forecast_capacity
 from core.training_export import create_export
@@ -74,6 +76,20 @@ def test_storage_preview_measurement_and_status_notices(
             selection={f"detection:{identifier}"},
         )
     originals_before = {p: p.read_bytes() for p in paths.originals_dir.rglob("*.jpg")}
+    preview_release = Event()
+    original_preview = retention_core.preview
+
+    def slow_preview(
+        *,
+        settings: dict | None = None,
+        progress_callback: Callable[[dict[str, int]], None] | None = None,
+    ) -> dict:
+        assert progress_callback is not None
+        progress_callback(dict(images_done=2, images_total=4))
+        assert preview_release.wait(timeout=20)
+        return original_preview(settings=settings, progress_callback=progress_callback)
+
+    monkeypatch.setattr(retention_core, "preview", slow_preview)
     server = make_server("127.0.0.1", 0, local_db_app, threaded=True)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -164,6 +180,16 @@ def test_storage_preview_measurement_and_status_notices(
             assert page.locator("#storage-upcoming tr").count() > 0
             page.goto(base + "/settings")
             page.locator("#panelRetention .settings-panel__trigger").click()
+            page.wait_for_function(
+                "() => document.getElementById('retentionResult').textContent.includes('2 / 4 photos checked')"
+            )
+            response = page.request.get(base + "/api/v1/retention/preview")
+            assert response.status == 202
+            assert response.json()["progress"]["images_done"] == 2
+            page.locator("#panelRetention").screenshot(
+                path=str(tmp_path / f"preview-running-{width}-{theme}.png")
+            )
+            preview_release.set()
             page.wait_for_function(
                 "() => document.getElementById('retentionResult').textContent.includes('Due within the next 14 days')"
             )
@@ -286,6 +312,8 @@ def test_storage_preview_measurement_and_status_notices(
             with closing_connection() as conn:
                 assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 4
         finally:
+            preview_release.set()
+            local_db_app.extensions["retention_preview"].wait(timeout=5)
             browser.close()
             server.shutdown()
             thread.join(timeout=5)

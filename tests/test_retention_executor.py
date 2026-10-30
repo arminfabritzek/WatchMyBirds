@@ -367,6 +367,58 @@ def test_bounded_batches_and_cooperative_stop(case: Case) -> None:
     assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 984
 
 
+def test_retained_photos_share_one_directory_scan_per_batch(case: Case) -> None:
+    conn, paths = case
+    for index in range(12):
+        add(conn, paths, f"favorite{index}", favorite=True)
+    before = media(paths)
+    scanned = []
+    original = Path.glob
+
+    def glob(directory: Path, pattern: str) -> Iterator[Path]:
+        scanned.append(directory)
+        return original(directory, pattern)
+
+    with patch.object(Path, "glob", glob):
+        result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert result["processed"] == 12
+    assert result["deleted"] == result["deleted_rows"] == result["errors"] == 0
+    assert len(scanned) == 1
+    assert media(paths) == before
+
+
+def test_answer_after_batch_plan_is_rechecked_before_deletion(case: Case) -> None:
+    from core import retention_core
+
+    conn, paths = case
+    protected, did = add(conn, paths, "answered_during_scan")
+    add(conn, paths, "ordinary")
+    original = retention_core.plan_deletions
+    changed = False
+
+    def concurrent_answer(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        nonlocal changed
+        yield from original(*args, **kwargs)
+        if not changed and len(kwargs.get("filenames", [])) > 1:
+            changed = True
+            with sqlite3.connect(paths.get_database_path()) as other:
+                other.row_factory = sqlite3.Row
+                answer(other, protected, did, object_bird_presence="present")
+
+    with patch.object(retention_core, "plan_deletions", concurrent_answer):
+        result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
+    assert changed and result["errors"] == 0
+    assert paths.get_original_path(protected).is_file()
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM current_human_label_facts WHERE image_filename=?",
+            (protected,),
+        ).fetchone()[0]
+        == 1
+    )
+    assert result["deleted"] > 0
+
+
 def test_released_shared_photo_cleans_up_unreferenced_crops(case: Case) -> None:
     conn, paths = case
     name, did = add(conn, paths, "siblings", detections=2, review_status="untagged")

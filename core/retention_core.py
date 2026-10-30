@@ -59,19 +59,28 @@ def _settings_from_config() -> dict[str, Any]:
     return load_settings_yaml(str(get_config()["OUTPUT_DIR"]))
 
 
-def preview() -> dict[str, Any]:
+def preview(
+    *,
+    settings: dict[str, Any] | None = None,
+    progress_callback: Callable[[dict[str, int]], None] | None = None,
+) -> dict[str, Any]:
     from config import get_config
     from utils.db import closing_connection
 
     paths = PathManager(str(get_config()["OUTPUT_DIR"]))
     with closing_connection() as conn:
-        settings = _settings_from_config()
+        settings = settings if settings is not None else _settings_from_config()
+        conn.execute("BEGIN")
+        if progress_callback:
+            total = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
+            progress_callback(dict(images_total=total))
         result = deletion_preview(
             conn,
             settings_for_plan(settings),
             datetime.now(UTC),
             paths=paths,
             automatic_deletion_enabled_at=activation_date(settings),
+            progress_callback=progress_callback,
         )
         result["migration_ready"] = human_answers_migrated(conn)
     result["enabled"] = activation_date(settings) is not None
@@ -228,42 +237,47 @@ def execute_plan(
         return result
     result["total"] = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
     for batch in image_batches(conn, batch_size):
-        candidates = None
-        if pressure_stage:
-            current = current_settings()
-            original_markers = {
-                image["filename"]: image["original_present"] for image in batch
-            }
-            # Filter bounded candidates without locking unchanged retained history.
-            # Each selected photo still gets a new authoritative plan under the lock.
-            candidates = {
-                photo.filename
-                for photo in plan_deletions(
-                    conn,
-                    settings_for_plan(current),
-                    now,
-                    paths=paths,
-                    filenames=list(original_markers),
-                    automatic_deletion_enabled_at=activation_date(current),
-                    pressure_stage=pressure_stage,
+        if stop_requested and stop_requested():
+            result["stopped"] = True
+            break
+        current = current_settings()
+        enabled_at = activation_date(current)
+        if enabled_at is None:
+            result["disabled"] = True
+            break
+        original_markers = {
+            image["filename"]: image["original_present"] for image in batch
+        }
+        # Only actionable photos need a second inventory and a write lock. Every
+        # deletion still uses a fresh plan under that lock, including new answers.
+        candidates = {
+            photo.filename
+            for photo in plan_deletions(
+                conn,
+                settings_for_plan(current),
+                now,
+                paths=paths,
+                filenames=list(original_markers),
+                automatic_deletion_enabled_at=enabled_at,
+                pressure_stage=pressure_stage,
+            )
+            if any(item.error for item in photo.files)
+            or any(row.decision.due(now) for row in photo.rows)
+            or any(
+                item.decision.due(now)
+                and (
+                    item.present
+                    or item.category == "original"
+                    and original_markers[photo.filename]
                 )
-                if any(item.error for item in photo.files)
-                or any(row.decision.due(now) for row in photo.rows)
-                or any(
-                    item.decision.due(now)
-                    and (
-                        item.present
-                        or item.category == "original"
-                        and original_markers[photo.filename]
-                    )
-                    for item in photo.files
-                )
-            }
+                for item in photo.files
+            )
+        }
         for image in batch:
             if stop_requested and stop_requested():
                 result["stopped"] = True
                 break
-            if candidates is not None and image["filename"] not in candidates:
+            if image["filename"] not in candidates:
                 result["processed"] += 1
                 continue
             conn.execute("BEGIN IMMEDIATE")

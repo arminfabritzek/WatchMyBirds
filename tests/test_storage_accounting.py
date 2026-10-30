@@ -50,6 +50,22 @@ def scan(output: Path, **kwargs: Any) -> dict[str, Any]:
     )
 
 
+def test_scan_reports_preview_and_protection_progress(output: Path) -> None:
+    with closing_connection() as conn:
+        for index in range(3):
+            seed_image(conn, f"20260101_12000{index}_bird.jpg", output)
+    progress = []
+    result = scan(output, progress=progress.append)
+    assert result["database_error"] is None
+    for phase in ("preview", "protection"):
+        assert [
+            item["images_done"] for item in progress if item.get("phase") == phase
+        ] == [
+            0,
+            3,
+        ]
+
+
 def test_measured_categories_protections_overlap_and_no_deletion(output: Path) -> None:
     with closing_connection() as conn:
         seed_image(conn, "20260101_120000_eligible.jpg", output, orig_bytes=100)

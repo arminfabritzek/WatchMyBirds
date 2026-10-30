@@ -461,6 +461,9 @@ def inspect_storage(
                 now,
                 paths=path_mgr,
                 automatic_deletion_enabled_at=activation_date(settings),
+                progress_callback=lambda value: progress(
+                    dict(phase="preview", **value)
+                ),
             )
             preview["enabled"] = activation_date(settings) is not None
             preview["enabled_at"] = (
@@ -468,6 +471,7 @@ def inspect_storage(
                 if preview["enabled"]
                 else None
             )
+            progress(dict(phase="protection", images_done=0))
             protection = protection_summary(conn, path_mgr, settings, now, progress)
             conn.rollback()
             changed_db = (

@@ -219,7 +219,9 @@ export, including unchanged context siblings. Historical facts and legacy flags
 alone grant no training protection. Favorites remain a separate retention rule.
 An idempotent receipt stores `received_at` for that export only; it is the reference
 time for deletion deadlines. `core/retention_core.py` executes due planner actions,
-rechecking each photo under `BEGIN IMMEDIATE` before files and then rows.
+first filtering bounded photo batches for due work or media errors. Retained
+photos share the batch inventory without acquiring write locks. Each deletion
+candidate gets a fresh plan under `BEGIN IMMEDIATE` before files and then rows.
 Setting changes serialize with that transaction. Export records have no foreign
 keys to images, detections or label subjects and survive their deletion. The
 unused legacy `training_exports` table is never explicitly written or altered;
@@ -228,11 +230,21 @@ its existing detection cascade can remove rows when a detection is fully deleted
 ZIP responses stream media in 64 KiB chunks without a temporary archive. Saved
 metadata rebuilds the same bytes after later edits; originals remain immutable.
 Metadata memory scales with the selected photo context, not media byte volume.
+Explicit answer selections resolve their photos before checking waiting revisions;
+snapshot queries filter photos in SQL with bounded parameter batches, preserving
+complete sibling context and deterministic ordering across those batches.
 Missing originals make a repeat download fail explicitly. SQLite backup includes
 both tables; USB merge maps membership IDs and media locations while preserving
 the original snapshot and sample IDs.
 
 ## Storage diagnostics
+
+`core/retention_preview.py` owns one deletion-preview worker per Flask application.
+Settings requests return progress promptly while the worker calculates a stable
+database snapshot; subsequent reads reuse the completed result and calculation
+time. Explicit refresh or changed saved photo rules trigger recalculation. Rule
+changes during a run discard its obsolete result and coalesce into one new run.
+Captures alone do not restart a running preview. This worker never executes deletion.
 
 `core/storage_scan.py` owns one manually started scan per Flask application and
 persists the latest report plus at most 32 measurements via PathManager. Status
@@ -243,9 +255,12 @@ Missing optional scopes, access failures and live changes remain visible. Inacti
 Linux automounts are detected from the kernel mount table and left unmounted.
 
 SQLite diagnostics use a read-only transaction. Connection-local TEMP views limit
-the unchanged canonical exporter to batches of 200 complete images; they never
-modify source tables. Protection attribution reuses the existing training predicate
-and retention decision, with overlapping reasons and a distinct protected union.
+the canonical exporter to batches of 200 complete images; they never
+modify source tables. Indexed selection predicates also bound history reads when
+the exporter sorts metadata. The deletion-preview phase reports image progress
+before protection accounting starts. Protection attribution reuses the existing
+training predicate and retention decision, with overlapping reasons and a
+distinct protected union.
 Readiness does not release training protection. The filesystem scan is not atomic;
 concurrent files/DB changes make reclaim estimates provisional. Training export receipts are recorded separately from temporary-file diagnostics.
 

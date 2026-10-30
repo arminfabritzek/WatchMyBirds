@@ -27,6 +27,15 @@
   carries decoder receipt time through to saved observations.
 - Duplicate detections, classifier rejects and failed saves no longer consume
   burst capacity; unsaved detections do not trigger live events or alerts.
+- Storage Retention skips retained photos in bounded batches, avoiding repeated
+  crop-directory scans and unnecessary write locks.
+- Storage measurements bound training-history reads to each photo batch and
+  report progress while preparing the deletion preview.
+- Settings prepares deletion previews in the background with progress updates,
+  avoiding long HTTP requests. Completed previews show their calculation time;
+  saved rule changes or explicit refresh recalculate them.
+- Selected training exports load only their photo context instead of the entire
+  station's answer history, preserving siblings and revision-specific receipts.
 
 ## 0.5.10 - 2026-10-25
 

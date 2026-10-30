@@ -1351,8 +1351,14 @@ and species answers continue through their normal controls.
 12. Storage Retention lives in Settings (`#panelRetention`) using the standard
     `settings-panel` / `settings-field` shells. It has one Automatic deletion
     switch and the Old bird photos choices Keep previews / Delete everything.
-    Opening the panel calculates the next 14 days with the same status notice
-    as storage, explicitly including the existing Review backlog. The switch
+    Opening the panel requests one background preview of the next 14 days using
+    the same status notice as storage, including the existing Review backlog.
+    Show checked-photo progress while running. Reopening reuses the completed
+    result and shows its calculation time; Refresh deletion preview explicitly
+    recalculates newer observations. Saved photo-rule changes invalidate the
+    result, including changes during a running calculation. Polling coalesces
+    with the active calculation and never runs the scan in an HTTP request.
+    Failures stop polling and offer explicit retry. The switch
     also gates Clean up now. Show the last run's removed file and row counts,
     bytes, missing files and errors. Original-serving routes return `410 Gone`
     for a retained image whose original was retired; history and answers remain

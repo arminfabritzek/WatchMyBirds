@@ -7,11 +7,22 @@ connection is opened inside core.retention_core.
 from typing import Any
 
 from core import retention_core
+from core.retention_preview import RetentionPreview
 
 
-def preview() -> dict[str, Any]:
-    """Preview the same deadlines the deletion job executes."""
-    return retention_core.preview()
+def create_preview() -> RetentionPreview:
+    return RetentionPreview(
+        lambda settings, progress: retention_core.preview(
+            settings=settings, progress_callback=progress
+        ),
+        retention_core._settings_from_config,
+    )
+
+
+def preview(worker: RetentionPreview, *, refresh: bool = False) -> dict[str, Any]:
+    state = worker.request(refresh=refresh)
+    result = state.pop("result")
+    return {**(result or {}), **state}
 
 
 def start_run() -> dict[str, Any]:
