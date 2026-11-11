@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
+from core.best_originals import best_original_keys, original_exists
 from core.storage_forecast import StorageForecast
 from core.training_export import answer_revisions, list_exports
 from core.training_retention import protection_sources_any
@@ -26,6 +27,9 @@ class DeletionSettings:
     reserve_bytes: int = 256 * 1024**2
     trash_days: int = 30
     other_days: int = 14
+    keep_for_training: bool = True
+    # 0 keeps the planner neutral; installations get their number from settings.
+    best_per_species: int = 0
 
     def __post_init__(self) -> None:
         if self.old_bird_photos not in {"keep_previews", "delete_all"}:
@@ -117,13 +121,17 @@ def _strongest(actions: list[Action]) -> Action:
     return max(actions, key=lambda item: (item.deadline, -item.rule))
 
 
-def _rule(obj: dict[str, Any], sources: set[str], answered: bool) -> tuple[int, str]:
+def _rule(
+    obj: dict[str, Any], sources: set[str], answered: bool, best: bool = False
+) -> tuple[int, str]:
     if obj.get("status") == "rejected":
         return 1, "Trash"
     if obj.get("is_favorite"):
         return 2, "Favorite"
     if sources:
         return 3, ", ".join(sorted(sources))
+    if best:
+        return 7, "Best of species"
     if answered:
         return 4, "Answered"
     if obj.get("admitted"):
@@ -144,10 +152,11 @@ def _actions(
     answered_at: datetime | None = None,
     pressure_stage: int = 0,
     now: datetime | None = None,
+    best: bool = False,
 ) -> tuple[Action, Action, Action]:
-    rule, reason = _rule(obj, sources, answered)
+    rule, reason = _rule(obj, sources, answered, best)
     keep = Action("keep", rule, reason)
-    if rule in {2, 3}:
+    if rule in {2, 3, 7}:
         return keep, keep, keep
     if pressure_stage and rule != 1:
         early = Action("delete", rule, reason + ": low free space", now)
@@ -171,9 +180,12 @@ def _actions(
             settings.trash_days if rule == 1 else settings.other_days,
         )
         return action, action, action
-    base = received if rule == 4 else captured
-    if rule == 4 and base is None and original_missing:
-        base = answered_at
+    base = captured
+    # Without training retention an answered photo ages like any other bird.
+    if rule == 4 and (settings.keep_for_training or original_missing):
+        base = received
+        if base is None and original_missing:
+            base = answered_at
     if rule == 4 and obj.get("presence") == "absent":
         action = _expire(rule, "Answered no bird", base, settings.other_days)
         return action, action, keep
@@ -306,6 +318,7 @@ def plan_deletions(
     filenames: list[str] | None = None,
     automatic_deletion_enabled_at: datetime | None = None,
     pressure_stage: int = 0,
+    best_keys: frozenset[str] | None = None,
 ) -> Iterator[PhotoPlan]:
     """Yield complete photos in bounded batches, without SQL or filesystem writes.
 
@@ -321,6 +334,13 @@ def plan_deletions(
     enabled_at = automatic_deletion_enabled_at or now
     if enabled_at.tzinfo is None:
         raise ValueError("automatic_deletion_enabled_at must include a timezone")
+    keepers = (
+        best_keys
+        if best_keys is not None
+        else best_original_keys(
+            conn, settings.best_per_species, media_exists=original_exists(paths)
+        )
+    )
     for batch in image_batches(conn, batch_size, filenames=filenames):
         names = [str(row["filename"]) for row in batch]
         marks = ",".join("?" for _ in names)
@@ -334,12 +354,16 @@ def plan_deletions(
             for name in names
             if Path(name).name == name
         }
-        sources = protection_sources_any(
-            conn,
-            names,
-            media_exists=lambda name, files=originals: (
-                name in files and files[name].present
-            ),
+        sources = (
+            protection_sources_any(
+                conn,
+                names,
+                media_exists=lambda name, files=originals: (
+                    name in files and files[name].present
+                ),
+            )
+            if settings.keep_for_training
+            else {}
         )
         revisions = answer_revisions(conn, names)
         receipts: dict[str, datetime | None] = {}
@@ -418,6 +442,7 @@ def plan_deletions(
                         fact.get("answered_at") or obj.get("answered_at")
                     ),
                     pressure_stage=pressure_stage,
+                    best=key in keepers,
                     now=now,
                 )
             for subject in subjects[name]:

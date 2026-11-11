@@ -507,3 +507,137 @@ def test_job_actions_require_authentication_and_csrf(canonical_client):
     with client.session_transaction() as session:
         session.clear()
     assert client.get(f"/api/canonical-dataset/jobs/{identifier}").status_code == 302
+
+
+def _text(client, url: str) -> str:
+    response = client.get(url)
+    assert response.status_code == 200, url
+    return " ".join(response.get_data(as_text=True).split())
+
+
+def _field(page: str, name: str) -> str:
+    start = page.index(f'id="{name}"')
+    return page[start : start + 400]
+
+
+def test_retention_panel_shows_training_and_days_settings(canonical_client) -> None:
+    from config import update_runtime_settings
+
+    client, _ = canonical_client
+    update_runtime_settings(
+        {"KEEP_ANSWERED_PHOTOS_FOR_TRAINING": True, "ORIGINAL_PHOTO_DAYS": 90}
+    )
+    page = _text(client, "/settings")
+    assert '<option value="true" selected>On</option>' in _field(
+        page, "KEEP_ANSWERED_PHOTOS_FOR_TRAINING"
+    )
+    assert 'value="90"' in _field(page, "ORIGINAL_PHOTO_DAYS")
+    assert "Bird originals expire 90 days after capture;" in page
+
+    update_runtime_settings({"KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False})
+    page = _text(client, "/settings")
+    assert '<option value="false" selected>Off</option>' in _field(
+        page, "KEEP_ANSWERED_PHOTOS_FOR_TRAINING"
+    )
+
+
+def test_export_page_states_whether_photos_are_held(canonical_client) -> None:
+    from config import update_runtime_settings
+
+    client, _ = canonical_client
+    update_runtime_settings({"KEEP_ANSWERED_PHOTOS_FOR_TRAINING": True})
+    held = _text(client, "/admin/canonical-dataset")
+    assert "Photos stay protected until you confirm" in held
+    update_runtime_settings({"KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False})
+    page = _text(client, "/admin/canonical-dataset")
+    assert "This station does not hold answered photos for training." in page
+    assert "You can still export what is stored." in page
+    assert "Photos stay protected" not in page
+
+
+def test_unconfirmed_export_is_shown_without_protection_when_off(
+    canonical_client,
+) -> None:
+    from config import update_runtime_settings
+
+    client, _ = canonical_client
+    update_runtime_settings({"KEEP_ANSWERED_PHOTOS_FOR_TRAINING": True})
+    prepare_export(client)
+    assert "1 photo remains protected." in _text(client, "/admin/canonical-dataset")
+    update_runtime_settings({"KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False})
+    page = _text(client, "/admin/canonical-dataset")
+    assert "Not yet confirmed" in page
+    assert "remains protected" not in page and "remain protected" not in page
+    assert "1 photo is in this export and is not held." in page
+    assert ">Export received</button>" in page
+
+
+def test_retention_panel_shows_the_free_space_limit(canonical_client) -> None:
+    from config import update_runtime_settings
+
+    client, _ = canonical_client
+    assert 'value="0.25"' in _field(_text(client, "/settings"), "MIN_FREE_SPACE_GB")
+    update_runtime_settings({"MIN_FREE_SPACE_GB": 10})
+    assert 'value="10"' in _field(_text(client, "/settings"), "MIN_FREE_SPACE_GB")
+
+
+def test_retention_panel_shows_best_originals_and_the_deletion_order(
+    canonical_client,
+) -> None:
+    from config import update_runtime_settings
+
+    client, _ = canonical_client
+    page = _text(client, "/settings")
+    assert 'value="50"' in _field(page, "BEST_ORIGINALS_PER_SPECIES")
+    assert (
+        "expired trash, favorites, training protection, best of species, "
+        "answered photos, admitted birds, then open cases and model non-birds"
+    ) in page
+    update_runtime_settings({"BEST_ORIGINALS_PER_SPECIES": 0})
+    assert 'value="0"' in _field(
+        _text(client, "/settings"), "BEST_ORIGINALS_PER_SPECIES"
+    )
+
+
+def test_export_preparation_uses_the_free_space_limit_from_settings(
+    canonical_client,
+) -> None:
+    from types import SimpleNamespace
+
+    from config import update_runtime_settings
+
+    client, _ = canonical_client
+    update_runtime_settings({"MIN_FREE_SPACE_GB": 2})
+    with patch(
+        "core.training_export_jobs.shutil.disk_usage",
+        return_value=SimpleNamespace(free=1024**3),
+    ):
+        response = client.post(
+            "/api/canonical-dataset/download",
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        assert response.status_code == 202
+        client.application.extensions["training_export_jobs"].wait(10)
+        assert client.get(response.json["status_url"]).json["status"] == "paused"
+
+
+def test_settings_reserve_validation_uses_live_capture_budget(canonical_client) -> None:
+    from types import SimpleNamespace
+
+    from web.blueprints.api_v1 import api_v1
+
+    client, _ = canonical_client
+    manager = SimpleNamespace(video_capture=SimpleNamespace(resolution=(7680, 4320)))
+    with (
+        patch.object(api_v1, "detection_manager", manager, create=True),
+        patch(
+            "config.shutil.disk_usage", return_value=SimpleNamespace(free=20 * 1024**3)
+        ),
+    ):
+        response = client.post(
+            "/api/v1/settings",
+            json={"MIN_FREE_SPACE_GB": 19},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+    assert response.status_code == 400
+    assert "leaving room to save photos" in response.json["errors"]["MIN_FREE_SPACE_GB"]

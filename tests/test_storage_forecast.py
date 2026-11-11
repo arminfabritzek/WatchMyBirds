@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 
 from core.deletion_plan import DEFAULT_SETTINGS, deletion_preview
+from core.retention_core import settings_for_plan
 from core.storage_accounting import inspect_storage
 from core.storage_forecast import (
     FORECAST_WARNING_MONTHS,
@@ -214,7 +215,9 @@ def test_saved_forecast_requires_measurement_after_settings_change(case: Case) -
     service = StorageScan(paths, lambda: settings)
     service._state["result"] = dict(
         forecast=dict(status="estimated", months=2),
-        deletion_preview=dict(settings=DEFAULT_SETTINGS.__dict__, enabled_at=None),
+        deletion_preview=dict(
+            settings=settings_for_plan(settings).__dict__, enabled_at=None
+        ),
     )
     assert service.status()["result"]["forecast"]["status"] == "estimated"
     settings["OLD_BIRD_PHOTOS"] = "delete_all"

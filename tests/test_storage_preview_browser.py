@@ -34,7 +34,15 @@ def test_storage_preview_measurement_and_status_notices(
     paths = PathManager(get_config()["OUTPUT_DIR"])
     with closing_connection():
         pass
-    update_runtime_settings({"AUTOMATIC_DELETION_ENABLED": False})
+    update_runtime_settings(
+        {
+            "AUTOMATIC_DELETION_ENABLED": False,
+            # A fresh test station would not hold answered photos or expire
+            # every old original; this test shows the waiting counts.
+            "KEEP_ANSWERED_PHOTOS_FOR_TRAINING": True,
+            "BEST_ORIGINALS_PER_SPECIES": 0,
+        }
+    )
     monkeypatch.setattr(
         "config.ensure_go2rtc_stream_synced", lambda *_args, **_kwargs: None
     )
@@ -159,7 +167,16 @@ def test_storage_preview_measurement_and_status_notices(
                 in page.locator("#storage-waiting").inner_text()
             )
             assert export_id in page.locator("#storage-exports").inner_text()
-            assert page.locator("#storage-classes tr").count() == 6
+            assert page.locator("#storage-classes tr").count() == 7
+            assert (
+                page.locator("#storage-classes tr")
+                .last.inner_text()
+                .startswith("Best of species")
+            )
+            assert (
+                "best originals per species 0"
+                in page.locator("#storage-policy").inner_text()
+            )
             assert "_open" in page.locator("#storage-upcoming").inner_text()
             assert "_favorite" not in page.locator("#storage-upcoming").inner_text()
             assert "_waiting" not in page.locator("#storage-upcoming").inner_text()

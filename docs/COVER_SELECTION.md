@@ -65,6 +65,7 @@ Only the restriction and the tie-breaker after the shared order differ.
 | Live page species summary | Today's detections, per species | Random choice only among photos whose entire tuple is equal | `pick_cover_for_group` in `core/gallery_core.py` |
 | Today's visitors / Best of Species boards | Today's detections, or the SQL candidate pool (`fetch_species_story_board_candidates`, ranked by the shared order, then `detection_id` descending) | Main photo as in the row above. Up to three extra frames are drawn at random from the next six ranked photos on every page load | `build_species_story_board`, `_choose_story_board_frames` in `core/gallery_core.py` |
 | Random favorites | Admitted observations that are a favorite or an AI pick, best one per species | `RANDOM()` among exact ties; species order is random | `fetch_random_favorites` in `utils/db/detections.py` |
+| Retained best originals | Admitted observations with a known species and an original on disk; one place per photo and species | `object_key` ascending | `best_original_keys` in `core/best_originals.py` |
 | Event cover (Review) | Members of one event; context-only members are skipped when actionable members exist | Capture timestamp, then `detection_id` (both newest first) | `core/events.py` |
 | Best object of a new frame | Confirmed objects of the frame just captured | — | `detectors/detection_manager.py` |
 | Telegram alert batch | Pending detections per species | — | `detectors/services/notification_service.py` |

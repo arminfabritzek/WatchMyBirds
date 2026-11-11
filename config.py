@@ -1,10 +1,13 @@
 # config.py
+import math
 import os
+import shutil
 from typing import Any
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
+from core.storage_budget import DEFAULT_CAPTURE_BUDGET_BYTES, recovery_headroom_bytes
 from utils.settings import load_settings_yaml, save_settings_yaml
 
 # Load environment variables from .env file once.
@@ -235,6 +238,10 @@ DEFAULTS = {
     "AUTOMATIC_DELETION_ENABLED": False,
     "AUTOMATIC_DELETION_ENABLED_AT": None,
     "OLD_BIRD_PHOTOS": "keep_previews",
+    "ORIGINAL_PHOTO_DAYS": 30,
+    "KEEP_ANSWERED_PHOTOS_FOR_TRAINING": True,
+    "MIN_FREE_SPACE_GB": 0.25,
+    "BEST_ORIGINALS_PER_SPECIES": 50,
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
@@ -265,6 +272,10 @@ RUNTIME_KEYS = {
     "EXPORT_BURN_IN_METADATA",
     "AUTOMATIC_DELETION_ENABLED",
     "OLD_BIRD_PHOTOS",
+    "ORIGINAL_PHOTO_DAYS",
+    "KEEP_ANSWERED_PHOTOS_FOR_TRAINING",
+    "MIN_FREE_SPACE_GB",
+    "BEST_ORIGINALS_PER_SPECIES",
     "SAVE_THRESHOLD",
     "SAVE_THRESHOLD_MODE",
     "NON_BIRD_CONFIRM_THRESHOLD",
@@ -777,6 +788,13 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
 
     if config.get("OLD_BIRD_PHOTOS") not in {"keep_previews", "delete_all"}:
         config["OLD_BIRD_PHOTOS"] = "keep_previews"
+    for key in PHOTO_RULE_NUMBERS:
+        config[key] = photo_rule_number(key, config.get(key))
+    # An unclear stored value must never release photos.
+    config["KEEP_ANSWERED_PHOTOS_FOR_TRAINING"] = (
+        training_keep_choice(config.get("KEEP_ANSWERED_PHOTOS_FOR_TRAINING"))
+        is not False
+    )
 
     # LOCATION_DATA: parse "lat, lon" strings into dict
     location_val = config.get("LOCATION_DATA")
@@ -1030,6 +1048,71 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         config["AESTHETIC_TAG_TIME"] = DEFAULTS.get("AESTHETIC_TAG_TIME", "02:10")
 
 
+# key -> (lowest, highest, whole numbers only, default)
+PHOTO_RULE_NUMBERS: dict[str, tuple[float, float, bool, float]] = {
+    "ORIGINAL_PHOTO_DAYS": (7, 3650, True, 30),
+    "MIN_FREE_SPACE_GB": (0.25, 1000, False, 0.25),
+    "BEST_ORIGINALS_PER_SPECIES": (0, 1000, True, 50),
+}
+
+
+def bounded_number(
+    value: Any, low: float, high: float, *, integer: bool = False
+) -> int | float | None:
+    """Return ``value`` as a number within the bounds, or None for anything else."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        text = str(value).strip()
+        number = int(text) if integer else float(text)
+    except ValueError:
+        return None
+    return number if low <= number <= high else None
+
+
+def training_keep_choice(value: Any) -> bool | None:
+    """Return the stored choice, or None when it is not clearly on or off."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("true", "1", "yes", "y", "on"):
+            return True
+        if text in ("false", "0", "no", "n", "off"):
+            return False
+    return None
+
+
+# For these a larger number keeps more photos, so a stored value above the
+# range is held at the top of the range instead of falling back to the default.
+_KEEPS_MORE_WHEN_LARGER = {"ORIGINAL_PHOTO_DAYS", "BEST_ORIGINALS_PER_SPECIES"}
+
+
+def photo_rule_number(key: str, value: Any) -> int | float:
+    """Return a stored photo-rule number, or its default when it is unusable.
+
+    Lenient on purpose: settings.yaml and the environment can hold values the
+    Settings form would reject, and a typo there must not delete photos early.
+    """
+    low, high, integer, default = PHOTO_RULE_NUMBERS[key]
+    fallback = int(default) if integer else default
+    if value is None or isinstance(value, bool):
+        return fallback
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return fallback
+    if not math.isfinite(number) or number < low:
+        return fallback
+    if number > high:
+        if key not in _KEEPS_MORE_WHEN_LARGER:
+            return fallback
+        number = high
+    if integer and not number.is_integer():
+        return fallback
+    return int(number) if integer else number
+
+
 def _coerce_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -1109,6 +1192,8 @@ def get_settings_payload() -> dict[str, Any]:
 
 def validate_runtime_updates(
     updates: dict[str, Any],
+    *,
+    capture_budget_bytes: int = DEFAULT_CAPTURE_BUDGET_BYTES,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Validates runtime updates and returns (valid, errors)."""
     valid = {}
@@ -1121,6 +1206,32 @@ def validate_runtime_updates(
             valid[key] = coerced
         else:
             errors[key] = "Invalid value"
+    if "MIN_FREE_SPACE_GB" in valid:
+        cfg = get_config()
+        current = photo_rule_number("MIN_FREE_SPACE_GB", cfg.get("MIN_FREE_SPACE_GB"))
+        # Leave the same capture headroom as recovery, so raising the reserve
+        # does not immediately start cleanup on the next frame.
+        if valid["MIN_FREE_SPACE_GB"] > current:
+            try:
+                free = shutil.disk_usage(str(cfg["OUTPUT_DIR"])).free
+            except OSError:
+                del valid["MIN_FREE_SPACE_GB"]
+                errors["MIN_FREE_SPACE_GB"] = (
+                    "Free space is unavailable. Try again before raising the limit."
+                )
+            else:
+                headroom = recovery_headroom_bytes(
+                    max(DEFAULT_CAPTURE_BUDGET_BYTES, capture_budget_bytes)
+                )
+                maximum = max(0, free - headroom) / 1024**3
+                if valid["MIN_FREE_SPACE_GB"] > maximum:
+                    del valid["MIN_FREE_SPACE_GB"]
+                    errors["MIN_FREE_SPACE_GB"] = (
+                        f"Only {int(free / 1024**3 * 10) / 10:g} GB are free right now. "
+                        f"Keep free can be at most {math.floor(maximum * 100) / 100:g} GB "
+                        "after leaving room to save photos. Free space first "
+                        "(shorter period, then Clean up now), or choose a lower limit."
+                    )
     merged = {**get_config(), **valid}
     if merged.get("MQTT_ENABLED") and any(key.startswith("MQTT_") for key in updates):
         if not str(merged.get("MQTT_HOST", "")).strip():
@@ -1245,6 +1356,13 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
         return False, None
     if key == "OLD_BIRD_PHOTOS":
         return value in ("keep_previews", "delete_all"), value
+    if key == "KEEP_ANSWERED_PHOTOS_FOR_TRAINING":
+        choice = training_keep_choice(value)
+        return choice is not None, choice
+    if key in PHOTO_RULE_NUMBERS:
+        low, high, integer, _default = PHOTO_RULE_NUMBERS[key]
+        number = bounded_number(value, low, high, integer=integer)
+        return number is not None, number
     if key in (
         "SAVE_THRESHOLD",
         "NON_BIRD_CONFIRM_THRESHOLD",

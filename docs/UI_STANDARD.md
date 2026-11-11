@@ -191,15 +191,19 @@ Recorded exports have 20-row pages, part numbers and Older/Latest navigation.
 `Download again` serves its completed ZIP, even after answers change.
 `Export received` confirms only that part and displays its receipt time.
 `Remove local ZIP` is available only after confirmation; removed or expired parts
-offer `Prepare download again` using their saved context. Explain seven-day
+offer `Prepare download again` using their saved context. When the photos of
+that export are no longer stored, the preparation ends as expired and says so. Explain seven-day
 artifact expiry and preserved answers/receipts. Waiting answers and unconfirmed
-exports protect photos; missing originals do not wait. Box-quality answers and
+exports protect photos while Keep answered photos for training is on; missing
+originals do not wait. With it off, the notices state that nothing is held and
+exporting stays available. Box-quality answers and
 the optional box walkthrough stay available independently of export receipts;
 the walkthrough retains its preview cursor.
 
 Use the shared `btn` variants. Waiting counts and every unconfirmed export use a
 prominent `alert alert-info` notice with `role="status"`; the notice explains that
-photos remain protected until receipt is confirmed. Export actions wrap at narrow
+photos remain protected until receipt is confirmed, or that the station does not
+hold them. Export actions wrap at narrow
 widths. Creating and acknowledging exports require authenticated CSRF-protected
 POSTs; job actions, rebuilding and local ZIP removal have the same protections.
 Downloads never acknowledge receipt.
@@ -1344,7 +1348,7 @@ and species answers continue through their normal controls.
     unavailable scopes and bounded growth history. Offer no cleanup action or
     automatic release of training protection on this page.
     The deletion preview and executor use the same `core/deletion_plan.py` rules.
-    Show its six classes, training and receipt waits, unconfirmed exports, and
+    Show its seven classes, training and receipt waits, unconfirmed exports, and
     next file deadlines. A prominent `alert alert-info` with `role="status"`
     shows whether automatic deletion was enabled at measurement time and the
     number of photos, files and bytes due within the following 14 days,
@@ -1361,7 +1365,13 @@ and species answers continue through their normal controls.
     `role="status"` and suggest Delete everything in Settings or more storage.
 12. Storage Retention lives in Settings (`#panelRetention`) using the standard
     `settings-panel` / `settings-field` shells. It has one Automatic deletion
-    switch and the Old bird photos choices Keep previews / Delete everything.
+    switch and the Old bird photos choices Keep previews / Delete everything,
+    followed by Keep original photos (days), Keep answered photos for training
+    (On / Off), Keep free (GB) and Best originals per species. All of them are
+    photo rules: saving one invalidates the preview. Keep free (GB) increases
+    must leave capture headroom above the new reserve. The save error names
+    current free space and the maximum accepted limit. Unavailable free-space
+    measurements prevent increases; keeping or lowering the limit stays possible.
     Opening the panel requests one background preview of the next 14 days using
     the same status notice as storage, including the existing Review backlog.
     Show checked-photo progress while running. Reopening reuses the completed
@@ -1378,7 +1388,8 @@ and species answers continue through their normal controls.
     polite live announcements) shows the authenticated owner when photo saving
     pauses or pressure cleanup removes files early. It states the blocking reason,
     continued live view, automatic resumption, and protection of favorites and
-    pending training. Refresh it from cached runtime status; polling must not scan
+    pending training. When the owner's free-space limit causes the pause, the
+    notice names that limit. Refresh it from cached runtime status; polling must not scan
     media or initiate cleanup. Explain in Settings and Storage that pressure cleanup
     may shorten the normal Review grace period while automatic deletion is on.
 

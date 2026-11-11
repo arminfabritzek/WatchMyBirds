@@ -292,25 +292,54 @@ before choosing it for shared hardware.
 |-----|---------|-------------|
 | `AUTOMATIC_DELETION_ENABLED` | On for new databases; off for existing databases | One runtime switch for all photo deadlines, including expired trash and manual cleanup requests. |
 | `OLD_BIRD_PHOTOS` | `keep_previews` | Keep bird previews and thumbnails, or `delete_all` to expire them too. |
+| `ORIGINAL_PHOTO_DAYS` | `30` | Days a bird original is kept, 7–3650; a stored value above the range is held at 3650. Previews with `delete_all` expire after 180 days or this number, whichever is larger. |
+| `KEEP_ANSWERED_PHOTOS_FOR_TRAINING` | On for existing databases; off for new databases | On holds answered photos until their export is confirmed. Off lets them expire like other bird photos; answers and rows stay, previews follow `OLD_BIRD_PHOTOS`. A database merge from a backup turns it on again so restored answers are not deleted. Only a clear on or off is accepted; an unclear stored value keeps photos. |
+| `MIN_FREE_SPACE_GB` | `0.25` | Free space to keep, 0.25–1000 GiB. Below it, unprotected photos are removed early and saving pauses if that is not enough. Settings accepts increases only when current free space covers the new reserve plus capture headroom; keeping or lowering a stored value is always accepted. A value written by hand into settings.yaml is not checked. Export preparation respects the same reserve. |
+| `BEST_ORIGINALS_PER_SPECIES` | `50` | Photos per species that keep their original and previews regardless of age, 0–1000; `0` turns the rule off. A stored value above the range is held at 1000. |
 
 The database's existence is checked before schema initialization. Startup saves
-these defaults once; old retention keys in YAML are ignored. On every off-to-on
+these defaults once; old retention keys in YAML are ignored.
+`KEEP_ANSWERED_PHOTOS_FOR_TRAINING` is saved the same way, once, unless
+settings.yaml already holds a value. On every off-to-on
 transition, the app writes `AUTOMATIC_DELETION_ENABLED_AT` alongside the switch.
 This timestamp is internal, not an editable runtime key. Saving an already-on
 switch preserves its date. Open cases and model non-birds expire no earlier than
 14 days after the latest activation, even when their capture is much older.
 
 `core/deletion_plan.py` supplies both the preview and the deletion job. Its ordered
-rules cover trash, favorites, pending training, answers, admitted birds and other
-photos. Trash expires 30 days after moving it; favorites and pending training
-stay. Answer rows and admitted bird rows stay after their files expire. The
+rules cover trash, favorites, pending training, the best originals of each
+species, answers, admitted birds and other
+photos. Trash expires 30 days after moving it; favorites, pending training and
+the best originals stay. Answer rows and admitted bird rows stay after their files expire. The
 constants in `DeletionSettings` are 30 days for bird originals, 180 days for bird
-previews with `delete_all`, 14 days for other photos, and a 256 MiB reserve.
+previews with `delete_all`, 14 days for other photos, and a 256 MiB reserve;
+the settings above replace the original period and the reserve. With training
+retention on, an answered photo starts its period at the export receipt; with it
+off, at capture, like an admitted bird. The best originals are ranked per
+cleanup run, pressure stage or storage measurement with the species-cover order
+(`utils/cover_selection.py`), one place per photo, among birds with a species
+whose original file is on disk. Cleanup refreshes the ranking after database
+changes and checks it under the write lock before deleting each candidate.
+Refreshes use the previous pass duration to estimate a budget of a fifth of
+the elapsed run time, with a minimum allowance of 2 seconds. A pass previously
+taking over 2 seconds is not repeated under the write lock; changing the number
+of originals to keep forces a fresh ranking. When a refresh is deferred, any
+new human answer or manual revision pauses deletion until a fresh ranking is
+available. This also protects untouched photos promoted by another photo's
+correction. A later run ranks afresh and resumes cleanup. Other changes during
+such a run, for example a trashed top photo, take effect with the next ranking.
 These are age ceilings, not guaranteed availability: low free space triggers
 earlier removal through the same planner, in the order open/model non-bird files
 and rows, answered/admitted originals, then previews only with `delete_all`.
-Favorites and pending training files stay protected. The normal activation grace
+Favorites, pending training files and the best originals stay protected. The
+normal activation grace
 can be shortened by low free space. Off prevents every automatic photo deletion.
+
+Reserve increases leave four frame budgets free above the new reserve.
+Validation uses at least a 4096 × 2160 RGB frame, and larger current camera
+resolutions or observed capture budgets when available. If free space cannot
+be measured, increases are rejected. Subsequent captures and other disk writes
+can still consume this headroom.
 
 Saving requires the reserve plus twice the estimated frame budget (three times
 raw frame bytes plus 1 MiB). Free space is checked at most once per two seconds,
@@ -330,6 +359,10 @@ eventually exhaust a card; saving then pauses without deleting retained bird
 previews. Very busy stations retain observation rows permanently; database growth
 still needs capacity planning. These local measurements do not establish physical
 SD-card throughput or endurance.
+The default of 50 best originals per species is an assumption, not a
+measurement: at a feeder about ten species reach the limit while rare visitors
+stay far below it, roughly 600 originals or 1 GiB at 1.5 MB each. Forty species
+at the limit would be 2,000 originals, about 3 GiB.
 The reserve covers 17.6 MB of technical samples at their row caps, 51 MiB of
 diagnostic file caps, two measured 32.6 MiB frame budgets and a normal 4 MiB WAL
 allowance. Adding 50% margin and rounding to the next power of two gives 256 MiB.

@@ -35,7 +35,12 @@ def _seed_deletable(output_dir, filename):
         seed_image(conn, filename, output_dir, orig_bytes=1000)
 
 
-ENABLED_CFG = {"AUTOMATIC_DELETION_ENABLED": True, "OLD_BIRD_PHOTOS": "keep_previews"}
+ENABLED_CFG = {
+    "AUTOMATIC_DELETION_ENABLED": True,
+    "OLD_BIRD_PHOTOS": "keep_previews",
+    # These tests exercise the age rules; best-of-species has its own tests.
+    "BEST_ORIGINALS_PER_SPECIES": 0,
+}
 
 
 @pytest.fixture
@@ -44,9 +49,11 @@ def client(output_dir, monkeypatch):
 
     with closing_connection():
         pass
-    update_runtime_settings(ENABLED_CFG)
-    cfg = {"OUTPUT_DIR": str(output_dir), **ENABLED_CFG}
+    settings = {**ENABLED_CFG, "EDIT_PASSWORD": "test-password"}
+    update_runtime_settings(settings)
+    cfg = {"OUTPUT_DIR": str(output_dir), **settings}
     monkeypatch.setattr("config.get_config", lambda: cfg)
+    monkeypatch.setattr("core.settings_core.detect_deploy_type", lambda: "rpi")
 
     app = Flask(__name__)
     app.config["TESTING"] = True

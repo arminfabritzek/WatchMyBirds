@@ -357,3 +357,21 @@ def test_archive_merge_keeps_files_detections_and_labels_together(
         assert pm.get_original_path(labeled_filename).read_bytes() == b"incoming bird"
         assert thumbnail is None
         assert conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0] == 1
+
+
+def test_merge_holds_restored_answers(live_db, tmp_path) -> None:
+    from config import get_config
+    from utils.restore import _merge_database
+    from utils.settings import load_settings_yaml
+
+    key = "KEEP_ANSWERED_PHOTOS_FOR_TRAINING"
+    output = str(live_db.parent)
+    assert load_settings_yaml(output)[key] is False
+    backup_db = _make_db(tmp_path, "backup-hold")
+    _seed_image_with_detection(
+        backup_db, filename="20260820_120000_bird.jpg", content_hash="hash-hold"
+    )
+    result = _merge_database(backup_db, filename_rename_map={})
+    assert load_settings_yaml(output)[key] is True
+    assert get_config()[key] is True
+    assert any("Keep answered photos for training" in w for w in result["warnings"])

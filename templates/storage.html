@@ -14,7 +14,7 @@
 <div class="alert alert-info" role="status" id="deletion-notice">
     {% if deletion_state.enabled %}Automatic deletion is on.{% else %}Automatic deletion is off. Nothing is deleted while it is off. The preview assumes activation today.{% endif %}
     Open cases and model non-birds get a fresh 14-day grace period after enabling deletion.
-    With automatic deletion on, low free space can remove unprotected photos earlier, including during that grace period. Favorites and pending training files stay protected.
+    With automatic deletion on, low free space can remove unprotected photos earlier, including during that grace period. Favorites, photos held for training and the best originals of each species stay protected.
     Measure storage to see the next 14 days for the current settings.
 </div>
 <p id="storage-last-run" role="status">{{ deletion_state.last_run_text }}</p>
@@ -58,7 +58,7 @@
     };
     const count = n => new Intl.NumberFormat().format(n || 0);
     const photos = n => `${count(n)} ${n===1 ? 'photo' : 'photos'}`;
-    const rules = {'1':'Trash', '2':'Favorite', '3':'Training protection', '4':'Answered', '5':'Admitted bird', '6':'Open cases and model non-birds'};
+    const rules = {'1':'Trash', '2':'Favorite', '3':'Training protection', '4':'Answered', '5':'Admitted bird', '6':'Open cases and model non-birds', '7':'Best of species'};
     const text = (id,value) => { el(id).textContent = value; };
     function rows(id,items) {
         const target = el(id); target.replaceChildren();
@@ -92,9 +92,9 @@
         if(plan && plan.settings) {
             const upcoming = plan.next_14_days;
             const state = plan.enabled ? 'Automatic deletion was on at measurement time.' : 'Automatic deletion was off at measurement time. Nothing is deleted while it is off. The preview assumes activation today.';
-            text('deletion-notice', `${state} Open cases and model non-birds get a fresh 14-day grace period after enabling deletion. With automatic deletion on, low free space can remove unprotected photos earlier, including during that grace period. Favorites and pending training files stay protected. ${upcoming ? `Due within the following 14 days, including overdue files: ${count(upcoming.photos)} photo${upcoming.photos === 1 ? '' : 's'}, ${count(upcoming.files)} file${upcoming.files === 1 ? '' : 's'} (${bytes(upcoming.bytes)}).` : 'Measure again to calculate the next 14 days.'} This is a saved measurement; measure again after changing settings.`);
+            text('deletion-notice', `${state} Open cases and model non-birds get a fresh 14-day grace period after enabling deletion. With automatic deletion on, low free space can remove unprotected photos earlier, including during that grace period. Favorites, photos held for training and the best originals of each species stay protected. ${upcoming ? `Due within the following 14 days, including overdue files: ${count(upcoming.photos)} photo${upcoming.photos === 1 ? '' : 's'}, ${count(upcoming.files)} file${upcoming.files === 1 ? '' : 's'} (${bytes(upcoming.bytes)}).` : 'Measure again to calculate the next 14 days.'} This is a saved measurement; measure again after changing settings.`);
             const s=plan.settings;
-            text('storage-policy',`Old bird photos: ${s.old_bird_photos==='keep_previews' ? 'Keep previews' : 'Delete everything'}. Originals ${s.original_days} days; previews ${s.preview_days} days with Delete everything; trash ${s.trash_days} days; other photos ${s.other_days} days; reserve ${bytes(s.reserve_bytes)}. This saved preview shows age deadlines; low free space may remove unprotected files earlier.`);
+            text('storage-policy',`Old bird photos: ${s.old_bird_photos==='keep_previews' ? 'Keep previews' : 'Delete everything'}. Originals ${s.original_days} days; previews ${s.preview_days} days with Delete everything; trash ${s.trash_days} days; other photos ${s.other_days} days; best originals per species ${s.best_per_species ?? 0}; answered photos ${s.keep_for_training === false ? 'not held' : 'held'} for training; reserve ${bytes(s.reserve_bytes)}. This saved preview shows age deadlines; low free space may remove unprotected files earlier.`);
             rows('storage-classes',Object.entries(rules).map(([key,label])=>[label,count(plan.classes[key]?.files),bytes(plan.classes[key]?.bytes || 0)]));
             const w=plan.waiting.waiting_for_training || {}, u=plan.waiting.unconfirmed_export || {};
             text('storage-waiting',`Waiting for training: ${photos(w.photos)} (${bytes(w.bytes || 0)}). Waiting for export confirmation: ${photos(u.photos)} (${bytes(u.bytes || 0)}).`);

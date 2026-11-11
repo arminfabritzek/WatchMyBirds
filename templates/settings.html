@@ -2318,7 +2318,7 @@
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
-            <p>Automatic deletion follows one order: expired trash, favorites, training protection, answered photos, admitted birds, then open cases and model non-birds. A shared photo stays while any object protects it.</p>
+            <p>Automatic deletion follows one order: expired trash, favorites, training protection, best of species, answered photos, admitted birds, then open cases and model non-birds. A shared photo stays while any object protects it.</p>
             <div class="settings-field">
                 <label class="settings-field__label" for="AUTOMATIC_DELETION_ENABLED">Automatic deletion</label>
                 <select name="AUTOMATIC_DELETION_ENABLED" id="AUTOMATIC_DELETION_ENABLED" class="form-control">
@@ -2333,7 +2333,30 @@
                     <option value="keep_previews" {% if payload['OLD_BIRD_PHOTOS'].value == 'keep_previews' %}selected{% endif %}>Keep previews</option>
                     <option value="delete_all" {% if payload['OLD_BIRD_PHOTOS'].value == 'delete_all' %}selected{% endif %}>Delete everything</option>
                 </select>
-                <p class="settings-field__help">Originals expire after {{ photo_deletion_defaults.original_days }} days. Keep previews preserves bird previews and thumbnails; Delete everything removes them after {{ photo_deletion_defaults.preview_days }} days. Bird records and answers stay. Answered non-bird files expire 14 days after training protection ends. With automatic deletion on, low free space can remove unprotected photos earlier, including during the Review grace period. Favorites and pending training files stay protected. If space remains low, saving pauses while live view continues and resumes automatically when space is available.</p>
+                <p class="settings-field__help">Bird originals expire {{ photo_deletion_defaults.original_days }} days after capture; answered photos held for training count from Export received instead. Keep previews preserves bird previews and thumbnails; Delete everything removes them after {{ photo_deletion_defaults.preview_days }} days. Bird records and answers stay. Answered non-bird files expire 14 days after capture, or after Export received when they were held for training. With automatic deletion on, low free space can remove unprotected photos earlier, including during the Review grace period. Favorites, photos held for training and the best originals of each species stay protected. If space remains low, saving pauses while live view continues and resumes automatically when space is available.</p>
+            </div>
+            <div class="settings-field">
+                <label class="settings-field__label" for="ORIGINAL_PHOTO_DAYS">Keep original photos (days)</label>
+                <input type="number" name="ORIGINAL_PHOTO_DAYS" id="ORIGINAL_PHOTO_DAYS" class="form-control" min="7" max="3650" step="1" required value="{{ payload['ORIGINAL_PHOTO_DAYS'].value }}">
+                <p class="settings-field__help">Bird originals expire this many days after capture, or after Export received when they were held for training. Trash (30 days) and other photos (14 days) are fixed.</p>
+            </div>
+            <div class="settings-field">
+                <label class="settings-field__label" for="KEEP_ANSWERED_PHOTOS_FOR_TRAINING">Keep answered photos for training</label>
+                <select name="KEEP_ANSWERED_PHOTOS_FOR_TRAINING" id="KEEP_ANSWERED_PHOTOS_FOR_TRAINING" class="form-control">
+                    <option value="true" {% if payload['KEEP_ANSWERED_PHOTOS_FOR_TRAINING'].value %}selected{% endif %}>On</option>
+                    <option value="false" {% if not payload['KEEP_ANSWERED_PHOTOS_FOR_TRAINING'].value %}selected{% endif %}>Off</option>
+                </select>
+                <p class="settings-field__help">On: answered photos stay until you export them and confirm Export received. Off: they expire like other bird photos, as set under Old bird photos; answers and bird records stay. Favorites always stay.</p>
+            </div>
+            <div class="settings-field">
+                <label class="settings-field__label" for="MIN_FREE_SPACE_GB">Keep free (GB)</label>
+                <input type="number" name="MIN_FREE_SPACE_GB" id="MIN_FREE_SPACE_GB" class="form-control" min="0.25" max="1000" step="any" required value="{{ '%g' % payload['MIN_FREE_SPACE_GB'].value }}">
+                <p class="settings-field__help">When free space falls below this, the oldest unprotected photos are removed early. If that is not enough, saving pauses while live view continues. Raising the limit must leave room to save photos above the reserve. If there is not enough free space, the save error shows the maximum accepted limit.</p>
+            </div>
+            <div class="settings-field">
+                <label class="settings-field__label" for="BEST_ORIGINALS_PER_SPECIES">Best originals per species</label>
+                <input type="number" name="BEST_ORIGINALS_PER_SPECIES" id="BEST_ORIGINALS_PER_SPECIES" class="form-control" min="0" max="1000" step="1" required value="{{ payload['BEST_ORIGINALS_PER_SPECIES'].value }}">
+                <p class="settings-field__help">The best photos of each species keep their original and previews, however old they are. They are ranked like the species covers; favorites count first. 0 turns this off.</p>
             </div>
             <div id="retentionResult" class="alert alert-info" role="status">Open cases and model non-birds get a fresh 14-day grace period when automatic deletion is enabled. Calculating the upcoming count…</div>
             <div class="flex flex--gap-sm flex--wrap">
@@ -4642,7 +4665,7 @@
             credentials: 'same-origin',
             body: JSON.stringify(payload)
         })
-            .then(res => { if (!res.ok) { return res.json().then(err => { throw new Error(err.message || JSON.stringify(err.errors) || 'API Error'); }); } return res.json(); })
+            .then(res => { if (!res.ok) { return res.json().then(err => { throw new Error(err.message || Object.entries(err.errors || {}).map(([key, text]) => `${document.querySelector(`label[for="${key}"]`)?.textContent.trim() || key}: ${text}`).join('\n') || 'API Error'); }); } return res.json(); })
             .then(data => {
                 if (data.status === 'success') { alert('✅ Settings saved. The page will reload. Some values (e.g. stream width) only take effect after a full service restart.'); window.location.reload(); }
                 else { alert('❌ Failed: ' + (data.message || 'Unexpected response')); btn.textContent = originalText; btn.disabled = false; }

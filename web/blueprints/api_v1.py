@@ -1253,7 +1253,14 @@ def settings_post():
             original_cam = current_config.get("CAMERA_URL", "")
             data["CAMERA_URL"] = unmask_rtsp_url(data["CAMERA_URL"], original_cam)
 
-        valid, errors = validate_runtime_updates(data)
+        from web.services.storage_service import capture_budget
+
+        valid, errors = validate_runtime_updates(
+            data,
+            capture_budget_bytes=capture_budget(
+                getattr(api_v1, "detection_manager", None)
+            ),
+        )
 
         if errors:
             return jsonify({"status": "error", "errors": errors}), 400
@@ -1373,8 +1380,10 @@ def telemetry_preview():
             "user_agent": USER_AGENT,
             "payload": build_payload_preview(cfg),
             "diagnostics_example": build_diagnostic_payload(
-                cfg, datetime.now(UTC).date().isoformat(),
-                dict.fromkeys(sorted(FLAGS | RANGES.keys()), 0), preview=True,
+                cfg,
+                datetime.now(UTC).date().isoformat(),
+                dict.fromkeys(sorted(FLAGS | RANGES.keys()), 0),
+                preview=True,
             ),
         }
     )

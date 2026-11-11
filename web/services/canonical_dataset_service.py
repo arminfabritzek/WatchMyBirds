@@ -18,6 +18,7 @@ from core.canonical_dataset import (
     read_media_size,
 )
 from core.human_label_core import get_or_create_labeling_installation_id
+from core.retention_core import settings_for_plan
 from core.training_export import (
     create_export,
     list_exports,
@@ -66,7 +67,11 @@ def build_bundle(
 
 
 def create_jobs(output_dir: str) -> TrainingExportJobs:
-    return TrainingExportJobs(output_dir)
+    # Preparing an export must not eat into the free space the owner asked for.
+    return TrainingExportJobs(
+        output_dir,
+        reserve_provider=lambda: settings_for_plan(get_config()).reserve_bytes,
+    )
 
 
 def preview_page(

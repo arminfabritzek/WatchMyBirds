@@ -505,3 +505,78 @@ def test_oversized_legacy_metadata_is_rejected_before_decoding(
     conn.commit()
     with pytest.raises(ValueError, match="metadata limit"):
         load_export(conn, "large")
+
+
+def test_export_preparation_respects_the_configured_reserve(
+    canonical_case: Any,
+) -> None:
+    conn, paths, *_ = canonical_case
+    reserve = [0]
+    manager = TrainingExportJobs(
+        str(paths.base_dir), photos_per_part=1, reserve_provider=lambda: reserve[0]
+    )
+    try:
+        with patch(
+            "core.training_export_jobs.shutil.disk_usage",
+            return_value=SimpleNamespace(free=10 * 1024**3),
+        ):
+            reserve[0] = 20 * 1024**3
+            identifier = manager.start()
+            manager.wait(5)
+            assert manager.status(identifier)["status"] == "paused"
+            assert (
+                conn.execute("SELECT COUNT(*) FROM labeling_exports").fetchone()[0] == 0
+            )
+            reserve[0] = 1024**3
+            manager.retry(identifier)
+            complete(manager, identifier)
+    finally:
+        manager.close()
+
+
+def test_original_removed_while_writing_is_excluded_and_export_completes(
+    jobs: TrainingExportJobs, canonical_case: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn, paths, *_ = canonical_case
+    name = "20260810_090100_negative.jpg"
+    write = TrainingExportJobs._write_archive
+
+    def lose_original(self: Any, job_id: str, bundle: Any, *args: Any) -> Any:
+        if name in bundle.media_filenames:
+            paths.get_original_path(name).unlink(missing_ok=True)
+        return write(self, job_id, bundle, *args)
+
+    monkeypatch.setattr(TrainingExportJobs, "_write_archive", lose_original)
+    state = complete(jobs, jobs.start())
+    assert state["missing"] == 1
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM labeling_export_members WHERE image_filename=?",
+            (name,),
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_rebuild_says_when_the_photos_are_no_longer_stored(
+    jobs: TrainingExportJobs, canonical_case: Any
+) -> None:
+    conn, paths, *_ = canonical_case
+    state = complete(jobs, jobs.start())
+    identifier = state["parts"][0]["export_id"]
+    path, lease = jobs.open_download(identifier)
+    lease.close()
+    path.unlink()
+    jobs.cleanup()
+    for (name,) in conn.execute(
+        "SELECT DISTINCT image_filename FROM labeling_export_members WHERE export_id=?",
+        (identifier,),
+    ).fetchall():
+        paths.get_original_path(name).unlink()
+    job = jobs.start(rebuild_export_id=identifier)
+    jobs.wait(10)
+    result = jobs.status(job)
+    assert result["status"] == "expired"
+    assert "no longer stored" in result["error"]
+    with pytest.raises(ValueError):
+        jobs.retry(job)

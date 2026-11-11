@@ -46,6 +46,10 @@ class ExportCancelled(Exception):
     pass
 
 
+class ExportMediaGone(Exception):
+    """The originals of a recorded export are no longer stored."""
+
+
 class ExportSpaceUnavailable(Exception):
     pass
 
@@ -63,12 +67,14 @@ class TrainingExportJobs:
         bytes_per_part: int = 1024**3,
         staging_bytes: int = 2 * 1024**3,
         reserve_bytes: int = 256 * 1024**2,
+        reserve_provider: Callable[[], int] | None = None,
     ) -> None:
         self.paths = PathManager(output_dir)
         self.photos_per_part = photos_per_part
         self.bytes_per_part = bytes_per_part
         self.staging_bytes = staging_bytes
         self.reserve_bytes = reserve_bytes
+        self._reserve_provider = reserve_provider
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -257,7 +263,10 @@ class TrainingExportJobs:
             ).fetchone()
         if row is None or row[0] == "cancelling":
             raise ExportCancelled
-        if shutil.disk_usage(self._root()).free < self.reserve_bytes + required_bytes:
+        reserve = (
+            self._reserve_provider() if self._reserve_provider else self.reserve_bytes
+        )
+        if shutil.disk_usage(self._root()).free < reserve + required_bytes:
             raise ExportSpaceUnavailable
 
     def _ensure_worker(self) -> None:
@@ -326,6 +335,13 @@ class TrainingExportJobs:
                         job_id,
                         status="queued" if self._stop.is_set() else "cancelled",
                         error=None,
+                    )
+                except ExportMediaGone:
+                    # Not resumable: there is nothing left to pack.
+                    self._update(
+                        job_id,
+                        status="expired",
+                        error="The photos of this export are no longer stored, so its ZIP cannot be prepared again.",
                     )
                 except Exception as error:
                     logger.exception("Training export preparation failed")
@@ -510,6 +526,7 @@ class TrainingExportJobs:
             installation_id = get_or_create_labeling_installation_id(
                 str(self.paths.base_dir)
             )
+            vanished = 0
             while True:
                 self._check(job_id)
                 with self.connection() as live:
@@ -574,9 +591,17 @@ class TrainingExportJobs:
                 members = answer_revisions(snapshot, sorted(bundle.media_filenames))
                 bundle.snapshot.update(export_job_id=job_id, part_number=part_number)
                 export_id = uuid.uuid4().hex
-                archive, metadata = self._write_archive(
-                    job_id, bundle, resolve, export_id
-                )
+                try:
+                    archive, metadata = self._write_archive(
+                        job_id, bundle, resolve, export_id
+                    )
+                except FileNotFoundError:
+                    # A cleanup removed an original after it was selected. Build
+                    # this part again; the missing photo is then left out.
+                    vanished += 1
+                    if vanished > 20:
+                        raise
+                    continue
                 with self.connection() as live:
                     live.execute("BEGIN IMMEDIATE")
                     state = live.execute(
@@ -638,9 +663,15 @@ class TrainingExportJobs:
             raise ValueError("This ZIP is already available")
         resolve = original_resolver(self.paths)
         self._update(job_id, total=len(bundle.media_filenames), phase="rebuild")
-        archive, _ = self._write_archive(
-            job_id, bundle, lambda name: resolve(media_map.get(name, name)), export_id
-        )
+        try:
+            archive, _ = self._write_archive(
+                job_id,
+                bundle,
+                lambda name: resolve(media_map.get(name, name)),
+                export_id,
+            )
+        except FileNotFoundError:
+            raise ExportMediaGone from None
         with self.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if (

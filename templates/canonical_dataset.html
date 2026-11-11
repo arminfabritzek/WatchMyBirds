@@ -20,8 +20,13 @@
 
     <div class="alert alert-info" role="status">
         <strong>{{ waiting_photos }} {{ 'photo is' if waiting_photos == 1 else 'photos are' }} waiting for training in this preview.</strong>
+        {% if photo_deletion_defaults.keep_for_training %}
         <p>Photos stay protected until you confirm “Export received” for their export.
             Changed answers wait again. Answers without an original do not wait.</p>
+        {% else %}
+        <p>This station does not hold answered photos for training. They follow the normal deletion rules.
+            You can still export what is stored. Changed answers wait again. Answers without an original do not wait.</p>
+        {% endif %}
     </div>
     <p>The preview shows up to 200 photos. Export processes all waiting photos in the background,
         in ZIP parts of up to 1,000 photos and about 1 GiB each. Up to 2 GiB of ZIPs are kept locally.
@@ -59,7 +64,11 @@
             {% if not export.received_at %}
             <div class="alert alert-info" role="status">
                 <strong>Not yet confirmed</strong>
+                {% if photo_deletion_defaults.keep_for_training %}
                 <p>{{ export.photo_count }} {{ 'photo remains' if export.photo_count == 1 else 'photos remain' }} protected. Confirm only after you have received this ZIP.</p>
+                {% else %}
+                <p>{{ export.photo_count }} {{ 'photo is in this export and is' if export.photo_count == 1 else 'photos are in this export and are' }} not held. Confirm only after you have received this ZIP.</p>
+                {% endif %}
             </div>
             {% endif %}
             <p>{% if export.part_number %}Part {{ export.part_number }} · {% endif %}Created <time datetime="{{ export.created_at }}">{{ export.created_at[:16]|replace('T', ' ') }} UTC</time> · {{ export.photo_count }} {{ 'photo' if export.photo_count == 1 else 'photos' }}

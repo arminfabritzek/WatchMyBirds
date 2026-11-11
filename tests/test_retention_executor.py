@@ -29,6 +29,8 @@ SETTINGS = {
     "AUTOMATIC_DELETION_ENABLED": True,
     "AUTOMATIC_DELETION_ENABLED_AT": ENABLED.isoformat(),
     "OLD_BIRD_PHOTOS": "keep_previews",
+    # These tests exercise the age rules; best-of-species has its own tests.
+    "BEST_ORIGINALS_PER_SPECIES": 0,
 }
 
 
@@ -460,3 +462,391 @@ def test_directory_swap_cannot_redirect_file_deletion(
         result = execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)
     assert result["errors"] == 1 and rows(conn) == before
     assert (outside / name).read_bytes() == b"keep"
+
+
+def test_switching_off_deletes_only_through_the_executor(case: Case) -> None:
+    conn, paths = case
+    names = []
+    for index in range(3):
+        name, identifier = add(conn, paths, f"answered{index}")
+        answer(
+            conn,
+            name,
+            identifier,
+            species_identity="confirmed",
+            species_key="Parus_major",
+        )
+        names.append(name)
+    released = {**SETTINGS, "KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False}
+    before = media(paths), rows(conn)
+
+    assert execute_plan(conn, str(paths.base_dir), SETTINGS, NOW)["deleted"] == 0
+    assert before == (media(paths), rows(conn))
+
+    due = [
+        photo.filename
+        for photo in plan_deletions(conn, settings_for_plan(released), NOW, paths=paths)
+        if photo.files[0].decision.due(NOW)
+    ]
+    assert sorted(due) == sorted(names)
+    assert before == (media(paths), rows(conn))
+
+    disabled = {**released, "AUTOMATIC_DELETION_ENABLED": False}
+    assert execute_plan(conn, str(paths.base_dir), disabled, NOW)["disabled"]
+    assert before == (media(paths), rows(conn))
+
+    execute_plan(conn, str(paths.base_dir), released, NOW)
+    assert not any(paths.get_original_path(name).exists() for name in names)
+    assert before[1] == rows(conn)
+    remaining = media(paths)
+    assert remaining and all(key.startswith("derivatives/") for key in remaining)
+
+
+def ranked(
+    conn: sqlite3.Connection, paths: PathManager, scores: tuple[float, ...]
+) -> list[str]:
+    names = []
+    for index, score in enumerate(scores):
+        name, identifier = add(conn, paths, f"ranked{index}")
+        conn.execute(
+            "UPDATE detections SET score=? WHERE detection_id=?", (score, identifier)
+        )
+        names.append(name)
+    conn.commit()
+    return names
+
+
+def test_best_original_is_not_deleted_by_the_executor(case: Case) -> None:
+    conn, paths = case
+    top, second, third = ranked(conn, paths, (0.9, 0.8, 0.7))
+    execute_plan(
+        conn, str(paths.base_dir), {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 2}, NOW
+    )
+    assert paths.get_original_path(top).exists()
+    assert paths.get_original_path(second).exists()
+    assert not paths.get_original_path(third).exists()
+
+
+def test_ranking_runs_once_per_cleanup_run(case: Case) -> None:
+    from core.best_originals import best_original_keys
+
+    conn, paths = case
+    names = ranked(conn, paths, (0.9, 0.8, 0.7, 0.6, 0.5))
+    with (
+        patch(
+            "core.retention_core.best_original_keys", wraps=best_original_keys
+        ) as ranking,
+        patch("core.deletion_plan.best_original_keys") as inner,
+    ):
+        result = execute_plan(
+            conn,
+            str(paths.base_dir),
+            {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 2},
+            NOW,
+            batch_size=2,
+        )
+    ranking.assert_called_once()
+    inner.assert_not_called()
+    assert result["deleted"] == 3
+    assert [paths.get_original_path(name).exists() for name in names] == [
+        True,
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
+def test_missing_best_original_does_not_block_its_place(case: Case) -> None:
+    conn, paths = case
+    top, second, third = ranked(conn, paths, (0.9, 0.8, 0.7))
+    paths.get_original_path(top).unlink()
+    settings = {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 2}
+    for _ in range(2):
+        execute_plan(conn, str(paths.base_dir), settings, NOW)
+    assert paths.get_original_path(second).exists()
+    assert paths.get_original_path(third).exists()
+
+
+def test_best_count_saved_during_a_run_is_honoured(case: Case) -> None:
+    conn, paths = case
+    top, second, third = ranked(conn, paths, (0.9, 0.8, 0.7))
+    execute_plan(
+        conn,
+        str(paths.base_dir),
+        SETTINGS,
+        NOW,
+        settings_provider=lambda: {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 2},
+    )
+    assert paths.get_original_path(top).exists()
+    assert paths.get_original_path(second).exists()
+    assert not paths.get_original_path(third).exists()
+
+
+def test_default_best_count_keeps_a_lone_old_photo(case: Case) -> None:
+    conn, paths = case
+    name, _ = add(conn, paths, "lone")
+    settings = {k: v for k, v in SETTINGS.items() if k != "BEST_ORIGINALS_PER_SPECIES"}
+    execute_plan(conn, str(paths.base_dir), settings, NOW)
+    assert paths.get_original_path(name).exists()
+
+
+@pytest.mark.parametrize("external_connection", [False, True])
+@pytest.mark.parametrize("batch_size", [1, 100])
+def test_species_correction_after_ranking_keeps_its_only_original(
+    case: Case, external_connection: bool, batch_size: int
+) -> None:
+    from utils.db.connection import closing_connection
+
+    conn, paths = case
+    top, other = ranked(conn, paths, (0.9, 0.8))
+    identifier = conn.execute(
+        "SELECT detection_id FROM detections WHERE image_filename=?", (other,)
+    ).fetchone()[0]
+    changed = False
+
+    def plan_then_correct(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        nonlocal changed
+        yield from plan_deletions(*args, **kwargs)
+        if not conn.in_transaction and not changed:
+            changed = True
+            if external_connection:
+                with closing_connection() as writer:
+                    answer(
+                        writer,
+                        other,
+                        identifier,
+                        species_identity="corrected",
+                        species_key="Cyanistes_caeruleus",
+                    )
+            else:
+                answer(
+                    conn,
+                    other,
+                    identifier,
+                    species_identity="corrected",
+                    species_key="Cyanistes_caeruleus",
+                )
+
+    with patch("core.retention_core.plan_deletions", plan_then_correct):
+        result = execute_plan(
+            conn,
+            str(paths.base_dir),
+            {
+                **SETTINGS,
+                "BEST_ORIGINALS_PER_SPECIES": 1,
+                "KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False,
+            },
+            NOW,
+            batch_size=batch_size,
+        )
+    assert result["deleted"] == 0
+    assert paths.get_original_path(top).is_file()
+    assert paths.get_original_path(other).is_file()
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def timed_ranking(clock: FakeClock, seconds: float, calls: list[bool]) -> Any:
+    from core.best_originals import best_original_keys
+
+    def rank(conn: sqlite3.Connection, limit: int, **kwargs: Any) -> frozenset[str]:
+        calls.append(conn.in_transaction)
+        clock.now += seconds
+        return best_original_keys(conn, limit, **kwargs)
+
+    return rank
+
+
+def foreign_write(marker: str) -> None:
+    from utils.db.connection import closing_connection
+
+    with closing_connection() as other:
+        other.execute(
+            "INSERT OR REPLACE INTO _migration_state VALUES ('probe', ?)", (marker,)
+        )
+        other.commit()
+
+
+def test_expensive_ranking_is_not_repeated_after_every_foreign_write(
+    case: Case,
+) -> None:
+    conn, paths = case
+    names = ranked(conn, paths, tuple(0.9 - index / 100 for index in range(12)))
+    clock = FakeClock()
+    calls: list[bool] = []
+
+    def write_then_plan(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        if not conn.in_transaction:
+            foreign_write(str(len(calls)))
+        yield from plan_deletions(*args, **kwargs)
+
+    with (
+        patch("core.retention_core._clock", clock),
+        patch(
+            "core.retention_core.best_original_keys",
+            timed_ranking(clock, 10.0, calls),
+        ),
+        patch("core.retention_core.plan_deletions", write_then_plan),
+    ):
+        result = execute_plan(
+            conn,
+            str(paths.base_dir),
+            {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 2},
+            NOW,
+            batch_size=1,
+        )
+    assert result["deleted"] == 10
+    assert [paths.get_original_path(name).exists() for name in names[:2]] == [
+        True,
+        True,
+    ]
+    assert calls == [False]
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected_calls"),
+    [(1.0, [False, True]), (3.0, [False]), (10.0, [False])],
+)
+@pytest.mark.parametrize("touch", ["answer", "manual"])
+def test_photo_answered_during_a_run_is_never_deleted_by_a_stale_ranking(
+    case: Case, seconds: float, expected_calls: list[bool], touch: str
+) -> None:
+    from core.human_label_core import BBox
+    from core.manual_object_core import ManualObjectDraft, create_manual_object
+    from utils.db.connection import closing_connection
+
+    conn, paths = case
+    top, other = ranked(conn, paths, (0.9, 0.8))
+    identifier = conn.execute(
+        "SELECT detection_id FROM detections WHERE image_filename=?", (other,)
+    ).fetchone()[0]
+    clock = FakeClock()
+    calls: list[bool] = []
+    changed = False
+
+    def plan_then_touch(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        nonlocal changed
+        yield from plan_deletions(*args, **kwargs)
+        if conn.in_transaction or changed:
+            return
+        changed = True
+        # Enough run time has passed that only the write-lock rule decides.
+        clock.now += 100.0
+        with closing_connection() as writer:
+            if touch == "answer":
+                answer(
+                    writer,
+                    other,
+                    identifier,
+                    species_identity="corrected",
+                    species_key="Cyanistes_caeruleus",
+                )
+            else:
+                create_manual_object(
+                    writer,
+                    ManualObjectDraft(
+                        other, BBox(0.5, 0.5, 0.2, 0.2), "Pica_pica", "test-manual"
+                    ),
+                    PROVENANCE,
+                    original_path=paths.get_original_path(other),
+                    locale="DE",
+                )
+                writer.commit()
+
+    settings = {
+        **SETTINGS,
+        "BEST_ORIGINALS_PER_SPECIES": 1,
+        "KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False,
+    }
+    with (
+        patch("core.retention_core._clock", clock),
+        patch(
+            "core.retention_core.best_original_keys",
+            timed_ranking(clock, seconds, calls),
+        ),
+        patch("core.retention_core.plan_deletions", plan_then_touch),
+    ):
+        result = execute_plan(conn, str(paths.base_dir), settings, NOW)
+    assert calls == expected_calls
+    assert result["deleted"] == 0
+    assert paths.get_original_path(other).is_file()
+
+    execute_plan(conn, str(paths.base_dir), settings, NOW)
+    assert paths.get_original_path(top).is_file()
+    assert paths.get_original_path(other).is_file()
+
+
+@pytest.mark.parametrize("limit", [1, 50])
+@pytest.mark.parametrize("external_connection", [False, True])
+@pytest.mark.parametrize("batch_size", [1, 100])
+def test_deferred_ranking_preserves_original_promoted_by_another_correction(
+    case: Case, limit: int, external_connection: bool, batch_size: int
+) -> None:
+    from utils.db.connection import closing_connection
+
+    conn, paths = case
+    names = ranked(
+        conn, paths, tuple(0.99 - index / 1000 for index in range(limit + 2))
+    )
+    top, promoted, excess = names[0], names[limit], names[-1]
+    identifier = conn.execute(
+        "SELECT detection_id FROM detections WHERE image_filename=?", (top,)
+    ).fetchone()[0]
+    clock = FakeClock()
+    calls: list[bool] = []
+    changed = False
+
+    def correct(writer: sqlite3.Connection) -> None:
+        answer(
+            writer,
+            top,
+            identifier,
+            species_identity="corrected",
+            species_key="Cyanistes_caeruleus",
+        )
+
+    def plan_then_correct(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        nonlocal changed
+        yield from plan_deletions(*args, **kwargs)
+        if conn.in_transaction or changed:
+            return
+        changed = True
+        if external_connection:
+            with closing_connection() as writer:
+                correct(writer)
+        else:
+            correct(conn)
+
+    settings = {
+        **SETTINGS,
+        "BEST_ORIGINALS_PER_SPECIES": limit,
+        "KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False,
+    }
+    with (
+        patch("core.retention_core._clock", clock),
+        patch(
+            "core.retention_core.best_original_keys",
+            timed_ranking(clock, 10.0, calls),
+        ),
+        patch("core.retention_core.plan_deletions", plan_then_correct),
+    ):
+        result = execute_plan(
+            conn, str(paths.base_dir), settings, NOW, batch_size=batch_size
+        )
+
+    assert calls == [False]
+    assert paths.get_original_path(promoted).is_file()
+    assert result["deleted"] == 0
+    assert all(paths.get_original_path(name).is_file() for name in names)
+
+    result = execute_plan(conn, str(paths.base_dir), settings, NOW)
+    assert result["deleted"] == 1
+    assert all(paths.get_original_path(name).is_file() for name in names[:-1])
+    assert not paths.get_original_path(excess).exists()

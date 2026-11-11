@@ -12,6 +12,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 Progress = Callable[[dict[str, int]], None]
 
+# A saved change to any of these makes a completed preview stale.
+PHOTO_RULE_KEYS = (
+    "AUTOMATIC_DELETION_ENABLED",
+    "AUTOMATIC_DELETION_ENABLED_AT",
+    "OLD_BIRD_PHOTOS",
+    "KEEP_ANSWERED_PHOTOS_FOR_TRAINING",
+    "ORIGINAL_PHOTO_DAYS",
+    "MIN_FREE_SPACE_GB",
+    "BEST_ORIGINALS_PER_SPECIES",
+)
+
 
 class RetentionPreview:
     def __init__(
@@ -32,14 +43,7 @@ class RetentionPreview:
 
     def request(self, *, refresh: bool = False) -> dict[str, Any]:
         settings = copy.deepcopy(self._settings_provider())
-        key = tuple(
-            settings.get(name)
-            for name in (
-                "AUTOMATIC_DELETION_ENABLED",
-                "AUTOMATIC_DELETION_ENABLED_AT",
-                "OLD_BIRD_PHOTOS",
-            )
-        )
+        key = tuple(settings.get(name) for name in PHOTO_RULE_KEYS)
         with self._lock:
             self._requested_key = key
             self._requested_settings = settings

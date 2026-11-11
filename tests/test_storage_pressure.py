@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -229,3 +229,178 @@ def test_storage_stop_prevents_image_files_and_database_rows(
     assert media(paths) == before
     assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == count
     service.close()
+
+
+GIB = 1024**3
+
+
+def test_saving_pauses_below_the_configured_reserve(tmp_path: Path) -> None:
+    guard = StoragePressure(
+        str(tmp_path),
+        free_bytes=lambda: 5 * GIB,
+        settings_provider=lambda: {"MIN_FREE_SPACE_GB": 10},
+    )
+    guard._stop.set()
+    assert not guard.allow_save(1000)
+    state = guard.status()
+    assert state["paused"] and state["reserve_bytes"] == 10 * GIB
+    assert "less than 10 GB free" in state["message"]
+
+
+def test_changed_reserve_applies_without_restart(tmp_path: Path) -> None:
+    clock = [0.0]
+    settings = {"MIN_FREE_SPACE_GB": 1}
+    guard = StoragePressure(
+        str(tmp_path),
+        free_bytes=lambda: 5 * GIB,
+        settings_provider=lambda: dict(settings),
+        clock=lambda: clock[0],
+    )
+    guard._stop.set()
+    assert guard.allow_save(1000)
+    settings["MIN_FREE_SPACE_GB"] = 10
+    clock[0] = 2.0
+    assert not guard.allow_save(1000)
+    assert guard.status()["reserve_bytes"] == 10 * GIB
+
+
+def test_reserve_larger_than_the_disk_pauses_without_error(tmp_path: Path) -> None:
+    guard = StoragePressure(
+        str(tmp_path),
+        free_bytes=lambda: 5 * GIB,
+        settings_provider=lambda: {"MIN_FREE_SPACE_GB": 1000},
+    )
+    guard._stop.set()
+    assert not guard.allow_save(1000)
+    assert "less than 1000 GB free" in guard.status()["message"]
+
+
+def test_constructor_reserve_applies_when_no_setting_is_stored(tmp_path: Path) -> None:
+    guard = StoragePressure(
+        str(tmp_path),
+        free_bytes=lambda: 100,
+        settings_provider=lambda: {},
+        reserve_bytes=10,
+    )
+    guard._stop.set()
+    assert guard.allow_save(20)
+    assert guard.status()["reserve_bytes"] == 10
+
+
+def test_configured_reserve_protects_favorites_and_training(case: Case) -> None:
+    conn, paths = case
+    favorite, favorite_id = add(conn, paths, "favorite")
+    conn.execute(
+        "UPDATE detections SET is_favorite=1 WHERE detection_id=?", (favorite_id,)
+    )
+    waiting, waiting_id = add(conn, paths, "waiting")
+    answer(
+        conn,
+        waiting,
+        waiting_id,
+        species_identity="confirmed",
+        species_key="Parus_major",
+    )
+    plain, _ = add(conn, paths, "plain")
+    conn.commit()
+    guard = StoragePressure(
+        str(paths.base_dir),
+        free_bytes=lambda: 5 * GIB,
+        settings_provider=lambda: {**SETTINGS, "MIN_FREE_SPACE_GB": 10},
+    )
+    guard.recover(10 * GIB)
+    assert paths.get_original_path(favorite).exists()
+    assert paths.get_original_path(waiting).exists()
+    assert not paths.get_original_path(plain).exists()
+    assert "training photos awaiting export" in guard.status()["message"]
+
+
+def test_each_pressure_stage_ranks_once(case: Case) -> None:
+    from core.best_originals import best_original_keys
+
+    conn, paths = case
+    for index in range(3):
+        add(conn, paths, f"stage{index}")
+    conn.executemany(
+        "INSERT INTO images(filename,timestamp) VALUES (?,?)",
+        [(f"20240102_120000_{i:04}.jpg", "20240102_120000") for i in range(250)],
+    )
+    conn.commit()
+    with (
+        patch(
+            "core.retention_core.best_original_keys", wraps=best_original_keys
+        ) as ranking,
+        patch("core.deletion_plan.best_original_keys") as per_batch,
+    ):
+        result = reclaim_space(
+            conn,
+            str(paths.base_dir),
+            {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 1},
+            free_bytes=lambda: 0,
+            target_bytes=10,
+            now=NOW,
+        )
+    per_batch.assert_not_called()
+    assert len(result["stages"]) == 2
+    assert ranking.call_count == 2
+
+
+def test_pause_message_still_names_the_limit_after_recovery(case: Case) -> None:
+    _, paths = case
+    guard = StoragePressure(
+        str(paths.base_dir),
+        free_bytes=lambda: 5 * GIB,
+        settings_provider=lambda: {**SETTINGS, "MIN_FREE_SPACE_GB": 10},
+    )
+    guard._stop.set()
+    assert not guard.allow_save(1000)
+    guard.recover(10 * GIB)
+    state = guard.status()
+    assert state["paused"] and "10 GB free" in state["message"]
+
+
+def test_bad_unrelated_setting_does_not_break_save_admission(tmp_path: Path) -> None:
+    guard = StoragePressure(
+        str(tmp_path),
+        free_bytes=lambda: 5 * GIB,
+        settings_provider=lambda: {"MIN_FREE_SPACE_GB": 1, "OLD_BIRD_PHOTOS": "bogus"},
+    )
+    guard._stop.set()
+    assert guard.allow_save(1000)
+
+
+def test_best_count_saved_during_pressure_recovery_is_honoured(case: Case) -> None:
+    conn, paths = case
+    name, _ = add(conn, paths, "pressure")
+    reclaim_space(
+        conn,
+        str(paths.base_dir),
+        SETTINGS,
+        free_bytes=lambda: 0,
+        target_bytes=10,
+        now=NOW,
+        settings_provider=lambda: {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 1},
+    )
+    assert paths.get_original_path(name).exists()
+
+
+def test_capture_budget_tracks_large_frames_and_camera_resolution(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from core.storage_budget import DEFAULT_CAPTURE_BUDGET_BYTES, photo_save_budget
+    from web.services.storage_service import capture_budget
+
+    guard = StoragePressure(str(tmp_path), free_bytes=lambda: 20 * GIB)
+    manager = SimpleNamespace(
+        persistence_service=SimpleNamespace(storage_pressure=guard)
+    )
+    assert capture_budget(None) == DEFAULT_CAPTURE_BUDGET_BYTES
+    try:
+        assert guard.allow_save(2 * DEFAULT_CAPTURE_BUDGET_BYTES)
+        assert capture_budget(manager) == 2 * DEFAULT_CAPTURE_BUDGET_BYTES
+        manager.video_capture = SimpleNamespace(resolution=(7680, 4320))
+        assert capture_budget(manager) == photo_save_budget(7680 * 4320 * 3)
+    finally:
+        guard.close()

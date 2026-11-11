@@ -217,6 +217,16 @@ an original wait until included in an export. Changed answers wait again.
 `core/training_retention.py` protects waiting photos and photos in any unconfirmed
 export, including unchanged context siblings. Historical facts and legacy flags
 alone grant no training protection. Favorites remain a separate retention rule.
+With `KEEP_ANSWERED_PHOTOS_FOR_TRAINING` off, the planner asks for no training
+sources and an answered photo starts its period at capture.
+`core/best_originals.py` ranks the originals each species keeps (rule 7) once
+per cleanup run and again after database changes, also under the write lock
+before a deletion, while ranking stays within its time budget in
+`core/retention_core.py`. Past that budget the run keeps its ranking. If any
+human answer or manual revision is newer than that ranking, deletion waits
+until a fresh ranking is available, protecting untouched photos promoted by
+another photo's correction as well. The planner treats ranked originals like
+favorites.
 An idempotent receipt stores `received_at` for that export only; it is the reference
 time for deletion deadlines. `core/retention_core.py` executes due planner actions,
 first filtering bounded photo batches for due work or media errors. Retained
@@ -245,11 +255,13 @@ their bundle JSON. Explicit selection requests still include sibling context.
 
 Artifacts live under checked `PathManager` paths in `output/training_exports`.
 Preparation reserves room for the DB snapshot and pauses before exhausting ZIP
-staging (2 GiB) or filesystem reserve (256 MiB). A complete ZIP is atomically
+staging (2 GiB) or the configured free-space reserve (256 MiB by default). A complete ZIP is atomically
 published before its export evidence and cursor are committed together. Originals
 already missing during selection are counted and skipped, without storing empty
 export bundles. A selected original that disappears during preparation can appear
-as an exclusion and acquires no export members. Failed partial
+as an exclusion and acquires no export members. An original removed while its
+part is being written makes the worker build that part again without it.
+Rebuilding an export whose originals are gone ends as `expired`. Failed partial
 files and unpublished ZIPs are removed. Queued/running jobs resume on startup;
 cancelled/paused/failed jobs can resume the same snapshot explicitly. Concurrent
 answer edits remain waiting if they differ from the exported revisions.
@@ -308,7 +320,7 @@ cache and subtracts a conservative per-frame budget between checks. Recovery run
 outside capture through that same planner and executor: open/model non-bird files
 and rows first, then unprotected answered/admitted originals, then bird previews
 only with Delete everything. Every pass rechecks all objects and current settings
-under the write lock. Favorites and pending training files stay protected; normal
+under the write lock. Favorites, photos held for training and the best originals stay protected; normal
 trash deadlines still apply. Low space can shorten the normal Review grace period.
 The photo switch gates early deletion too. While off, or when reclamation cannot
 restore the reserve and frame headroom, new image/detection persistence pauses.

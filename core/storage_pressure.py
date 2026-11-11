@@ -10,8 +10,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from config import photo_rule_number
 from core.deletion_plan import DEFAULT_SETTINGS, deletion_preview
 from core.retention_core import activation_date, reclaim_space, settings_for_plan
+from core.storage_budget import recovery_headroom_bytes
 from utils.db import closing_connection
 from utils.path_manager import PathManager
 from utils.settings import load_settings_yaml
@@ -34,6 +36,7 @@ class StoragePressure:
         self._settings = settings_provider or (lambda: load_settings_yaml(output_dir))
         self._clock = clock
         self.reserve_bytes = reserve_bytes
+        self._reserve = reserve_bytes
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
@@ -43,9 +46,11 @@ class StoragePressure:
         self._paused = False
         self._message = ""
         self._last_cleanup: dict[str, Any] = {}
+        self._capture_budget_bytes = 0
 
     def allow_save(self, budget_bytes: int) -> bool:
         with self._lock:
+            self._capture_budget_bytes = max(self._capture_budget_bytes, budget_bytes)
             # A new image has no objects until the processing frame completes.
             # Keep it out of a concurrent rule-6 pressure pass during that gap.
             if self._worker is not None and self._worker.is_alive():
@@ -61,7 +66,8 @@ class StoragePressure:
                     self._paused = True
                     self._message = "Photo saving paused: free space is unavailable. Live view continues."
                     return False
-            target = self.reserve_bytes + 2 * budget_bytes
+                self._reserve = self._configured_reserve()
+            target = self._reserve + 2 * budget_bytes
             if self._free >= target:
                 self._paused = False
                 self._message = ""
@@ -70,7 +76,11 @@ class StoragePressure:
                 return True
             self._paused = True
             if not self._message:
-                self._message = "Photo saving paused: card nearly full. Checking unprotected photos. Live view continues."
+                self._message = (
+                    "Photo saving paused: card nearly full. Checking unprotected photos. Live view continues."
+                    if self._reserve <= DEFAULT_SETTINGS.reserve_bytes
+                    else f"Photo saving paused: less than {self._reserve / 1024**3:g} GB free, the limit set in Settings. Checking unprotected photos. Live view continues."
+                )
             if (
                 not self._stop.is_set()
                 and (self._worker is None or not self._worker.is_alive())
@@ -79,12 +89,26 @@ class StoragePressure:
                 self._retry_at = now + 60
                 self._worker = threading.Thread(
                     target=self.recover,
-                    args=(self.reserve_bytes + 4 * budget_bytes,),
+                    args=(self._reserve + recovery_headroom_bytes(budget_bytes),),
                     name="StorageRecovery",
                     daemon=True,
                 )
                 self._worker.start()
             return False
+
+    def _configured_reserve(self) -> int:
+        """Return the saved free-space limit, or the built-in reserve without one."""
+        try:
+            settings = self._settings()
+        except Exception:
+            logger.debug("Free-space limit unavailable; keeping the last value")
+            return self._reserve
+        if "MIN_FREE_SPACE_GB" not in settings:
+            return self.reserve_bytes
+        return int(
+            photo_rule_number("MIN_FREE_SPACE_GB", settings["MIN_FREE_SPACE_GB"])
+            * 1024**3
+        )
 
     def recover(self, target_bytes: int) -> dict[str, Any]:
         """Recover outside the capture path; callable synchronously for diagnostics."""
@@ -121,6 +145,9 @@ class StoragePressure:
                             else "remaining photos are protected or previews are being kept; free space or change storage settings"
                         )
                     message = f"Photo saving paused: {reason}. Live view continues; saving resumes automatically when space is available."
+                    reserve = self._configured_reserve()
+                    if reserve > DEFAULT_SETTINGS.reserve_bytes:
+                        message += f" The limit set in Settings keeps {reserve / 1024**3:g} GB free."
             with self._lock:
                 self._free = free
                 self._checked_at = self._clock()
@@ -141,7 +168,8 @@ class StoragePressure:
                 "paused": self._paused,
                 "message": self._message,
                 "free_bytes": self._free,
-                "reserve_bytes": self.reserve_bytes,
+                "reserve_bytes": self._reserve,
+                "capture_budget_bytes": self._capture_budget_bytes,
                 "last_cleanup": dict(self._last_cleanup),
             }
 

@@ -566,3 +566,243 @@ def test_activation_requires_timezone(case: Case) -> None:
                 automatic_deletion_enabled_at=NOW.replace(tzinfo=None),
             )
         )
+
+
+CAPTURED = datetime(2026, 1, 1, 12, tzinfo=UTC)
+INSTALLATION = "0123456789abcdef0123456789abcdef"
+
+
+def released(**changes: Any) -> Any:
+    return replace(DEFAULT_SETTINGS, keep_for_training=False, **changes)
+
+
+def test_answered_bird_without_export_expires_from_capture_when_off(
+    case: Case,
+) -> None:
+    conn, paths = case
+    identifier = seed(conn, paths)[0]
+    answer(conn, identifier, species_identity="confirmed", species_key="Parus_major")
+    held = plan(conn, paths)
+    assert held.training_sources == ("waiting_for_training",)
+    assert all(item.decision.action == "keep" for item in held.files)
+    result = plan(conn, paths, settings=released())
+    assert result.training_sources == ()
+    original = result.files[0].decision
+    assert (original.rule, original.reason) == (4, "Answered")
+    assert original.deadline == CAPTURED + timedelta(days=30)
+    assert original.due(NOW)
+    assert all(item.decision.action == "keep" for item in result.files[1:])
+    assert all(row.decision.action == "keep" for row in result.rows)
+
+
+def test_answered_no_bird_expires_14_days_after_capture_when_off(case: Case) -> None:
+    conn, paths = case
+    identifier = seed(conn, paths)[0]
+    answer(conn, identifier, object_bird_presence="absent")
+    result = plan(conn, paths, settings=released())
+    assert all(
+        item.decision.rule == 4
+        and item.decision.reason == "Answered no bird"
+        and item.decision.deadline == CAPTURED + timedelta(days=14)
+        for item in result.files
+    )
+    assert all(row.decision.action == "keep" for row in result.rows)
+
+
+def test_unconfirmed_export_does_not_hold_photos_when_off(case: Case) -> None:
+    conn, paths = case
+    identifier = seed(conn, paths)[0]
+    answer(conn, identifier, species_identity="confirmed", species_key="Parus_major")
+    create_export(conn, paths=paths, labeling_installation_id=INSTALLATION)
+    assert plan(conn, paths).training_sources == ("unconfirmed_export",)
+    result = plan(conn, paths, settings=released())
+    assert result.training_sources == ()
+    assert result.files[0].decision.rule == 4
+    assert result.files[0].decision.due(NOW)
+
+
+def test_receipt_date_is_ignored_when_off(case: Case) -> None:
+    conn, paths = case
+    identifier = seed(conn, paths)[0]
+    answer(conn, identifier, species_identity="confirmed", species_key="Parus_major")
+    received(conn, paths, NOW - timedelta(days=1))
+    assert not plan(conn, paths).files[0].decision.due(NOW)
+    result = plan(conn, paths, settings=released())
+    assert result.files[0].decision.deadline == CAPTURED + timedelta(days=30)
+    assert result.files[0].decision.due(NOW)
+
+
+def test_favorite_on_shared_photo_keeps_every_file_when_off(case: Case) -> None:
+    conn, paths = case
+    ids = seed(conn, paths, detections=2)
+    answer(conn, ids[0], species_identity="confirmed", species_key="Parus_major")
+    conn.execute("UPDATE detections SET is_favorite=1 WHERE detection_id=?", (ids[1],))
+    conn.commit()
+    result = plan(conn, paths, settings=released())
+    assert {item.rule for item in result.objects.values()} == {2, 4}
+    assert all(
+        item.decision.action == "keep" and item.decision.rule == 2
+        for item in result.files
+    )
+
+
+def test_missing_original_still_uses_answer_date_when_off(case: Case) -> None:
+    conn, paths = case
+    identifier = seed(conn, paths, write_original=False)[0]
+    answered_at = NOW - timedelta(days=10)
+    record_human_answer(
+        conn,
+        HumanAnswer(
+            NAME, identifier, species_identity="confirmed", species_key="Parus_major"
+        ),
+        replace(PROVENANCE, created_at=answered_at.isoformat()),
+    )
+    conn.commit()
+    result = plan(conn, paths, settings=released(old_bird_photos="delete_all"))
+    assert not result.files[0].present
+    assert all(
+        item.decision.deadline == answered_at + timedelta(days=180)
+        for item in result.files[1:]
+    )
+
+
+def best(limit: int, **changes: Any) -> Any:
+    return replace(DEFAULT_SETTINGS, best_per_species=limit, **changes)
+
+
+def flock(
+    conn: sqlite3.Connection,
+    paths: PathManager,
+    scores: tuple[float, ...],
+    **kwargs: Any,
+) -> list[str]:
+    names = []
+    for index, score in enumerate(scores):
+        name = f"20260101_1200{index:02d}_flock{index}.jpg"
+        seed_image(conn, name, paths.base_dir, **kwargs)
+        conn.execute(
+            "UPDATE detections SET score=?, od_class_name='Parus_major' WHERE image_filename=?",
+            (score, name),
+        )
+        names.append(name)
+    conn.commit()
+    return names
+
+
+def plans(
+    conn: sqlite3.Connection, paths: PathManager, settings: Any, **kwargs: Any
+) -> dict[str, PhotoPlan]:
+    return {
+        photo.filename: photo
+        for photo in plan_deletions(
+            conn,
+            settings,
+            NOW,
+            paths=paths,
+            automatic_deletion_enabled_at=NOW - timedelta(days=14),
+            **kwargs,
+        )
+    }
+
+
+def test_best_of_species_keeps_every_file(case: Case) -> None:
+    conn, paths = case
+    top, second, third = flock(conn, paths, (0.9, 0.8, 0.7))
+    result = plans(conn, paths, best(2))
+    for name in (top, second):
+        assert all(
+            (item.decision.action, item.decision.rule, item.decision.reason)
+            == ("keep", 7, "Best of species")
+            for item in result[name].files
+        )
+        assert all(row.decision.action == "keep" for row in result[name].rows)
+    assert result[third].files[0].decision.rule == 5
+    assert result[third].files[0].decision.due(NOW)
+
+
+def test_best_of_species_keeps_previews_with_delete_all(case: Case) -> None:
+    conn, paths = case
+    top, other = flock(conn, paths, (0.9, 0.8))
+    result = plans(conn, paths, best(1, old_bird_photos="delete_all"))
+    assert all(item.decision.action == "keep" for item in result[top].files)
+    assert all(item.decision.action == "delete" for item in result[other].files)
+
+
+@pytest.mark.parametrize("stage", [1, 2, 3])
+def test_best_of_species_survives_every_pressure_stage(case: Case, stage: int) -> None:
+    conn, paths = case
+    top, other = flock(conn, paths, (0.9, 0.8))
+    result = plans(
+        conn, paths, best(1, old_bird_photos="delete_all"), pressure_stage=stage
+    )
+    assert all(item.decision.action == "keep" for item in result[top].files)
+    assert result[other].files[0].decision.action == (
+        "delete" if stage >= 2 else "keep"
+    )
+
+
+def test_shared_photo_is_kept_when_one_object_is_best(case: Case) -> None:
+    conn, paths = case
+    (shared,) = flock(conn, paths, (0.9,), detections=2)
+    conn.execute(
+        "UPDATE detections SET decision_state='uncertain' WHERE detection_id="
+        "(SELECT MAX(detection_id) FROM detections)"
+    )
+    conn.commit()
+    result = plans(conn, paths, best(1))[shared]
+    assert {item.rule for item in result.objects.values()} == {6, 7}
+    assert all(item.decision.action == "keep" for item in result.files)
+
+
+def test_training_reason_wins_over_best_of_species(case: Case) -> None:
+    conn, paths = case
+    (photo,) = flock(conn, paths, (0.9,))
+    identifier = conn.execute("SELECT detection_id FROM detections").fetchone()[0]
+    record_human_answer(
+        conn,
+        HumanAnswer(
+            photo, identifier, species_identity="confirmed", species_key="Parus_major"
+        ),
+        PROVENANCE,
+    )
+    conn.commit()
+    assert plans(conn, paths, best(1))[photo].files[0].decision.rule == 3
+    released = plans(conn, paths, best(1, keep_for_training=False))[photo]
+    assert released.files[0].decision.rule == 7
+
+
+def test_zero_disables_the_rule(case: Case) -> None:
+    conn, paths = case
+    (photo,) = flock(conn, paths, (0.9,))
+    decision = plans(conn, paths, best(0))[photo].files[0].decision
+    assert decision.rule == 5 and decision.due(NOW)
+
+
+def test_ranking_runs_once_for_all_batches(case: Case) -> None:
+    from core.best_originals import best_original_keys
+
+    conn, paths = case
+    flock(conn, paths, (0.9, 0.8, 0.7))
+    with patch(
+        "core.deletion_plan.best_original_keys", wraps=best_original_keys
+    ) as ranking:
+        assert len(plans(conn, paths, best(1), batch_size=1)) == 3
+    ranking.assert_called_once()
+
+
+def test_given_best_keys_are_used_without_a_ranking_query(case: Case) -> None:
+    conn, paths = case
+    top, _other = flock(conn, paths, (0.9, 0.8))
+    with patch("core.deletion_plan.best_original_keys") as ranking:
+        result = plans(conn, paths, best(1), best_keys=frozenset())
+    ranking.assert_not_called()
+    assert result[top].files[0].decision.rule == 5
+
+
+def test_preview_counts_best_of_species_as_its_own_class(case: Case) -> None:
+    conn, paths = case
+    flock(conn, paths, (0.9, 0.8, 0.7))
+    preview = deletion_preview(conn, best(2), NOW, paths=paths)
+    kept = preview["classes"]["7"]
+    assert kept["files"] > 0 and kept["bytes"] >= 2000
+    assert preview["settings"]["best_per_species"] == 2

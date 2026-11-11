@@ -95,3 +95,48 @@ def test_preview_failure_requires_explicit_retry(
     preview.wait(timeout=2)
     assert preview.request()["status"] == "complete"
     assert calls == [1, 1]
+
+
+@pytest.mark.parametrize(
+    ("name", "values"),
+    [
+        ("KEEP_ANSWERED_PHOTOS_FOR_TRAINING", (True, False)),
+        ("ORIGINAL_PHOTO_DAYS", (30, 90)),
+        ("BEST_ORIGINALS_PER_SPECIES", (20, 0)),
+    ],
+)
+def test_every_photo_rule_invalidates_a_completed_preview(
+    name: str, values: tuple[object, object]
+) -> None:
+    current = {name: values[0]}
+    seen = []
+
+    def build(settings: dict, progress: Progress) -> dict:
+        seen.append(settings[name])
+        return {}
+
+    preview = RetentionPreview(build, lambda: dict(current))
+    preview.request()
+    preview.wait(timeout=2)
+    assert preview.request()["status"] == "complete"
+    current[name] = values[1]
+    assert preview.request()["status"] == "running"
+    preview.wait(timeout=2)
+    assert seen == list(values)
+
+
+def test_reserve_change_invalidates_a_completed_preview() -> None:
+    current = {"MIN_FREE_SPACE_GB": 0.25}
+    seen = []
+
+    def build(settings: dict, progress: Progress) -> dict:
+        seen.append(settings["MIN_FREE_SPACE_GB"])
+        return {}
+
+    preview = RetentionPreview(build, lambda: dict(current))
+    preview.request()
+    preview.wait(timeout=2)
+    current["MIN_FREE_SPACE_GB"] = 10
+    assert preview.request()["status"] == "running"
+    preview.wait(timeout=2)
+    assert seen == [0.25, 10]

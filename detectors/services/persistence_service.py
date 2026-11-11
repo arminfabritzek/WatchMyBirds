@@ -17,6 +17,7 @@ import cv2
 
 from config import get_config
 from core.ptz_tracking_core import empty_ptz_snapshot
+from core.storage_budget import photo_save_budget
 from core.storage_pressure import StoragePressure
 from detectors.interfaces.persistence import (
     DetectionData,
@@ -192,7 +193,7 @@ class PersistenceService(PersistenceInterface):
         Returns:
             ImagePersistenceResult with paths and success status.
         """
-        if not self.storage_pressure.allow_save(int(frame.nbytes) * 3 + 1024**2):
+        if not self.storage_pressure.allow_save(photo_save_budget(int(frame.nbytes))):
             return ImagePersistenceResult(success=False)
 
         # Generate filenames

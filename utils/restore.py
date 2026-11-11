@@ -1401,6 +1401,25 @@ def _merge_labeling_exports(
             )
 
 
+def _hold_restored_answers(warnings: list[str]) -> None:
+    """Keep the answered photos a restore brings along.
+
+    A freshly installed station does not hold answered photos, and settings
+    are not restored by default, so the next cleanup would delete them.
+    """
+    from config import get_config, update_runtime_settings
+
+    key = "KEEP_ANSWERED_PHOTOS_FOR_TRAINING"
+    if get_config().get(key) is True:
+        return
+    update_runtime_settings({key: True})
+    warnings.append(
+        "Keep answered photos for training was turned on so that restored "
+        "answers are not deleted. Turn it off in Settings if this station "
+        "does not provide training photos."
+    )
+
+
 def _merge_database(
     backup_db_path: Path, *, filename_rename_map: dict[str, str | None] | None = None
 ) -> dict:
@@ -1424,6 +1443,7 @@ def _merge_database(
     """
     filename_rename_map = filename_rename_map or {}
     result = {"warnings": [], "conflicts": [], "stats": {}}
+    _hold_restored_answers(result["warnings"])
 
     current_db_path = get_db_path()
     conn = sqlite3.connect(current_db_path)

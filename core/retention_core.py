@@ -6,12 +6,16 @@ import logging
 import os
 import sqlite3
 import stat
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from config import photo_rule_number, training_keep_choice
+from core.best_originals import best_original_keys, original_exists
 from core.deletion_plan import (
+    DEFAULT_SETTINGS,
     DeletionSettings,
     PhotoPlan,
     _time,
@@ -41,9 +45,41 @@ _ROW_KEYS = {
 }
 
 
+_clock = time.monotonic
+
+# One ranking reads every bird that still has an original. After writes by other
+# connections it is repeated while that stays cheap. Beyond this budget a run
+# keeps its ranking and defers deletion if human answers change.
+_RANKING_FREE_SECONDS = 2.0
+_RANKING_SHARE_OF_RUN = 0.2
+# Other writers wait while a ranking runs under the write lock.
+_RANKING_UNDER_LOCK_SECONDS = 2.0
+
+
 def settings_for_plan(settings: dict[str, Any]) -> DeletionSettings:
+    days = int(
+        photo_rule_number("ORIGINAL_PHOTO_DAYS", settings.get("ORIGINAL_PHOTO_DAYS"))
+    )
     return DeletionSettings(
-        old_bird_photos=settings.get("OLD_BIRD_PHOTOS", "keep_previews")
+        old_bird_photos=settings.get("OLD_BIRD_PHOTOS", "keep_previews"),
+        original_days=days,
+        # Previews must never expire before their original.
+        preview_days=max(DEFAULT_SETTINGS.preview_days, days),
+        reserve_bytes=int(
+            photo_rule_number("MIN_FREE_SPACE_GB", settings.get("MIN_FREE_SPACE_GB"))
+            * 1024**3
+        ),
+        best_per_species=int(
+            photo_rule_number(
+                "BEST_ORIGINALS_PER_SPECIES",
+                settings.get("BEST_ORIGINALS_PER_SPECIES"),
+            )
+        ),
+        # Only a clear "off" releases photos; anything unclear keeps them.
+        keep_for_training=training_keep_choice(
+            settings.get("KEEP_ANSWERED_PHOTOS_FOR_TRAINING")
+        )
+        is not False,
     )
 
 
@@ -220,6 +256,73 @@ def execute_plan(
     if now.tzinfo is None:
         raise ValueError("now must include a timezone")
     paths = PathManager(str(Path(output_dir).resolve()))
+    started = _clock()
+    ranked_limit: int | None = None
+    ranked_state: tuple[int, int] | None = None
+    ranked_answers = (0, 0)
+    ranking_seconds = 0.0
+    last_ranking_seconds = 0.0
+    own_changes = 0
+    ranking_held = False
+    best_keys: frozenset[str] = frozenset()
+
+    def database_state() -> tuple[int, int]:
+        # Writes by other connections and by this one, minus this run's own
+        # deletions: those can never lift a photo into the ranking.
+        version = conn.execute("PRAGMA data_version").fetchone()[0]
+        return version, conn.total_changes - own_changes
+
+    def newest_answers() -> tuple[int, int]:
+        return (
+            conn.execute(
+                "SELECT COALESCE(MAX(fact_id), 0) FROM human_label_facts"
+            ).fetchone()[0],
+            conn.execute(
+                "SELECT COALESCE(MAX(manual_revision_id), 0) FROM manual_object_revisions"
+            ).fetchone()[0],
+        )
+
+    def best_for(current: dict[str, Any]) -> frozenset[str]:
+        nonlocal ranked_limit, ranked_state, ranked_answers, best_keys
+        nonlocal ranking_seconds, last_ranking_seconds, ranking_held
+        limit = settings_for_plan(current).best_per_species
+        state = database_state()
+        if limit == ranked_limit:
+            if state == ranked_state:
+                return best_keys
+            budget = max(
+                _RANKING_FREE_SECONDS, _RANKING_SHARE_OF_RUN * (_clock() - started)
+            )
+            if ranking_seconds + last_ranking_seconds > budget or (
+                conn.in_transaction
+                and last_ranking_seconds > _RANKING_UNDER_LOCK_SECONDS
+            ):
+                if not ranking_held:
+                    ranking_held = True
+                    logger.info(
+                        "Best-original ranking takes %.1fs; it is not repeated after "
+                        "every database change in this run. After newer human "
+                        "answers, deletion waits for a fresh ranking.",
+                        last_ranking_seconds,
+                    )
+                return best_keys
+        # Read before ranking: an answer landing meanwhile then counts as newer.
+        answers = newest_answers()
+        began = _clock()
+        best_keys = best_original_keys(conn, limit, media_exists=original_exists(paths))
+        last_ranking_seconds = _clock() - began
+        ranking_seconds += last_ranking_seconds
+        ranked_limit, ranked_state, ranked_answers = limit, state, answers
+        return best_keys
+
+    def answers_changed_since_ranking() -> bool:
+        if not ranked_limit or database_state() == ranked_state:
+            return False
+        return any(
+            current > ranked
+            for current, ranked in zip(newest_answers(), ranked_answers, strict=True)
+        )
+
     result = dict(
         deleted=0,
         deleted_rows=0,
@@ -260,6 +363,7 @@ def execute_plan(
                 filenames=list(original_markers),
                 automatic_deletion_enabled_at=enabled_at,
                 pressure_stage=pressure_stage,
+                best_keys=best_for(current),
             )
             if any(item.error for item in photo.files)
             or any(row.decision.due(now) for row in photo.rows)
@@ -281,6 +385,7 @@ def execute_plan(
                 result["processed"] += 1
                 continue
             conn.execute("BEGIN IMMEDIATE")
+            changes_before = conn.total_changes
             try:
                 current = current_settings()
                 enabled_at = activation_date(current)
@@ -299,11 +404,18 @@ def execute_plan(
                         filenames=[image["filename"]],
                         automatic_deletion_enabled_at=enabled_at,
                         pressure_stage=pressure_stage,
+                        best_keys=best_for(current),
                     ),
                     None,
                 )
                 if photo is None:
                     conn.rollback()
+                    continue
+                if answers_changed_since_ranking():
+                    # Correcting another photo can promote this untouched one
+                    # into its species' protected set.
+                    conn.rollback()
+                    result["processed"] += 1
                     continue
                 if any(item.error for item in photo.files):
                     raise ValueError(
@@ -338,6 +450,8 @@ def execute_plan(
             except Exception:
                 conn.rollback()
                 raise
+            finally:
+                own_changes += conn.total_changes - changes_before
             result["processed"] += 1
         if progress_callback:
             progress_callback(dict(result))

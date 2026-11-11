@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- Storage Retention has four new settings. **Keep original photos (days)** sets
+  how long bird originals stay (default 30). **Keep answered photos for
+  training** can be turned off, so answered photos expire like other bird photos
+  without an export; answers and bird records stay. Existing stations
+  keep it on, new stations start with it off. **Keep free (GB)** sets the free
+  space below which the oldest unprotected photos are removed early; it can only
+  be raised when enough space remains for the reserve and capture headroom.
+  **Best originals per species** keeps the best photos of every species regardless
+  of age (default 50), so rare visitors keep their originals.
+
+### Changed
+
+- Restoring a backup enables training-photo protection and reports the setting
+  change.
+
+### Fixed
+
+- Storage cleanup avoids repeated expensive species rankings during concurrent
+  writes and defers deletion after changed answers until the ranking is refreshed.
+- Training export preparation retries when cleanup removes a selected original;
+  ZIP rebuilds report when their source photos are no longer stored.
+
 ## 0.5.11 - 2026-10-30
 
 ### Changed

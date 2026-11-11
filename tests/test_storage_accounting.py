@@ -31,6 +31,7 @@ SETTINGS = dict(
     AUTOMATIC_DELETION_ENABLED=True,
     AUTOMATIC_DELETION_ENABLED_AT="2026-01-01T00:00:00+00:00",
     OLD_BIRD_PHOTOS="keep_previews",
+    BEST_ORIGINALS_PER_SPECIES=0,
 )
 
 
@@ -467,3 +468,86 @@ def test_inactive_automount_is_not_touched(output: Path, tmp_path: Path) -> None
     assert result["status"] == "complete"
     scope = next(s for s in result["inventory"]["scopes"] if s["scope"] == "usb_backup")
     assert scope["state"] == "unavailable" and scope["reason"] == "inactive_automount"
+
+
+def test_no_training_protection_is_reported_when_off(output: Path) -> None:
+    provenance = LabelProvenance("test", "test", "normal_correction", "watchmybirds_ui")
+    filename = "20260101_120000_answered.jpg"
+    with closing_connection() as conn:
+        seed_image(conn, filename, output)
+        detection = conn.execute(
+            "SELECT detection_id FROM detections WHERE image_filename=?", (filename,)
+        ).fetchone()[0]
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                filename,
+                detection,
+                species_identity="confirmed",
+                species_key="Parus_major",
+            ),
+            provenance,
+        )
+        conn.commit()
+    reasons = scan(output)["protections"]["reasons"]
+    assert reasons["waiting_for_training"]["files"] == 1
+    result = inspect_storage(
+        PathManager(str(output)),
+        {**SETTINGS, "KEEP_ANSWERED_PHOTOS_FOR_TRAINING": False},
+        now=NOW,
+        temp_root=output / "empty-temp",
+        backup_root=output / "empty-usb",
+    )
+    reasons = result["protections"]["reasons"]
+    assert reasons.get("waiting_for_training", {}).get("files", 0) == 0
+    assert reasons.get("unconfirmed_export", {}).get("files", 0) == 0
+
+
+def test_measurement_ranks_once_for_all_batches(output: Path) -> None:
+    from core import best_originals, storage_accounting
+    from utils.db import storage as storage_db
+
+    with closing_connection() as conn:
+        for index in range(3):
+            seed_image(conn, f"20260101_1200{index:02d}_batch{index}.jpg", output)
+    real_batches = storage_db.image_batches
+    calls = []
+
+    def counting(conn: sqlite3.Connection, limit: int, **kwargs: Any) -> frozenset[str]:
+        calls.append(limit)
+        return best_originals.best_original_keys(conn, limit, **kwargs)
+
+    with (
+        patch.object(
+            storage_accounting.storage_db,
+            "image_batches",
+            lambda conn, *args, **kwargs: real_batches(conn, 1),
+        ),
+        patch("core.deletion_plan.best_original_keys", counting),
+        patch("core.storage_accounting.best_original_keys", counting),
+    ):
+        result = inspect_storage(
+            PathManager(str(output)),
+            {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 2},
+            now=NOW,
+            temp_root=output / "empty-temp",
+            backup_root=output / "empty-usb",
+        )
+    assert result["database_error"] is None
+    assert len(calls) <= 2
+
+
+def test_best_originals_are_a_named_protection_reason(output: Path) -> None:
+    with closing_connection() as conn:
+        for index in range(3):
+            seed_image(conn, f"20260101_1200{index:02d}_best{index}.jpg", output)
+    result = inspect_storage(
+        PathManager(str(output)),
+        {**SETTINGS, "BEST_ORIGINALS_PER_SPECIES": 2},
+        now=NOW,
+        temp_root=output / "empty-temp",
+        backup_root=output / "empty-usb",
+    )
+    reason = result["protections"]["reasons"]["best_of_species"]
+    assert (reason["files"], reason["bytes"]) == (2, 2000)
+    assert result["protections"]["eligible"]["files"] == 1

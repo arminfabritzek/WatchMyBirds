@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from core import training_retention
+from core.best_originals import best_original_keys, original_exists
 from core.canonical_dataset import build_canonical_dataset, read_media_size
 from core.deletion_plan import deletion_preview, plan_deletions
 from core.retention_core import activation_date, settings_for_plan
@@ -285,6 +286,7 @@ def protection_summary(
         "too_recent",
         "training_evidence",
         "favorite",
+        "best_of_species",
         "presence_marker_conflict",
         "waiting_for_training",
         "unconfirmed_export",
@@ -300,25 +302,35 @@ def protection_summary(
     missing = retired = unsafe = done = accounted_bytes = shared = 0
     errors: list[dict[str, str]] = []
     storage_db.prepare_canonical_views(conn)
+    plan_settings = settings_for_plan(settings)
+    # Ranked once for the whole measurement, not once per batch.
+    best_keys = best_original_keys(
+        conn, plan_settings.best_per_species, media_exists=original_exists(path_mgr)
+    )
     for batch in storage_db.image_batches(conn):
         filenames = [str(row["filename"]) for row in batch]
         storage_db.select_images(conn, filenames)
-        sources = training_retention.protection_sources_any(
-            conn,
-            filenames,
-            media_exists=lambda name: training_retention.original_resolver(path_mgr)(
-                name
-            ).is_file(),
+        sources = (
+            training_retention.protection_sources_any(
+                conn,
+                filenames,
+                media_exists=lambda name: training_retention.original_resolver(
+                    path_mgr
+                )(name).is_file(),
+            )
+            if plan_settings.keep_for_training
+            else {}
         )
         planned = {
             photo.filename: photo
             for photo in plan_deletions(
                 conn,
-                settings_for_plan(settings),
+                plan_settings,
                 now,
                 paths=path_mgr,
                 filenames=filenames,
                 automatic_deletion_enabled_at=activation_date(settings),
+                best_keys=best_keys,
             )
         }
         history = storage_db.historical_images(conn)
@@ -391,6 +403,8 @@ def protection_summary(
                 blocked.append("training_evidence")
             if original and original.decision.rule == 2:
                 blocked.append("favorite")
+            if original and original.decision.rule == 7:
+                blocked.append("best_of_species")
             labels = set(blocked) | sources.get(name, set())
             if name in ready:
                 labels.add("training_ready")

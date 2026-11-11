@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from config import get_config
+from config import get_config, training_keep_choice
 
 DB_FILENAME = "images.db"
 SQLITE_MMAP_SIZE_BYTES = 2 * 1024 * 1024 * 1024
@@ -502,6 +502,9 @@ def _init_schema(
         _initialize_automatic_deletion(
             conn, existing_installation=existing_installation
         )
+        _initialize_training_keep_default(
+            conn, existing_installation=existing_installation
+        )
     except Exception:
         import logging
 
@@ -521,6 +524,39 @@ def _retire_reject_audit(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT INTO _migration_state VALUES (?,datetime('now'))", (marker,)
             )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _initialize_training_keep_default(
+    conn: sqlite3.Connection, *, existing_installation: bool
+) -> None:
+    """Existing stations keep holding answered photos; new stations do not."""
+    from datetime import UTC, datetime
+
+    from utils.settings import load_settings_yaml, save_settings_yaml
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        marker = "training_keep_default_v1"
+        if conn.execute(
+            "SELECT 1 FROM _migration_state WHERE key=?", (marker,)
+        ).fetchone():
+            conn.rollback()
+            return
+        cfg = get_config()
+        key = "KEEP_ANSWERED_PHOTOS_FOR_TRAINING"
+        settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
+        if key not in settings:
+            settings[key] = existing_installation
+            save_settings_yaml(settings, str(cfg["OUTPUT_DIR"]))
+        cfg[key] = training_keep_choice(settings[key]) is not False
+        conn.execute(
+            "INSERT INTO _migration_state VALUES (?,?)",
+            (marker, datetime.now(UTC).isoformat()),
+        )
         conn.commit()
     except Exception:
         conn.rollback()
