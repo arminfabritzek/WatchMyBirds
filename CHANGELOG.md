@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.12 - 2026-11-12
+
 ### Added
 
 - Storage Retention has four new settings. **Keep original photos (days)** sets
