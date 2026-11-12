@@ -83,10 +83,10 @@ def test_export_download_repeat_and_receipt(
             page.get_by_role("button", name="Login", exact=True).click()
             page.goto(base + "/admin/canonical-dataset")
             assert page.locator("html").get_attribute("data-theme") == theme
-            assert (
-                "1 photo is waiting for training"
-                in page.get_by_role("status").inner_text()
+            waiting_notice = page.get_by_role("status").filter(
+                has_text="1 photo is waiting for training"
             )
+            assert waiting_notice.is_visible()
             with page.expect_download() as first_download:
                 page.get_by_role(
                     "button", name="Export waiting photos", exact=True

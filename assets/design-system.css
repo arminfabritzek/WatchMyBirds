@@ -10329,3 +10329,109 @@ button.wm-bird-editor__box-verdict:disabled { cursor: default; opacity: 0.65; }
 .canonical-dataset__export-actions form {
     margin: 0;
 }
+
+.nav-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 5%;
+    height: 3px;
+    background: var(--color-primary);
+    opacity: 0;
+    pointer-events: none;
+    z-index: calc(var(--z-tooltip) + 1);
+}
+
+.nav-pending .nav-progress {
+    width: 90%;
+    opacity: 1;
+    transition: width 12s cubic-bezier(0.1, 0.7, 0.2, 1);
+}
+
+.is-opening {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+/* Never intercepts input: a slow page must stay usable while it loads. */
+.nav-notice {
+    position: fixed;
+    left: var(--space-md);
+    right: var(--space-md);
+    bottom: var(--space-lg);
+    width: fit-content;
+    max-width: calc(100% - 2 * var(--space-md));
+    margin-inline: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    font-size: var(--font-size-sm);
+    pointer-events: none;
+    z-index: var(--z-tooltip);
+}
+
+.nav-notice[hidden] {
+    display: none;
+}
+
+.nav-notice__bird {
+    flex: none;
+    width: 48px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .nav-notice__bird path {
+        stroke-dasharray: 1;
+        stroke-dashoffset: 0.65;
+        animation: nav-notice-draw 2.4s ease-in-out infinite alternate;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-pending .nav-progress {
+        transition: none;
+    }
+}
+
+@keyframes nav-notice-draw {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.btn:active:not(:disabled),
+.app-bar__link:active,
+.wm-tile__button:active,
+.wm-tile__body--link:active,
+.best-species-card__media-link:active,
+.best-species-card__link:active {
+    opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .btn:active:not(:disabled),
+    .wm-tile__button:active,
+    .best-species-card__media-link:active {
+        transform: scale(0.98);
+    }
+}
+
+.wm-tile__body--link .wm-tile__name::after,
+.best-species-card__link .best-species-card__name::after {
+    content: "\00a0\203a";
+    content: "\00a0\203a" / "";
+    color: var(--color-text-muted);
+    font-weight: 400;
+}

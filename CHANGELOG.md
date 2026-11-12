@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- Opening a page shows progress at once, names the page after a second when the
+  status bar is visible, and adds a notice on long waits. Repeated clicks on the
+  same link are ignored while it opens.
+- Names that lead to another page carry a small arrow, and tiles, buttons and
+  navigation respond visibly when pressed, on touch screens as well.
+
 ## 0.5.12 - 2026-11-12
 
 ### Added

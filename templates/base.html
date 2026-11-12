@@ -78,6 +78,15 @@
     {# Single App Bar - no duplicates #}
     {% include 'partials/appbar.html' %}
 
+    <div class="nav-progress" aria-hidden="true"></div>
+    <div class="nav-notice" id="navNotice" aria-hidden="true" hidden>
+        <svg class="nav-notice__bird" viewBox="0 0 120 60" aria-hidden="true" focusable="false">
+            <path pathLength="1" d="M8 38C24 20 40 14 56 24C63 13 78 9 90 16L104 11L96 24C99 42 80 52 58 50C40 49 24 50 8 38Z"/>
+        </svg>
+        <span><span id="navNoticeText"></span><span id="navNoticeElapsed"></span></span>
+    </div>
+    <span class="visually-hidden" id="navAnnouncement" role="status"></span>
+
     {% if warn_default_password %}
     <div style="background:#b91c1c;color:#fff;text-align:center;padding:.5rem 1rem;font-size:.9rem;">
         &#9888; Default password is active. Please change it in
@@ -165,6 +174,7 @@
     <script src="/assets/vendor/bootstrap/5.3.2/bootstrap.bundle.min.js?v={{ asset_version }}"></script>
     <script src="/assets/js/bbox_editor_math.js?v={{ asset_version }}"></script>
     <script src="/assets/js/bird_editor.js?v={{ asset_version }}"></script>
+    <script src="/assets/js/nav_feedback.js?v={{ asset_version }}" defer></script>
 
     {% block scripts %}{% endblock %}
 

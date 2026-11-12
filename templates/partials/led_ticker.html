@@ -227,6 +227,7 @@
         if (!on) { on = (cs.getPropertyValue('--color-text') || '#202426').trim(); }
         return {
             on: on,
+            status: notice ? (cs.getPropertyValue('--color-primary').trim() || on) : on,
             bg: bg,
             bgTransparent: (bg === 'transparent' || bg === 'none')
         };
@@ -499,7 +500,7 @@
         ctx.beginPath();
         ctx.rect(0, 0, statusW, h);
         ctx.clip();
-        ctx.fillStyle = colors.on;
+        ctx.fillStyle = colors.status;
         // centre each line horizontally within the status field (signalW..statusW)
         // so a short line (e.g. "18:47") sits centred over a longer one ("9.JUN")
         var statusField = Math.max(0, statusW - signalW);
@@ -653,6 +654,7 @@
     // "Auto Cam …" pill — it shows clock by default and rotates through
     // weather + PTZ-status snippets.
     var lastDetection = null;   // {ts, species}
+    var notice = null;
     // Alert-sign state. alertSignUntil is the wall-clock ms when the
     // overlay stops; alertMode chooses which word list rotates;
     // alertTimes is the sliding window that escalates to FLOCK ALERT.
@@ -858,6 +860,7 @@
     // the auto-fit width is computed from the exact same set the picker
     // chooses from — no drift between width calc and render.
     function buildStatusPages() {
+        if (notice) return [notice];
         var pages = [buildClockLines()];
         var weather = buildWeatherLines();
         if (weather) pages.push(weather);
@@ -994,7 +997,7 @@
         // Alert-sign overlay takes precedence over the marquee while
         // active. The scroll offset keeps advancing underneath so the
         // ticker comes back mid-cycle, not from a stale frozen frame.
-        if (Date.now() < alertSignUntil) {
+        if (!notice && Date.now() < alertSignUntil) {
             renderAlertSign(t);
         } else {
             renderFrame(compositeBuffer, compositeOffset, t);
@@ -1225,6 +1228,11 @@
     // setSysInfo: appbar.html pushes the polled /health payload here
     //   for the colored right-side zone.
     window.wmbLedTicker = {
+        setNotice: function (top, bottom) {
+            notice = top
+                ? { top: String(top).toUpperCase(), bottom: String(bottom || '').toUpperCase() }
+                : null;
+        },
         setPtzState: function (view) {
             // Shallow-copy so caller mutations don't bleed in unexpectedly.
             if (!view) { ptzView = null; return; }

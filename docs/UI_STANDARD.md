@@ -1392,6 +1392,20 @@ and species answers continue through their normal controls.
     notice names that limit. Refresh it from cached runtime status; polling must not scan
     media or initiate cleanup. Explain in Settings and Storage that pressure cleanup
     may shorten the normal Review grace period while automatic deletion is on.
+14. Page navigation shows a progress line immediately and names the destination
+    after one second when the status bar is visible. After four seconds, a notice
+    shows the elapsed time without intercepting input. A separate `role="status"`
+    announces the message once. The feedback ignores repeated clicks on the same
+    link and repeat submissions through the same control until the form is edited.
+    It clears on `pageshow`, including a return through the back/forward cache,
+    and after 45 seconds. Downloads, other browsing contexts, other origins,
+    same-page anchors, dialog submissions and events a script cancels are exempt.
+    Use `data-nav-feedback="off"` for attachment routes without a `download`
+    path segment or a `download` link attribute.
+    Cues that something can be tapped must not depend on hover or a mouse pointer:
+    names that open another page end in `›`, and tiles, cards, buttons and
+    navigation links have a pressed state. These cues never change what a click
+    does or where it can land.
 
 ## 7. Guided Recovery (non-image settings workflow)
 
