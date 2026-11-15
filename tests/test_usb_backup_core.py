@@ -325,6 +325,7 @@ class TestGetSnapshot:
         [
             "../etc/passwd",
             "..",
+            ".",
             "/absolute/path",
             "with/slash",
             "",
@@ -354,6 +355,12 @@ class TestDeleteSnapshot:
         ok, msg = usb_backup_core.delete_snapshot("nope")
         assert ok is False
         assert "not found" in msg.lower()
+
+    def test_refuses_the_snapshots_directory_itself(self, fake_stick):
+        kept = _make_snapshot(fake_stick, "20260429_120000_manual", kind="manual")
+        ok, _ = usb_backup_core.delete_snapshot(".")
+        assert ok is False
+        assert kept.is_dir()
 
     @pytest.mark.parametrize(
         "evil",

@@ -410,7 +410,8 @@ def _safe_snapshot_path(name: str) -> Path | None:
     The single choke-point that user-supplied snapshot names must pass
     through before being joined onto ``SNAPSHOTS_DIR``. Rejects empty
     strings, separators, parent refs, NUL bytes, and any name whose
-    resolved location escapes ``SNAPSHOTS_DIR``.
+    resolved location escapes ``SNAPSHOTS_DIR`` or is ``SNAPSHOTS_DIR``
+    itself.
 
     Defense-in-depth: even after the literal rejects above, the final
     join uses ``os.path.basename`` to strip any residual directory
@@ -425,8 +426,13 @@ def _safe_snapshot_path(name: str) -> Path | None:
         return None
     candidate = SNAPSHOTS_DIR / safe_name
     try:
-        candidate.resolve(strict=False).relative_to(SNAPSHOTS_DIR.resolve(strict=False))
+        relative = candidate.resolve(strict=False).relative_to(
+            SNAPSHOTS_DIR.resolve(strict=False)
+        )
     except (OSError, ValueError):
+        return None
+    # "." joins to the directory that holds every snapshot.
+    if not relative.parts:
         return None
     return candidate
 

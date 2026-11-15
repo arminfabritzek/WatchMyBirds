@@ -31,6 +31,12 @@
 - Names that lead to another page carry a small arrow, and tiles, buttons and
   navigation respond visibly when pressed, on touch screens as well.
 
+### Security
+
+- Deleting a USB backup refuses a name that stands for the folder holding all
+  backups. Before, a hand-built request from a signed-in user could remove
+  every backup at once.
+
 ## 0.5.12 - 2026-11-12
 
 ### Added
