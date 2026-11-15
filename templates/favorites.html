@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+
+{% block title %}Favorites - WatchMyBirds{% endblock %}
+
+{% block content %}
+{% from 'partials/tile_toolbox.html' import tile_toolbox %}
+{% set can_moderate = session.get('authenticated') %}
+{% set species_arg = selected_species or none %}
+{% set sort_arg = sort_by if sort_by != 'date' else none %}
+<nav class="page-control-bar" role="navigation" aria-label="Favorites controls">
+    <div class="page-control-bar__left">
+        <span class="page-control-bar__title">Favorites</span>
+    </div>
+    {% if species_options %}
+    <div class="page-control-bar__center">
+        <form method="get" action="{{ url_for('gallery.favorites') }}" class="station-filters"
+            aria-label="Filter and sort favorite photos">
+            <label>Species
+                <select name="species">
+                    <option value=""{% if not selected_species %} selected{% endif %}>All species</option>
+                    {% for key, name in species_options %}
+                    <option value="{{ key }}"{% if key == selected_species %} selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>Sort by
+                <select name="sort">
+                    <option value="date"{% if sort_by == 'date' %} selected{% endif %}>Date, newest first</option>
+                    <option value="species"{% if sort_by == 'species' %} selected{% endif %}>Species, A to Z</option>
+                </select>
+            </label>
+            <button class="btn btn--secondary" type="submit" title="Apply species and sorting">Apply</button>
+        </form>
+    </div>
+    <div class="page-control-bar__meta">
+        Page {{ page }} of {{ total_pages }} ({{ total_items }} photo{{ '' if total_items == 1 else 's' }})
+    </div>
+    <div class="page-control-bar__right">
+        {% include 'partials/thumb_view_toggle.html' %}
+        {% if can_moderate %}
+        <button type="button" class="btn btn--secondary inline-edit-toggle" onclick="toggleInlineEdit(this)">✏️
+            Batch Edit</button>
+        {% endif %}
+    </div>
+    {% endif %}
+</nav>
+
+{% if detections %}
+<div class="species-grid" id="favorites-grid">
+    {% for det in detections %}
+    <div class="wm-tile fade-in-item" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}"
+        data-batch-target="detection">
+        <div class="wm-tile__media">
+            <button type="button" class="wm-tile__button wm-tile__button--fill" data-bs-toggle="modal"
+                data-bs-target="#modal-favorites-{{ det.detection_id }}">
+                {% if det.media_placeholder %}<span class="station-media-placeholder" role="img" aria-label="No stored image available">No stored image available</span>{% else %}
+                <img class="wm-tile__image" loading="lazy" src="{{ det.display_path }}" alt="{{ det.common_name }}"
+                    data-thumb-src="{{ det.display_path }}" data-full-src="{{ det.full_path }}">
+                {% endif %}
+            </button>
+        </div>
+        {{ tile_toolbox(
+        detection_id=det.detection_id,
+        filename=det.image_filename,
+        surface='species',
+        is_favorite=det.is_favorite|default(false),
+        can_moderate=can_moderate,
+        current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
+        modal_target='#modal-favorites-' ~ det.detection_id
+        ) }}
+
+        <div class="wm-tile__body">
+            <span class="wm-tile__name">{{ det.common_name }}</span>
+            {% if det.species_key and det.species_key != 'Unknown_species' %}
+            <span class="wm-tile__latin">{{ det.species_key | replace('_', ' ') }}</span>
+            {% endif %}
+            <span class="station-card-meta">{{ det.formatted_date }} {{ det.formatted_time }}</span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-state__icon">⭐</div>
+    <p>No favorite photos yet.</p>
+    <p>Photos marked with a star appear here.</p>
+</div>
+{% endif %}
+
+{% if total_pages > 1 %}
+<nav class="pagination-wrapper" aria-label="Favorites pagination">
+    <ul class="pagination">
+        {% if page > 1 %}
+        <li><a href="{{ url_for('gallery.favorites', page=page - 1, species=species_arg, sort=sort_arg) }}">«</a></li>
+        {% endif %}
+
+        {% for p in pagination_range %}
+        {% if p == '...' %}
+        <li class="disabled"><span>…</span></li>
+        {% elif p == page %}
+        <li class="active"><span>{{ p }}</span></li>
+        {% else %}
+        <li><a href="{{ url_for('gallery.favorites', page=p, species=species_arg, sort=sort_arg) }}">{{ p }}</a></li>
+        {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <li><a href="{{ url_for('gallery.favorites', page=page + 1, species=species_arg, sort=sort_arg) }}">»</a></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+{% if can_moderate and detections %}
+{% include 'partials/inline_edit.html' %}
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+{% from "components/detection_modal.html" import render_modal %}
+{% for det in detections %}
+{{ render_modal(det, 'favorites') }}
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/batch_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/station_browse.js?v={{ asset_version }}"></script>
+{% endblock %}

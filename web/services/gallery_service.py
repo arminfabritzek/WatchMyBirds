@@ -205,5 +205,24 @@ def get_species_page(
     )
 
 
+def get_favorite_species() -> list[str]:
+    return gallery_core.get_favorite_species()
+
+
+def get_favorites_page(
+    *,
+    species: str | None,
+    species_order: list[str] | None,
+    page: int,
+    per_page: int,
+) -> tuple[list[dict], int, int]:
+    return gallery_core.get_favorites_page(
+        species=species,
+        species_order=species_order,
+        page=page,
+        per_page=per_page,
+    )
+
+
 def get_gallery_days(*, page: int, per_page: int = 30) -> tuple[list[dict], int, int]:
     return gallery_core.get_gallery_days(page=page, per_page=per_page)

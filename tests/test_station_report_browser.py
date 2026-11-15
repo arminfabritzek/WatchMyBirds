@@ -138,6 +138,8 @@ def test_report_stays_still_during_capture_and_refreshes_explicitly(
             ) as result:
                 modal.get_by_role("button", name="Save bird", exact=True).click()
             assert result.value.status == 200
+            # The page rewrites the card only after it has read the answer.
+            tile.locator(".wm-tile__latin", has_text="Garrulus glandarius").wait_for()
             assert tile.locator(".wm-tile__latin").inner_text() == "Garrulus glandarius"
             notices = page.locator("[data-report-outdated]")
             assert notices.count() == 2
@@ -201,6 +203,8 @@ def test_report_stays_still_during_capture_and_refreshes_explicitly(
                     has_text="Picus viridis"
                 ).first.click()
             assert result.value.status == 200
+            # The page rewrites the card only after it has read the answer.
+            tile.locator(".wm-tile__latin", has_text="Picus viridis").wait_for()
             assert tile.locator(".wm-tile__latin").inner_text() == "Picus viridis"
             notices = page.locator("[data-report-outdated]")
             assert notices.count() == 2

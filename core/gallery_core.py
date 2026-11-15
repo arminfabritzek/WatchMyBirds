@@ -1046,6 +1046,33 @@ def get_species_page(
         return [dict(row) for row in rows], total, page
 
 
+def get_favorite_species() -> list[str]:
+    from utils.db.detections import fetch_favorite_species
+
+    with closing_connection() as conn:
+        return fetch_favorite_species(conn)
+
+
+def get_favorites_page(
+    *,
+    species: str | None,
+    species_order: list[str] | None,
+    page: int,
+    per_page: int,
+) -> tuple[list[dict], int, int]:
+    from utils.db.detections import fetch_favorites_page
+
+    with closing_connection() as conn:
+        conn.execute("BEGIN")
+        return fetch_favorites_page(
+            conn,
+            species=species,
+            species_order=species_order,
+            page=page,
+            per_page=per_page,
+        )
+
+
 def get_gallery_days(*, page: int, per_page: int = 30) -> tuple[list[dict], int, int]:
     from utils.db.detections import fetch_gallery_days
 

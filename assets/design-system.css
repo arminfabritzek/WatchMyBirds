@@ -1004,6 +1004,28 @@ code {
     }
 }
 
+/* Signed in, the bar needs about 1300px at full size. Up to there, tighten it
+   so the last entries stay on screen; the public bar fits from 1101px on. */
+@media (min-width: 1101px) and (max-width: 1320px) {
+    .app-bar--signed-in .app-bar__brand {
+        margin-right: var(--space-md);
+    }
+
+    .app-bar--signed-in .app-bar__link {
+        padding-inline: var(--space-xs);
+    }
+
+    .app-bar--signed-in .app-bar__status-toggle-label {
+        display: none;
+    }
+
+    .app-bar--signed-in .app-bar__status-toggle,
+    .app-bar--signed-in .app-bar__auth {
+        min-width: 44px;
+        justify-content: center;
+    }
+}
+
 @media (max-width: 768px) {
     /* Status bar mobile: compact icon-only view */
     .status-bar {

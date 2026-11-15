@@ -1487,6 +1487,79 @@ def fetch_species_page(
     )
 
 
+_STARRED = (
+    "COALESCE(is_favorite, 0) != 0 "
+    "AND (species_key != 'Unknown_species' OR unknown_bird)"
+)
+
+
+def fetch_favorite_species(conn: sqlite3.Connection) -> list[str]:
+    """Species with at least one starred photo on the station pages."""
+    return [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT species_key FROM current_observations WHERE " + _STARRED
+        )
+    ]
+
+
+def fetch_favorites_page(
+    conn: sqlite3.Connection,
+    *,
+    species: str | None = None,
+    species_order: list[str] | None = None,
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[dict], int, int]:
+    """Starred photos shown on the station pages, newest first.
+
+    With ``species_order`` the photos are grouped in that order of species
+    keys and stay newest first within each species.
+    """
+    where = _STARRED
+    params: list[Any] = []
+    if species == UNKNOWN_SPECIES_KEY:
+        where += " AND unknown_bird"
+    elif species:
+        where += " AND species_key = ?"
+        params.append(species)
+    total = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM current_observations WHERE " + where, params
+        ).fetchone()[0]
+    )
+    per_page = max(1, min(int(per_page), 100))
+    page = max(1, min(page, max(1, (total + per_page - 1) // per_page)))
+    newest = (
+        "timestamp DESC, COALESCE(detection_id, -manual_object_id) DESC, object_key"
+    )
+    window = [per_page, (page - 1) * per_page]
+    if species_order:
+        ranks = ", ".join("(?, ?)" for _ in species_order)
+        ranked = [
+            value
+            for position, key in enumerate(species_order)
+            for value in (key, position)
+        ]
+        rows = conn.execute(
+            f"""
+            WITH ranks(ranked_species, position) AS (VALUES {ranks})
+            SELECT o.* FROM current_observations o
+            LEFT JOIN ranks ON ranked_species = o.species_key
+            WHERE {where}
+            ORDER BY COALESCE(position, ?), {newest} LIMIT ? OFFSET ?
+            """,
+            [*ranked, *params, len(species_order), *window],
+        )
+    else:
+        rows = conn.execute(
+            f"SELECT * FROM current_observations WHERE {where} "
+            f"ORDER BY {newest} LIMIT ? OFFSET ?",
+            [*params, *window],
+        )
+    return hydrate_observations(conn, [dict(row) for row in rows]), total, page
+
+
 def fetch_species_covers(
     conn: sqlite3.Connection,
     *,

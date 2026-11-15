@@ -14,7 +14,7 @@ that every legacy surface has already been converted.
 ## 0. Unified Image UX (binding, app-wide)
 
 Every place in the app that shows a bird image — Stream, Gallery, Subgallery,
-Species, Species Overview, Review Desk, Trash, Restore, detail modals, and any future surface — must present
+Species, Species Overview, Favorites, Review Desk, Trash, Restore, detail modals, and any future surface — must present
 the **same image UX**. This is a hard rule, not a guideline. It exists so that
 shared concerns (favorite, change-species, view-details, hover
 tooltips, keyboard navigation, bbox overlay behavior, zoom modal) can be added
@@ -248,7 +248,7 @@ does not change the shared image or detail-modal interactions.
 ## 0c. Detail Modal Companion Visibility (binding)
 
 When the user opens an **image-detail modal** — clicked through from
-Stream, Gallery, Subgallery, Species, Species Overview, Review queue,
+Stream, Gallery, Subgallery, Species, Species Overview, Favorites, Review queue,
 Review event panel, or Trash — every active detection on the source
 frame MUST render as a bbox overlay. The detection that opened the
 modal is visually distinguished as `isCurrent`; companion detections
@@ -536,7 +536,7 @@ stop being visually primary.
 | Stream                           | Favorite, View Details                   | Change Species, Move to Trash, No birds in full image                        |
 | Gallery                          | Favorite, View Details                   | Change Species, Move to Trash, No birds in full image                        |
 | Subgallery                       | Favorite, View Details                   | Change Species, Move to Trash, No birds in full image                        |
-| Species / Species Overview       | Favorite, View Details                   | Change Species, Move to Trash                                                           |
+| Species / Species Overview / Favorites | Favorite, View Details              | Change Species, Move to Trash                                                           |
 | Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, No birds in full image | View Details |
 | Trash                            | Restore                                  | View Details, Change Species *(if exposed)* — Favorite is intentionally suppressed |
 | Detail modals (`wm-bird-editor`) | Full / Focus, Species, Adjust box, Add missing bird | Bounding boxes, Full screen, Download, Open day, Favorite, Move to Trash, No birds in full image |
@@ -602,7 +602,7 @@ class (for example `wm-modal wm-modal--form`, `wm-tile wm-tile--review`).
   primitives such as buttons, badges, review-stage controls, tiles, and modal
   subcomponents.
 - Detection-bearing surfaces currently belong to one of two shells:
-  `public shell` for Stream, Gallery, Species, and Species Overview, and
+  `public shell` for Stream, Gallery, Species, Species Overview and Favorites, and
   `workbench shell` for Review and Trash. Layout density may differ, but shared
   detection components must not fork semantics or wording between shells.
 - New shared buttons must use `btn` plus the design-system modifiers such as
@@ -1406,6 +1406,19 @@ and species answers continue through their normal controls.
     names that open another page end in `›`, and tiles, cards, buttons and
     navigation links have a pressed state. These cues never change what a click
     does or where it can land.
+15. Favorites (`/favorites`) lists every starred photo that the Species pages
+    show, for all visitors: 50 per page, newest first, optionally one species,
+    optionally grouped by displayed species name. It is a photo listing, not a
+    cover pick. Starring and the ZIP download need a sign-in and reuse the tile
+    toolbox and Batch Edit (`partials/inline_edit.html`); the page adds no
+    download or star route of its own. A species that lost its last star falls
+    back to all favorites instead of an error.
+16. While Batch Edit is active, a click or tap on a tile selects it and never
+    also opens the viewer; the tile toolbox keeps working.
+17. The main menu stays inside the window. It folds into the menu button up to
+    1100px. Signed in, it is tightened from 1101px to 1320px (narrower padding,
+    icon-only status toggle, entries at least 44px wide). A new menu entry must
+    keep `tests/test_favorites_page_browser.py` green for the signed-in widths.
 
 ## 7. Guided Recovery (non-image settings workflow)
 

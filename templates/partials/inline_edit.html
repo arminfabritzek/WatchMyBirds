@@ -76,6 +76,17 @@ cancel_label='Cancel'
             if (relabelAllBtn) relabelAllBtn.style.display = '';
         }
 
+        // Bootstrap opens the viewer from a document-level handler that runs
+        // before the tile's own click handler, so stopping the click there
+        // comes too late. Cancel the opening itself while selecting.
+        document.addEventListener('show.bs.modal', function (event) {
+            var opener = event.relatedTarget;
+            if (editMode && opener && opener.closest('[data-batch-target="detection"]')
+                && !opener.closest('.wm-toolbox')) {
+                event.preventDefault();
+            }
+        });
+
         // Toggle edit mode
         window.toggleInlineEdit = function (btn) {
             editMode = !editMode;

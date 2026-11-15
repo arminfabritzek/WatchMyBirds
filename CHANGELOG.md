@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **Favorites** in the main menu shows every starred photo in one place, newest
+  first. Visitors can filter by species and sort by date or species name. Signed
+  in, **Batch Edit** selects photos for one ZIP download, and the star on each
+  photo adds or removes it.
+
+### Fixed
+
+- Selecting a photo in **Batch Edit** no longer also opens the viewer on top of
+  the selection (Favorites, Species and day gallery).
+- Signed in, the main menu no longer runs off the screen on medium-wide windows;
+  between 1101 and 1320 pixels it is shown more compactly.
+
 ### Changed
 
 - Opening a page shows progress at once, names the page after a second when the

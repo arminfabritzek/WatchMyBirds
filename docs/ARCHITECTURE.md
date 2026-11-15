@@ -142,6 +142,10 @@ must not be used as evidence that legacy route logic has been removed.
 
 - Gallery data: `web.services.gallery_service.get_detections_for_date` →
   `core.gallery_core.get_detections_for_date` → SQLite queries.
+- Favorites: `web.blueprints.gallery.favorites_route` →
+  `web.services.gallery_service.get_favorites_page` →
+  `core.gallery_core.get_favorites_page` → SQLite queries. The page has no
+  write or download route of its own.
 - Trash: `web.blueprints.trash.move_to_trash` calls
   `detections_service.move_to_trash` → `core.detections_core.move_to_trash`.
   This changes detection/classification status; it does not move image files

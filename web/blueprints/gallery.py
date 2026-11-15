@@ -22,7 +22,16 @@ import math
 import re
 from datetime import datetime
 
-from flask import Blueprint, abort, jsonify, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 
 from config import get_config
 from core.species_colours import assign_species_colours as _assign_species_colours
@@ -385,47 +394,17 @@ def species_route():
     )
 
 
-def species_overview_route():
-    selection = _station_selection()
+def _photo_tiles(rows: list[dict], *, species_key: str | None = None) -> list[dict]:
+    """View rows for a photo grid and its viewer.
 
-    raw_species_key = request.args.get("species_key", type=str) or ""
-    species_key = raw_species_key.strip().replace(" ", "_")
-    if species_key in {"Unknown", "Unclassified"}:
-        species_key = view_helpers.UNKNOWN_SPECIES_KEY
-    if not species_key:
-        return redirect(url_for("gallery.species"))
-
-    page = request.args.get("page", 1, type=int)
-
-    try:
-        min_score_param = request.args.get("min_score", type=float)
-    except (ValueError, TypeError):
-        min_score_param = None
-
-    if min_score_param is not None:
-        current_threshold = min_score_param
-    else:
-        current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
-
-    favorites_only = False
-
-    page_detections_raw, total_items, page = gallery_service.get_species_page(
-        species_key,
-        min_score=current_threshold,
-        favorites_only=favorites_only,
-        page=page,
-        per_page=PAGE_SIZE,
-        selection=selection,
-    )
-    total_pages = math.ceil(total_items / PAGE_SIZE) or 1
-
+    A page about one species passes ``species_key``; otherwise every photo
+    is named by its own species.
+    """
     modal_siblings = gallery_service.get_sibling_detections_batch(
-        sorted(
-            {str(det.get("original_name") or "") for det in page_detections_raw} - {""}
-        )
+        sorted({str(det.get("original_name") or "") for det in rows} - {""})
     )
     detections = []
-    for det in page_detections_raw:
+    for det in rows:
         full_path = det.get("relative_path") or det.get("optimized_name_virtual", "")
         thumb_virtual = det.get("thumbnail_path_virtual")
 
@@ -474,11 +453,12 @@ def species_overview_route():
                         )
                     )
 
+        own_species = species_key or view_helpers.get_species_key(det)
         detections.append(
             view_helpers.build_detection_view_dict(
                 det,
-                species_key=species_key,
-                common_name=view_helpers.get_common_name(species_key),
+                species_key=own_species,
+                common_name=view_helpers.get_common_name(own_species),
                 formatted_date=formatted_date,
                 formatted_time=formatted_time,
                 gallery_date=gallery_date,
@@ -493,7 +473,10 @@ def species_overview_route():
                 },
             )
         )
+    return detections
 
+
+def _page_window(page: int, total_pages: int) -> list[int | str]:
     window = 2
     pagination_range = []
     range_start = max(1, page - window)
@@ -511,6 +494,45 @@ def species_overview_route():
         if range_end < total_pages - 1:
             pagination_range.append("...")
         pagination_range.append(total_pages)
+    return pagination_range
+
+
+def species_overview_route():
+    selection = _station_selection()
+
+    raw_species_key = request.args.get("species_key", type=str) or ""
+    species_key = raw_species_key.strip().replace(" ", "_")
+    if species_key in {"Unknown", "Unclassified"}:
+        species_key = view_helpers.UNKNOWN_SPECIES_KEY
+    if not species_key:
+        return redirect(url_for("gallery.species"))
+
+    page = request.args.get("page", 1, type=int)
+
+    try:
+        min_score_param = request.args.get("min_score", type=float)
+    except (ValueError, TypeError):
+        min_score_param = None
+
+    if min_score_param is not None:
+        current_threshold = min_score_param
+    else:
+        current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
+
+    favorites_only = False
+
+    page_detections_raw, total_items, page = gallery_service.get_species_page(
+        species_key,
+        min_score=current_threshold,
+        favorites_only=favorites_only,
+        page=page,
+        per_page=PAGE_SIZE,
+        selection=selection,
+    )
+    total_pages = math.ceil(total_items / PAGE_SIZE) or 1
+
+    detections = _photo_tiles(page_detections_raw, species_key=species_key)
+    pagination_range = _page_window(page, total_pages)
 
     view_helpers.enrich_modal_review_states(detections)
     return render_template(
@@ -527,6 +549,43 @@ def species_overview_route():
         pagination_range=pagination_range,
         image_width=IMAGE_WIDTH,
         favorites_only=favorites_only,
+    )
+
+
+def favorites_route() -> Response | str:
+    names = {
+        key: view_helpers.get_common_name(key)
+        for key in gallery_service.get_favorite_species()
+    }
+    by_name = sorted(names, key=lambda key: (names[key].casefold(), key))
+    species = request.args.get("species", "", type=str)
+    sort_by = "species" if request.args.get("sort") == "species" else "date"
+    if species and species not in names:
+        # The last star of that species is gone; show the whole album instead.
+        return redirect(
+            url_for("gallery.favorites", sort=sort_by if sort_by != "date" else None)
+        )
+
+    rows, total_items, page = gallery_service.get_favorites_page(
+        species=species or None,
+        species_order=by_name if sort_by == "species" else None,
+        page=request.args.get("page", 1, type=int),
+        per_page=PAGE_SIZE,
+    )
+    total_pages = math.ceil(total_items / PAGE_SIZE) or 1
+    detections = _photo_tiles(rows)
+    view_helpers.enrich_modal_review_states(detections)
+    return render_template(
+        "favorites.html",
+        current_path="/favorites",
+        detections=detections,
+        species_options=[(key, names[key]) for key in by_name],
+        selected_species=species,
+        sort_by=sort_by,
+        page=page,
+        total_pages=total_pages,
+        total_items=total_items,
+        pagination_range=_page_window(page, total_pages),
     )
 
 
@@ -922,6 +981,12 @@ gallery_bp.add_url_rule(
     "/species",
     endpoint="species",
     view_func=species_route,
+    methods=["GET"],
+)
+gallery_bp.add_url_rule(
+    "/favorites",
+    endpoint="favorites",
+    view_func=favorites_route,
     methods=["GET"],
 )
 gallery_bp.add_url_rule(

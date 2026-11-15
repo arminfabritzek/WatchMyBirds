@@ -1,5 +1,5 @@
 {# App Bar - Navigation Only (STICKY) #}
-<header class="app-bar" id="appBar">
+<header class="app-bar{% if session.get('authenticated') %} app-bar--signed-in{% endif %}" id="appBar">
     {# Brand #}
     <a class="app-bar__brand" href="/">
         <span>WatchMyBirds</span>
@@ -21,6 +21,10 @@
         <a class="app-bar__link app-bar__link--primary{% if current_path == '/species' %} active{% endif %}"
             href="/species">
             Species
+        </a>
+        <a class="app-bar__link app-bar__link--primary{% if current_path == '/favorites' %} active{% endif %}"
+            href="/favorites">
+            Favorites
         </a>
         <a class="app-bar__link app-bar__link--primary{% if current_path and current_path.startswith('/gallery') %} active{% endif %}"
             href="/gallery">
