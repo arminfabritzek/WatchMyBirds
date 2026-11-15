@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.13 - 2026-11-15
+
 ### Added
 
 - **Favorites** in the main menu shows every starred photo in one place, newest
