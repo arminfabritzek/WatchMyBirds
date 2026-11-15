@@ -24,6 +24,7 @@ from utils.db import (
 from utils.db import (
     restore_detections as db_restore_detections,
 )
+from utils.db.detections import clear_favorites
 from utils.file_gc import (
     hard_delete_detections as gc_hard_delete_detections,
 )
@@ -67,6 +68,18 @@ def move_to_trash(conn: sqlite3.Connection, data: dict) -> dict[str, int]:
             images.add(row[1])
     db_reject_detections(conn, active, commit=False)
     return {"rejected_detections": len(active), "rejected_images": len(images)}
+
+
+def remove_favorites(conn: sqlite3.Connection, data: object) -> int:
+    """Remove the star from the selected detections; return how many had one."""
+    ids = data.get("detection_ids") if isinstance(data, dict) else None
+    if (
+        not isinstance(ids, list)
+        or not 1 <= len(ids) <= 1000
+        or any(type(did) is not int or did <= 0 for did in ids)
+    ):
+        raise ValueError("Choose between 1 and 1000 photos")
+    return clear_favorites(conn, sorted(set(ids)))
 
 
 def reject_detections(detection_ids: list[int]) -> bool:

@@ -252,6 +252,35 @@ def test_the_signed_in_owner_can_select_photos_for_download(
     assert stars and not any("data-login-required" in star for star in stars)
 
 
+REMOVE_STARS = re.compile(r'<button[^>]*id="inlineEditUnfavorite"[^>]*>')
+SELECT_ALL = re.compile(r'<input[^>]*id="inlineEditSelectAll"[^>]*>')
+BATCH_EDIT_PAGES = [
+    "/favorites",
+    "/species/overview?species_key=Parus_major",
+    "/gallery/2026-01-04",
+]
+
+
+def test_removing_stars_from_a_selection_is_offered_on_this_page_only(
+    album: dict[str, int], owner: FlaskClient
+) -> None:
+    favorites, species, day = (
+        owner.get(address).get_data(as_text=True) for address in BATCH_EDIT_PAGES
+    )
+
+    assert "Remove Selected from Favorites" in REMOVE_STARS.split(favorites)[1][:60]
+    assert not REMOVE_STARS.search(species)
+    assert not REMOVE_STARS.search(day)
+
+
+@pytest.mark.parametrize("address", BATCH_EDIT_PAGES)
+def test_every_page_with_batch_edit_offers_to_select_the_whole_page(
+    album: dict[str, int], owner: FlaskClient, visitor: FlaskClient, address: str
+) -> None:
+    assert len(SELECT_ALL.findall(owner.get(address).get_data(as_text=True))) == 1
+    assert not SELECT_ALL.search(visitor.get(address).get_data(as_text=True))
+
+
 def test_the_menu_leads_to_the_favorites_and_marks_them(
     album: dict[str, int], visitor: FlaskClient
 ) -> None:

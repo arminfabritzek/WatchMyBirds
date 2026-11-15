@@ -13,6 +13,10 @@ def move_to_trash(conn: object, data: dict) -> dict[str, int]:
     return detections_core.move_to_trash(conn, data)
 
 
+def remove_favorites(conn: object, data: object) -> int:
+    return detections_core.remove_favorites(conn, data)
+
+
 def reject_detections(detection_ids: list[int]) -> bool:
     """
     Mark detections as rejected (move to trash).

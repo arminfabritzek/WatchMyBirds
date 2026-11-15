@@ -3591,6 +3591,59 @@ code {
     font-size: var(--font-size-sm);
 }
 
+.wm-batch-footer__select-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+}
+
+.wm-batch-footer__select-all input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--color-primary, #a78bfa);
+    cursor: pointer;
+}
+
+@media (max-width: 760px), (hover: none), (pointer: coarse) {
+    .wm-batch-footer__select-all,
+    .wm-batch-footer .btn {
+        min-height: 44px;
+    }
+}
+
+/* One control per row would cover a third of a phone screen: two columns,
+   and labels may wrap. */
+@media (max-width: 760px) {
+    .wm-batch-footer.visible {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        padding: 8px 12px;
+    }
+
+    .wm-batch-footer.visible .wm-batch-footer__counter {
+        text-align: center;
+    }
+
+    .wm-batch-footer.visible .wm-batch-footer__select-all {
+        justify-content: center;
+        line-height: 1.25;
+    }
+
+    .wm-batch-footer.visible .btn {
+        padding: 6px 8px;
+        line-height: 1.25;
+        white-space: normal;
+    }
+
+    .wm-batch-footer.visible .wm-batch-footer__wide {
+        grid-column: 1 / -1;
+    }
+}
+
 .wm-batch-footer .btn {
     font-size: var(--font-size-sm);
     padding: 6px 16px;

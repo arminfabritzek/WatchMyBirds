@@ -7,7 +7,7 @@ insert, fetch, reject, restore, and purge functionality.
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from utils.cover_selection import cover_order_sql
@@ -1558,6 +1558,28 @@ def fetch_favorites_page(
             [*params, *window],
         )
     return hydrate_observations(conn, [dict(row) for row in rows]), total, page
+
+
+def clear_favorites(conn: sqlite3.Connection, detection_ids: Iterable[int]) -> int:
+    """Remove the star from the given detections; return how many had one."""
+    ids = list(detection_ids)
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    # 'manual' keeps the start-up migration of automatic ratings away from
+    # these rows, as after a single star click.
+    cursor = conn.execute(
+        f"""
+        UPDATE detections
+        SET is_favorite = 0,
+            rating_source = 'manual',
+            species_updated_at = ?
+        WHERE detection_id IN ({placeholders})
+          AND COALESCE(is_favorite, 0) != 0
+        """,
+        [datetime.now(UTC).isoformat(), *ids],
+    )
+    return cursor.rowcount
 
 
 def fetch_species_covers(

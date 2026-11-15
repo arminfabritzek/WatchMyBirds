@@ -49,6 +49,8 @@ Usage: {% include 'partials/inline_edit.html' %}
 footer_id='inlineEditFooter',
 counter_id='inlineEditCounter',
 counter_text='0 selected',
+select_all_onchange='inlineEditToggleAll(this)',
+select_all_id='inlineEditSelectAll',
 trash_selected_onclick='inlineEditTrash()',
 trash_filtered_onclick='inlineEditTrashAllFiltered()',
 trash_filtered_id='inlineRejectAllBtn',
@@ -57,6 +59,8 @@ relabel_selected_onclick='inlineEditRelabel()',
 relabel_filtered_onclick='inlineEditRelabelAllFiltered()',
 relabel_filtered_id='inlineRelabelAllBtn',
 relabel_filtered_hidden=true,
+unfavorite_selected_onclick='inlineEditRemoveFavorites()' if inline_edit_unfavorite else none,
+unfavorite_selected_id='inlineEditUnfavorite',
 download_onclick='inlineEditDownload()',
 download_label='Download Selected',
 cancel_onclick='inlineEditCancel()',
@@ -75,6 +79,13 @@ cancel_label='Cancel'
             var relabelAllBtn = document.getElementById('inlineRelabelAllBtn');
             if (relabelAllBtn) relabelAllBtn.style.display = '';
         }
+
+        // The bar is fixed to the bottom edge. Leave that much room below the
+        // page so the last row can be scrolled clear of it.
+        const footer = document.getElementById('inlineEditFooter');
+        new ResizeObserver(function () {
+            document.body.style.paddingBottom = footer.offsetHeight ? footer.offsetHeight + 'px' : '';
+        }).observe(footer);
 
         // Bootstrap opens the viewer from a document-level handler that runs
         // before the tile's own click handler, so stopping the click there
@@ -196,6 +207,7 @@ cancel_label='Cancel'
             });
 
             document.getElementById('inlineEditFooter').classList.remove('visible');
+            updateInlineCounter();
 
             // Reset button
             if (!btn) btn = document.querySelector('.inline-edit-toggle');
@@ -206,9 +218,44 @@ cancel_label='Cancel'
         }
 
         function updateInlineCounter() {
+            const boxes = document.querySelectorAll('.inline-edit-checkbox');
             const checked = document.querySelectorAll('.inline-edit-checkbox:checked');
             document.getElementById('inlineEditCounter').textContent = checked.length + ' selected';
+            const wholePage = document.getElementById('inlineEditSelectAll');
+            wholePage.checked = boxes.length > 0 && checked.length === boxes.length;
+            wholePage.indeterminate = checked.length > 0 && checked.length < boxes.length;
         }
+
+        window.inlineEditToggleAll = function (wholePage) {
+            document.querySelectorAll('.inline-edit-checkbox').forEach(function (cb) {
+                cb.checked = wholePage.checked;
+                cb.closest('[data-batch-target]').classList.toggle('selected', wholePage.checked);
+            });
+            lastClickedIndex = null;
+            updateInlineCounter();
+        };
+
+        window.inlineEditRemoveFavorites = async function () {
+            const selection = WmBatchActions.getExplicitSelection('.inline-edit-checkbox');
+            const result = await WmBatchActions.runBatchAction(
+                'Remove Selected from Favorites\n\n' +
+                'Favorites are protected from automatic deletion. ' +
+                'These photos lose that protection.',
+                selection,
+                '/api/moderation/bulk/unfavorite'
+            );
+            if (!result.success) return;
+
+            document.getElementById('inlineEditUnfavorite').disabled = true;
+            const removed = result.data.removed_favorites;
+            if (window.wmToast) {
+                window.wmToast(
+                    removed + (removed === 1 ? ' photo' : ' photos') + ' removed from favorites',
+                    'success', 3000
+                );
+            }
+            setTimeout(function () { location.reload(); }, 1500);
+        };
 
         // --- Batch Download via Moderation API ---
         // Not routed through WmBatchActions.runBatchAction: that helper expects

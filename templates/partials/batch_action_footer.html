@@ -10,6 +10,9 @@ footer_class='',
 always_visible=false,
 counter_id='batchActionCounter',
 counter_text='0 selected',
+select_all_onchange=none,
+select_all_id=none,
+select_all_label='Select all on this page',
 trash_selected_onclick=none,
 trash_selected_id=none,
 trash_selected_label='Move Selected to Trash',
@@ -28,6 +31,10 @@ relabel_filtered_label='Relabel All Filtered',
 relabel_filtered_class='btn btn--outline-primary',
 relabel_filtered_id=none,
 relabel_filtered_hidden=false,
+unfavorite_selected_onclick=none,
+unfavorite_selected_id=none,
+unfavorite_selected_label='Remove Selected from Favorites',
+unfavorite_selected_class='btn btn--secondary wm-batch-footer__wide',
 no_bird_selected_onclick=none,
 no_bird_selected_id=none,
 no_bird_selected_label='No birds in selected full images',
@@ -49,6 +56,13 @@ cancel_class='btn btn--secondary'
 <div class="wm-batch-footer{% if always_visible %} wm-batch-footer--static{% endif %}{% if footer_class %} {{ footer_class }}{% endif %}"
     id="{{ footer_id }}">
     <span class="wm-batch-footer__counter" id="{{ counter_id }}">{{ counter_text }}</span>
+
+    {% if select_all_onchange and select_all_id %}
+    <label class="wm-batch-footer__select-all" for="{{ select_all_id }}">
+        <input type="checkbox" id="{{ select_all_id }}" onchange="{{ select_all_onchange }}">
+        {{ select_all_label }}
+    </label>
+    {% endif %}
 
     {% if trash_selected_onclick %}
     <button type="button" class="{{ trash_selected_class }}"{% if trash_selected_id %} id="{{ trash_selected_id }}"{% endif %}
@@ -72,6 +86,11 @@ cancel_class='btn btn--secondary'
     <button type="button" class="{{ relabel_filtered_class }}"{% if relabel_filtered_id %} id="{{ relabel_filtered_id }}"{% endif %}
         onclick="{{ relabel_filtered_onclick }}"{% if relabel_filtered_hidden %} style="display:none;"{% endif %}>🏷️
         {{ relabel_filtered_label }}</button>
+    {% endif %}
+
+    {% if unfavorite_selected_onclick %}
+    <button type="button" class="{{ unfavorite_selected_class }}"{% if unfavorite_selected_id %} id="{{ unfavorite_selected_id }}"{% endif %}
+        onclick="{{ unfavorite_selected_onclick }}">☆ {{ unfavorite_selected_label }}</button>
     {% endif %}
 
     {% if no_bird_selected_onclick %}

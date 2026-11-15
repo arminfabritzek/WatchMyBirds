@@ -8,11 +8,18 @@
   first. Visitors can filter by species and sort by date or species name. Signed
   in, **Batch Edit** selects photos for one ZIP download, and the star on each
   photo adds or removes it.
+- **Batch Edit** on the Favorites page can remove the star from all selected
+  photos at once. It asks first, because photos without a star are no longer
+  protected from automatic deletion.
+- **Batch Edit** has **Select all on this page** on the Favorites, Species and
+  day gallery pages.
 
 ### Fixed
 
 - Selecting a photo in **Batch Edit** no longer also opens the viewer on top of
   the selection (Favorites, Species and day gallery).
+- The **Batch Edit** bar no longer hides the last row of photos. On phones it
+  is laid out in two columns and its buttons are easier to hit.
 - Signed in, the main menu no longer runs off the screen on medium-wide windows;
   between 1101 and 1320 pixels it is shown more compactly.
 

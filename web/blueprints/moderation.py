@@ -4,18 +4,21 @@ Moderation Blueprint.
 Handles all bulk moderation routes:
 - POST /api/moderation/resolve-selection  — Resolve selection to concrete IDs
 - POST /api/moderation/bulk/download      — ZIP the originals behind a selection
+- POST /api/moderation/bulk/unfavorite    — Remove the star from a selection
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, Response, jsonify, request, send_file
 
 from logging_config import get_logger
 from web.blueprints.auth import login_required
 from web.services import (
     db_service,
+    detections_service,
+    gallery_service,
     image_download_service,
 )
 from web.services.filter_service import FilterContext, resolve_filtered_ids
@@ -194,3 +197,30 @@ def bulk_download():
         as_attachment=True,
         download_name=f"watchmybirds_selection_{stamp}.zip",
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/moderation/bulk/unfavorite
+# ---------------------------------------------------------------------------
+
+
+@moderation_bp.route("/api/moderation/bulk/unfavorite", methods=["POST"])
+@login_required
+def bulk_unfavorite() -> Response | tuple[Response, int]:
+    """Remove the star from the given detections.
+
+    Accepts:
+        { detection_ids: [int, ...] }
+    """
+    try:
+        with db_service.closing_connection() as conn:
+            removed = detections_service.remove_favorites(
+                conn, request.get_json(silent=True)
+            )
+    except ValueError:
+        return jsonify(
+            {"status": "error", "message": "Choose between 1 and 1000 photos"}
+        ), 400
+
+    gallery_service.invalidate_cache()
+    return jsonify({"status": "success", "removed_favorites": removed})

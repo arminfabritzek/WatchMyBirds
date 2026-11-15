@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 import pytest
 from flask import Flask
@@ -83,10 +84,7 @@ def test_the_signed_in_owner_collects_photos_for_one_download(
         _requests,
         _delay,
     ):
-        page.goto(base + "/login")
-        page.fill("#password", os.environ["EDIT_PASSWORD"])
-        page.click('form[action="/login"] button[type="submit"]')
-        page.wait_for_url("**/gallery")
+        sign_in(page, base)
 
         page.goto(base + address)
         page.click(".inline-edit-toggle")
@@ -104,6 +102,173 @@ def test_the_signed_in_owner_collects_photos_for_one_download(
         )
 
 
+def sign_in(page: Any, base: str) -> None:
+    page.goto(base + "/login")
+    page.fill("#password", os.environ["EDIT_PASSWORD"])
+    page.click('form[action="/login"] button[type="submit"]')
+    page.wait_for_url("**/gallery")
+
+
+STARRED = ("tit_old", "blackbird", "magpie", "tit_new")
+LAST_PHOTO_CLEAR_OF_THE_BAR = """() => {
+    const photos = document.querySelectorAll('[data-batch-target="detection"]');
+    const bar = document.getElementById('inlineEditFooter').getBoundingClientRect();
+    return photos[photos.length - 1].getBoundingClientRect().bottom <= bar.top;
+}"""
+
+
+@pytest.mark.parametrize(
+    ("width", "touch", "theme"), [(1440, False, "light"), (390, True, "dark")]
+)
+def test_the_owner_removes_the_star_from_every_photo_on_the_page(
+    local_db_app: Flask, album: dict[str, int], width: int, touch: bool, theme: str
+) -> None:
+    with station(local_db_app, width=width, touch=touch, theme=theme) as (
+        page,
+        base,
+        _requests,
+        _delay,
+    ):
+
+        def press(selector: str) -> None:
+            target = page.locator(selector)
+            (target.tap if touch else target.click)()
+
+        sign_in(page, base)
+        page.goto(base + "/favorites")
+        press(".inline-edit-toggle")
+        press("#inlineEditSelectAll")
+
+        assert page.locator("#favorites-grid .wm-tile.selected").count() == 4
+        assert page.locator("#inlineEditCounter").inner_text() == "4 selected"
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= window.innerWidth"
+        )
+        page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+        assert page.evaluate(LAST_PHOTO_CLEAR_OF_THE_BAR)
+        if touch:
+            controls = page.locator(
+                "#inlineEditFooter label:visible, #inlineEditFooter .btn:visible"
+            )
+            assert controls.count() == 6
+            for control in controls.all():
+                assert control.bounding_box()["height"] >= 44, control.inner_text()
+            # The bar may take a third of a 720px-high phone screen at most.
+            assert page.locator("#inlineEditFooter").bounding_box()["height"] <= 240
+
+        asked: list[str] = []
+
+        def agree(dialog: Any) -> None:
+            asked.append(dialog.message)
+            dialog.accept()
+
+        page.once("dialog", agree)
+        with page.expect_request("**/api/moderation/bulk/unfavorite") as sent:
+            press("#inlineEditUnfavorite")
+
+        assert sorted(json.loads(sent.value.post_data)["detection_ids"]) == sorted(
+            album[name] for name in STARRED
+        )
+        assert "4 item(s)" in asked[0]
+        assert "automatic deletion" in asked[0]
+        page.locator(".empty-state").wait_for()
+        assert page.locator("#favorites-grid").count() == 0
+
+
+def test_declining_the_question_keeps_every_star(
+    local_db_app: Flask, album: dict[str, int]
+) -> None:
+    with station(local_db_app, width=1440, touch=False, theme="light") as (
+        page,
+        base,
+        _requests,
+        _delay,
+    ):
+        sign_in(page, base)
+        page.goto(base + "/favorites")
+        page.click(".inline-edit-toggle")
+        page.click("#inlineEditSelectAll")
+        sent: list[str] = []
+        page.on("request", lambda request: sent.append(request.url))
+        page.once("dialog", lambda dialog: dialog.dismiss())
+
+        page.click("#inlineEditUnfavorite")
+        page.wait_for_timeout(400)
+
+        assert not [url for url in sent if "bulk/unfavorite" in url]
+        page.reload()
+        assert page.locator("#favorites-grid .wm-tile").count() == 4
+
+
+def test_selecting_the_whole_page_follows_single_changes(
+    local_db_app: Flask, album: dict[str, int]
+) -> None:
+    with station(local_db_app, width=1440, touch=False, theme="light") as (
+        page,
+        base,
+        _requests,
+        _delay,
+    ):
+        sign_in(page, base)
+        page.goto(base + "/favorites")
+        whole_page = page.locator("#inlineEditSelectAll")
+        counter = page.locator("#inlineEditCounter")
+
+        def state() -> tuple[str, bool, bool]:
+            return (
+                counter.inner_text(),
+                whole_page.is_checked(),
+                whole_page.evaluate("box => box.indeterminate"),
+            )
+
+        page.click(".inline-edit-toggle")
+        whole_page.click()
+        assert state() == ("4 selected", True, False)
+
+        page.locator(f"#detection-{album['magpie']} .wm-tile__media").click()
+        assert state() == ("3 selected", False, True)
+
+        whole_page.click()
+        assert state() == ("4 selected", True, False)
+
+        whole_page.click()
+        assert state() == ("0 selected", False, False)
+        assert page.locator(".wm-tile.selected").count() == 0
+
+        whole_page.click()
+        page.click(".inline-edit-toggle")
+        page.click(".inline-edit-toggle")
+        assert state() == ("0 selected", False, False)
+
+
+@pytest.mark.parametrize(
+    "address", ["/species/overview?species_key=Parus_major", "/gallery/2026-01-04"]
+)
+def test_the_whole_page_can_be_selected_wherever_batch_edit_exists(
+    local_db_app: Flask, album: dict[str, int], address: str
+) -> None:
+    with station(local_db_app, width=1440, touch=False, theme="light") as (
+        page,
+        base,
+        _requests,
+        _delay,
+    ):
+        sign_in(page, base)
+        page.goto(base + address)
+        page.click(".inline-edit-toggle")
+        page.click("#inlineEditSelectAll")
+
+        targets = page.locator('[data-batch-target="detection"]')
+        assert targets.count() >= 1
+        assert page.locator('[data-batch-target="detection"].selected').count() == (
+            targets.count()
+        )
+        assert page.locator("#inlineEditCounter").inner_text() == (
+            f"{targets.count()} selected"
+        )
+        assert page.locator("#inlineEditUnfavorite").count() == 0
+
+
 MENU_EDGE = """() => Math.max(...[...document.getElementById('appBarNav').children]
     .filter(entry => entry.getClientRects().length)
     .map(entry => entry.getBoundingClientRect().right))"""
@@ -119,10 +284,7 @@ def test_the_signed_in_menu_stays_inside_the_window(
         _requests,
         _delay,
     ):
-        page.goto(base + "/login")
-        page.fill("#password", os.environ["EDIT_PASSWORD"])
-        page.click('form[action="/login"] button[type="submit"]')
-        page.wait_for_url("**/gallery")
+        sign_in(page, base)
 
         page.goto(base + "/favorites")
 

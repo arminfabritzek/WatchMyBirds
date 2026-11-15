@@ -1411,10 +1411,19 @@ and species answers continue through their normal controls.
     optionally grouped by displayed species name. It is a photo listing, not a
     cover pick. Starring and the ZIP download need a sign-in and reuse the tile
     toolbox and Batch Edit (`partials/inline_edit.html`); the page adds no
-    download or star route of its own. A species that lost its last star falls
-    back to all favorites instead of an error.
+    download or star route of its own. Only here, Batch Edit also offers
+    `Remove Selected from Favorites`. It asks first and names the consequence:
+    photos without a star lose their protection from automatic deletion. A
+    species that lost its last star falls back to all favorites instead of an
+    error.
 16. While Batch Edit is active, a click or tap on a tile selects it and never
-    also opens the viewer; the tile toolbox keeps working.
+    also opens the viewer; the tile toolbox keeps working. `Select all on this
+    page` selects every tile of the current page and never more; it shows a
+    mixed state while only some are selected. The bar is fixed to the bottom
+    edge, so the page keeps that much room below its content and no tile stays
+    hidden behind it. On narrow or touch layouts its controls are at least 44px
+    high; up to 760px wide they sit in two columns with wrapping labels, and the
+    bar stays within a third of a 720px-high screen.
 17. The main menu stays inside the window. It folds into the menu button up to
     1100px. Signed in, it is tightened from 1101px to 1320px (narrower padding,
     icon-only status toggle, entries at least 44px wide). A new menu entry must

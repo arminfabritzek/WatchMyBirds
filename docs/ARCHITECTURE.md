@@ -146,6 +146,10 @@ must not be used as evidence that legacy route logic has been removed.
   `web.services.gallery_service.get_favorites_page` →
   `core.gallery_core.get_favorites_page` → SQLite queries. The page has no
   write or download route of its own.
+- Removing stars from a selection: `web.blueprints.moderation.bulk_unfavorite`
+  → `web.services.detections_service.remove_favorites` →
+  `core.detections_core.remove_favorites` → one SQLite update. Detections
+  without a star are skipped, so a stale page cannot fail the request.
 - Trash: `web.blueprints.trash.move_to_trash` calls
   `detections_service.move_to_trash` → `core.detections_core.move_to_trash`.
   This changes detection/classification status; it does not move image files

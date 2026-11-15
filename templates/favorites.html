@@ -112,7 +112,9 @@
 {% endif %}
 
 {% if can_moderate and detections %}
+{% with inline_edit_unfavorite=true %}
 {% include 'partials/inline_edit.html' %}
+{% endwith %}
 {% endif %}
 {% endblock %}
 
